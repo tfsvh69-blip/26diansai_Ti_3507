@@ -1,0 +1,20 @@
+# Keil 编译产物
+empty/keil/Objects/
+empty/keil/*.map
+empty/keil/*.lst
+
+# Keil 每个用户独立的 GUI 布局文件（不同机器/用户各自生成）
+empty/keil/*.uvguix.*
+
+# JLink 调试日志（每次调试会覆盖）
+empty/keil/JLinkLog.txt
+
+# TI/Eclipse IDE 元数据
+.metadata/
+
+# VSCode 本地缓存
+.vscode/
+
+# Windows
+Thumbs.db
+desktop.ini

@@ -1,0 +1,129 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## 编码约定
+
+- 代码注释统一使用中文。
+- 关键逻辑、硬件操作、中断处理、任务入口、状态切换和安全保护必须写必要注释；简单自明的语句不需要堆无意义注释。
+
+## 构建方式
+
+本工程使用 **Keil uVision**，工程文件位于 [empty/keil/empty_LP_MSPM0G3507_nortos_keil.uvprojx](empty/keil/empty_LP_MSPM0G3507_nortos_keil.uvprojx)。
+
+- 用 Keil 打开工程，`Build (F7)` 编译，`Download` 烧录到板子。
+- Keil 的 `BeforeMake` 已关闭 `syscfg.bat`，**不需要安装 TI SysConfig** 也可以编译。
+- 烧录后打开串口助手（115200 8N1，无流控），连接 PA10=TX、PA11=RX，应依次看到 `BOOT: board init ok`、`BOOT: start scheduler`，随后 PB22 LED 每 300ms 闪烁。
+
+## 项目架构
+
+**芯片**：Texas Instruments MSPM0G3507（Cortex-M0+），主频 80 MHz。  
+**RTOS**：FreeRTOS V11.3.0，ARM_CM0 移植层，heap_4.c，tick 1000 Hz（1 ms）。
+
+### 目录分层
+
+| 目录 | 职责 |
+|---|---|
+| `empty/app/` | FreeRTOS 任务创建、业务流程、控制状态机 |
+| `empty/bsp/` | 板级外设初始化、GPIO、UART、延时硬件封装 |
+| `empty/bsp/board/` | `ti_msp_dl_config.c/h` 手写板级 DriverLib 初始化（不由 SysConfig 生成） |
+| `empty/module/` | 可复用模块（IMU、OLED） |
+| `empty/algo/` | 纯算法（PID、滤波、数学解算，当前为空） |
+| `empty/common/` | 任务/FreeRTOS 配置宏（`app_config.h`）、消息定义 |
+| `empty/third_party/FreeRTOS/` | FreeRTOS 内核源码 |
+| `empty/third_party/ti_driverlib/` | TI DriverLib |
+| `empty/third_party/st_lsm6dsv16x/` | ST 官方寄存器驱动（供 `module/imu` 封装调用） |
+| `empty/docs/` | 项目文档、任务表、消息表、接线表、AI 维护记录 |
+
+### 启动流程
+
+`main()` → `BspBoard_Init()` → `App_Init()`（创建 FreeRTOS 任务）→ `vTaskStartScheduler()`
+
+**不要调用 `SYSCFG_DL_init()`** 做总初始化，它会调用 `SYSCFG_DL_SYSTICK_init()` 与 FreeRTOS SysTick 冲突；应使用 `BspBoard_Init()`。
+
+### 当前 FreeRTOS 任务
+
+任务周期、栈大小、优先级集中在 [empty/common/app_config.h](empty/common/app_config.h)。
+
+| 任务名 | 文件 | 周期 | 说明 |
+|---|---|---|---|
+| `LED1` | `app/app_led_task.c` | 300 ms | PB22 心跳灯，用于判断 FreeRTOS 是否正常调度 |
+| `UART0TX` | `app/app_uart_test_task.c` | 10 ms 轮询 | UART0 接收回显，收到非换行字符返回 `UART RX OK` |
+| `IMU100Hz` | `app/app_imu_uart_task.c` | 10 ms | 读取 ATK-MS6DSV 姿态，通过 UART0 输出 Roll/Pitch/Yaw |
+
+修改或新增任务后必须同步更新 [empty/docs/FREERTOS_TASKS.md](empty/docs/FREERTOS_TASKS.md)。
+
+### 当前硬件连接
+
+| 硬件 | 引脚 | 说明 |
+|---|---|---|
+| LED1 | PB22 | 高电平点亮，心跳灯 |
+| OLED SCL | PB9 | GPIO 模拟 I2C |
+| OLED SDA | PB8 | GPIO 模拟 I2C |
+| UART0 TX | PA10 | MFCLK 4MHz，115200 8N1 |
+| UART0 RX | PA11 | — |
+| ATK-MS6DSV SCL | PB2 | GPIO 软件 I2C，已外接上拉 |
+| ATK-MS6DSV SDA | PB3 | GPIO 软件 I2C，SA0 接地，7bit 地址 `0x6A` |
+| ATK-MS6DSV INT | PA16 | GPIO 输入，下拉 |
+
+修改引脚或新增硬件后必须同步更新 [empty/docs/HARDWARE_WIRING.md](empty/docs/HARDWARE_WIRING.md)。
+
+## 关键约定
+
+### 禁用/慎用引脚
+
+以下引脚属于核心板特殊功能引脚，**不得随意使用**；确需使用须先说明原因、风险，并等待人工确认：
+
+A23、A21、A20、A19、A18、A11、A10、A5、A6、A4、A3、A2
+
+> 当前 PA10/PA11（UART0）已按用户确认使用，属于例外。
+
+### FreeRTOS 规则
+
+- ISR 中只做快速处理；调用 FreeRTOS API 必须使用 `FromISR` 版本。
+- 任务周期循环用 `vTaskDelay` / `vTaskDelayUntil`，不要长时间忙等。
+- 不要在高频任务、控制环或中断中动态分配内存。
+- 控制输出前必须检查 enable、离线、超时和限幅。
+
+### UART 配置原则
+
+- UART0 固定使用 MFCLK 4MHz、115200 8N1，分频 `IBRD=2`、`FBRD=11`。
+- 新增或修改 UART 前先阅读 [empty/docs/UART_DEBUG_GUIDE.md](empty/docs/UART_DEBUG_GUIDE.md)。
+- 乱码排查优先怀疑"时钟源或分频不对"，不要先猜文本编码或反复试波特率。
+- `BspUart0_SendString()` 在调度器运行后会挂起调度器保证字符串完整输出；多任务共享 UART0 时注意日志频率。
+
+### SysConfig 解耦
+
+- `bsp/board/empty.syscfg` 仅作历史参考，不参与构建。
+- `bsp/board/ti_msp_dl_config.c/h` 手写维护，保留 `SYSCFG_DL_*` 函数名只是为了兼容现有 BSP 调用。
+
+### IMU 注意事项
+
+- `APP_IMU_I2C_PIN_TEST_ENABLE`（在 `common/app_config.h`）置 1 时，`IMU100Hz` 任务不读 IMU，只翻转 PB2/PB3 并读 GPIO 电平用于硬件排查；排查完必须改回 0。
+- LSM6DSV16X 无精确 100Hz 档位，当前 ODR 配为 120Hz；`FIFO=0/1/2` 小范围跳动正常。
+- `ATK_MS6DSV_USE_BOOT_RESET` 默认为 0，跳过 boot reset，原因是实测 `RESET_SET` 会导致 SDA 被拉低。
+- 软件 I2C 读最后一字节必须回 NACK 再发 STOP，否则 LSM6DSV16X 会持续占用 SDA。
+
+### 跨模块通信
+
+当前暂未启用跨任务消息。后续新增时优先使用 FreeRTOS queue / event group / stream buffer，并在 [empty/docs/MESSAGE_LIST.md](empty/docs/MESSAGE_LIST.md) 中记录。应用之间不要通过全局变量或直接包含头文件传递业务数据。
+
+## 修改代码后自查
+
+1. 是否符合分层边界（app/module/algo/bsp/common）？
+2. 是否遗漏 FreeRTOS 同步、中断安全、`FromISR` 版本？
+3. 是否误用了核心板特殊功能引脚？
+4. 是否新增了未记录的任务、消息、模式或硬件接线？
+5. 是否需要更新 `docs/` 下的 `FREERTOS_TASKS.md`、`MESSAGE_LIST.md`、`HARDWARE_WIRING.md`？
+6. 关键代码是否写了必要的中文注释？
+
+## 维护文档索引
+
+| 文档 | 用途 |
+|---|---|
+| [docs/PROJECT_CONTEXT.md](empty/docs/PROJECT_CONTEXT.md) | 当前架构、硬件、主要模块、关键约定 |
+| [docs/FREERTOS_TASKS.md](empty/docs/FREERTOS_TASKS.md) | 任务名、周期、优先级、栈大小、输入输出 |
+| [docs/MESSAGE_LIST.md](empty/docs/MESSAGE_LIST.md) | 跨任务消息定义（当前为空） |
+| [docs/HARDWARE_WIRING.md](empty/docs/HARDWARE_WIRING.md) | 硬件接线、引脚、电气说明、排查备注 |
+| [docs/UART_DEBUG_GUIDE.md](empty/docs/UART_DEBUG_GUIDE.md) | UART 配置原则与乱码排查流程 |
+| [docs/AI_MEMORY.md](empty/docs/AI_MEMORY.md) | 用户固定要求、重要决策、踩坑记录 |

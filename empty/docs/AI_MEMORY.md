@@ -1,0 +1,26 @@
+# AI 维护记忆
+
+- 代码注释统一使用中文；关键逻辑、硬件操作、中断处理、任务入口、状态切换和安全保护要写必要注释。
+- 每次完成代码修改后，要说明烧录或运行后应该观察到的现象，方便用户排查。
+- MSPM0G3507 FreeRTOS 工程不要使用 `SYSCFG_DL_init()` 做总初始化，避免其中的 SysTick 初始化占用 FreeRTOS SysTick。
+- 当前主频配置为 80 MHz；`CPUCLK_FREQ` 和 `configCPU_CLOCK_HZ` 都必须保持为 `80000000`。
+- 80 MHz 由 SYSOSC 32 MHz 进入 SYSPLL 得到：`PDIV=/2`、`QDIV=10`、`CLK0=/2`；Flash wait state 使用 2，ULPCLK 使用 /2。
+- 当前工程已与 TI SysConfig 生成流程解耦：Keil `BeforeMake` 不再调用 `syscfg.bat`，`empty.syscfg` 仅作历史参考，`ti_msp_dl_config.c/h` 手写维护。
+- 尽量不要使用核心板特殊功能引脚：A23、A21、A20、A19、A18、A11、A10、A5、A6、A4、A3、A2；确需使用时必须先说明风险并等待人工确认。
+- 硬件接线统一维护在 `docs/HARDWARE_WIRING.md`；修改 GPIO、外设复用或引脚时必须同步更新。
+- 当前 PB22 为 LED1，引脚实测高电平点亮、低电平熄灭；`App_Init()` 启动 `LED1` 任务后每 300ms 翻转一次，用作 FreeRTOS 心跳灯。
+- 当前 OLED 使用 GPIO 模拟 I2C：SCL=PB9，SDA=PB8。
+- 任务配置集中放在 `common/app_config.h`；新增或修改任务后同步更新 `docs/FREERTOS_TASKS.md`。
+- 串口乱码最终解决思路：不要继续猜文本编码或 BUSCLK 频率，改用确定的 MFCLK 4MHz 作为 UART0 时钟源；115200 使用 16x 过采样，`IBRD=2`、`FBRD=11`。
+- 后续新增或修改 UART 时必须先按 `docs/UART_DEBUG_GUIDE.md` 的流程确认实例、引脚、共地、电平、时钟源、分频和 bit 宽，不要直接反复试波特率。
+- 当前 UART0 使用 PA10=TX、PA11=RX；PA10/PA11 属于核心板特殊功能风险引脚，本次已按用户确认使用；串口助手设置为 115200 8N1，无流控。
+- 当前 UART0 接收测试不再控制 PB22；收到任意非换行字符后回显 `UART RX OK`，PB22 固定作为心跳灯使用。
+- ATK-MS6DSV 当前接线：SCL=PB2/B02，SDA=PB3/B03，INT=PA16/A16，SA0 接地，LSM6DSV16X 7bit I2C 地址为 `0x6A`。
+- ATK-MS6DSV 当前 SCL/SDA 已外接上拉，代码仍启用 MCU 内部上拉；2026-06-18 已改为 PB2/PB3 GPIO 软件 I2C，对齐正点原子官方例程，显式执行最后一字节 NACK 和 STOP，避免硬件 I2C 读事务后 SDA 被拉低。
+- 2026-06-18 软件 I2C 修改后，用户实测 IMU 已能连续输出姿态；`FIFO=0/1/2` 小范围跳动正常，因为 SFLP 为 120Hz、任务读取为 100Hz。
+- 2026-06-18 用户日志出现 `IMU INIT FAIL:2 LAST_ID=0x70`，说明 WHO_AM_I 已读通，后续排查重点应放在 reset/config 阶段和 SDA 被拉低；代码已增加 `STEP=...` 初始化步骤输出。
+- 2026-06-18 用户进一步定位到 `STEP=RESET_SET LAST_ID=0x70` 后 SDA 被拉低；当前 `ATK_MS6DSV_USE_BOOT_RESET` 默认为 0，跳过 ST 驱动 `RESTORE_CTRL_REGS`/boot reset，直接配置传感器。
+- TI DriverLib 的 I2C `ADDR_ACK`/`DATA_ACK` 状态位表示已经 ACK，不是错误位；I2C 轮询错误判断只应把 `ERROR` 和 `ARBITRATION_LOST` 当作失败。
+- `APP_IMU_I2C_PIN_TEST_ENABLE` 是临时硬件排查宏；置 1 时 IMU 任务只用开漏模拟方式翻转 PB2/PB3 并读取 GPIO DIN 输出 SET/READ，不会读取 IMU。2026-06-18 用户实测 PB2/PB3 SET/READ 一致，MCU 端 GPIO 读写正常；当前宏已改回 0。
+- MSPM0G3507 上 PB2/PB3 的 I2C1 复用为 `IOMUX_PINCM15_PF_I2C1_SCL` 和 `IOMUX_PINCM16_PF_I2C1_SDA`；用户接线表里的 U2.15/U2.17 是板口/封装编号，不要误把 SDA 配成 `PINCM17`。
+- IMU 对外读取和 UART0 输出按 100Hz，即 `IMU100Hz` 任务周期 10ms；LSM6DSV16X 内部 ODR 无精确 100Hz 档位，当前加速度、陀螺仪和 SFLP 使用 120Hz。

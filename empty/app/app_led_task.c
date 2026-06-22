@@ -1,0 +1,35 @@
+#include "app_led_task.h"
+
+#include "FreeRTOS.h"
+#include "task.h"
+
+#include "app_config.h"
+#include "bsp_led.h"
+
+static TaskHandle_t s_ledTaskHandle = NULL;
+
+static void AppLedTask_Entry(void *argument)
+{
+    TickType_t lastWakeTime = xTaskGetTickCount();
+
+    (void)argument;
+
+    for (;;) {
+        /* 当前只使用 PB22 连接的 LED，作为系统心跳灯。 */
+        BspLed_Toggle(BSP_LED_1);
+        vTaskDelayUntil(&lastWakeTime, APP_LED1_PERIOD_TICKS);
+    }
+}
+
+void AppLedTask_Init(void)
+{
+    BaseType_t ret;
+
+    ret = xTaskCreate(AppLedTask_Entry,
+                      "LED1",
+                      APP_LED_TASK_STACK_WORDS,
+                      NULL,
+                      APP_LED_TASK_PRIORITY,
+                      &s_ledTaskHandle);
+    configASSERT(ret == pdPASS);
+}
