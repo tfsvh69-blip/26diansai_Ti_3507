@@ -13,20 +13,20 @@ static void AppMotorTestTask_Entry(void *argument)
 {
     /* 1/8 细分下一整圈所需脉冲数 = 200 全步 × 8 = 1600。 */
     const uint32_t stepsOneRev =
-        (uint32_t)MOTOR_FULL_STEPS_PER_REV * 8U;
+        (uint32_t)BSP_MOTOR_FULL_STEPS_PER_REV * 8U;
 
     (void)argument;
 
     /*
-     * 电机1测试：物理最小分频（prescale=0，定时器 4MHz）、20kHz 步频、正向旋转整圈后停止。
+     * 电机1测试：1/8 细分、正向、梯形加减速旋转整圈后停止。
+     * 1kHz 起步 → 20kHz 巡航 → 1kHz 收尾，避免直接 20kHz 起转失步。
      * 按引脚文档 §3.4 顺序：先设细分和方向，再使能 ENN，最后启动定长步进。
-     * 无加减速斜坡；若电机失步（重现抖动），增大 MOTOR_STEP_TIMER_PERIOD（减慢步频）。
      */
     BspTmc_SetMicrostep(TMC_MICROSTEP_8);
     BspMotor1_SetDir(MOTOR_DIR_FORWARD);
     BspTmc_EnableAll();
 
-    BspUart0_SendString("MOTOR1: 1/8 step, 20kHz, rotating 1 rev...\r\n");
+    BspUart0_SendString("MOTOR1: 1/8 step, ramp 1k->20k->1k, rotating 1 rev...\r\n");
 
     /* 启动定长步进，TIMG0 ZERO 中断计步，转完自动停。 */
     BspMotor1_StartRotateSteps(stepsOneRev);

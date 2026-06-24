@@ -1,9 +1,15 @@
 #ifndef BSP_MOTOR_H
 #define BSP_MOTOR_H
 
+#include <stdbool.h>
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* 标准 1.8° 步进电机每圈全步数，用于外部计算旋转圈数。 */
+#define BSP_MOTOR_FULL_STEPS_PER_REV    (200U)
 
 /*
  * 步进电机 / TMC2209 板级封装（天猛星扩展板 v1.0）。

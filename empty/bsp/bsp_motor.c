@@ -5,10 +5,23 @@
 
 #include "ti_msp_dl_config.h"
 
+/*
+ * 梯形加减速参数（定时器时钟 4MHz，period 越小步频越高）。
+ * 直接 20kHz 起转会失步（电机只抖几度），故从 1kHz 起步逐步加速到 20kHz 巡航，
+ * 末段对称减速回 1kHz，保证整圈脉冲平稳跑完。
+ * 加速段步数 = (START-MIN)/DELTA = (4000-200)/8 = 475，减速段同。
+ */
+#define MOTOR_STEP_PERIOD_MIN     (MOTOR_STEP_TIMER_PERIOD)  /* 200 → 20kHz 巡航(最高速) */
+#define MOTOR_STEP_PERIOD_START   (4000U)                    /* 4000 → 1kHz 起步速度 */
+#define MOTOR_RAMP_DELTA          (8U)                       /* 每步周期增减量 */
+#define MOTOR_RAMP_STEPS          (475U)                     /* 加速/减速段各自步数 */
+
 /* 定长步进剩余脉冲数，ISR 中倒计；为 0 时表示本次旋转已完成。 */
 static volatile uint32_t s_stepsRemaining = 0U;
 /* 旋转完成标志；StartRotateSteps 置 0，ISR 完成后置 1。 */
 static volatile uint8_t  s_rotateDone     = 1U;
+/* 当前定时器周期（加减速过程中动态变化）。 */
+static volatile uint32_t s_curPeriod      = MOTOR_STEP_PERIOD_START;
 
 /*
  * 设置 MS1/MS2 电平。
@@ -102,6 +115,12 @@ void BspMotor1_StartRotateSteps(uint32_t steps)
     s_rotateDone     = 0U;
     s_stepsRemaining = steps;
 
+    /* 从慢速起步，避免直接 20kHz 起转失步；后续由 ISR 逐步加速。 */
+    s_curPeriod = MOTOR_STEP_PERIOD_START;
+    DL_TimerG_setLoadValue(MOTOR_STEP_TIMER_INST, MOTOR_STEP_PERIOD_START - 1U);
+    DL_TimerG_setCaptureCompareValue(MOTOR_STEP_TIMER_INST,
+        MOTOR_STEP_PERIOD_START / 2U, DL_TIMER_CC_0_INDEX);
+
     /* 清除可能残留的 ZERO 中断标志，再使能中断和 NVIC。 */
     DL_TimerG_clearInterruptStatus(MOTOR_STEP_TIMER_INST,
         DL_TIMERG_INTERRUPT_ZERO_EVENT);
@@ -127,15 +146,41 @@ void TIMG0_IRQHandler(void)
     DL_TimerG_clearInterruptStatus(MOTOR_STEP_TIMER_INST,
         DL_TIMERG_INTERRUPT_ZERO_EVENT);
 
-    if (s_stepsRemaining > 0U) {
-        s_stepsRemaining--;
+    if (s_stepsRemaining == 0U) {
+        return;
     }
+
+    s_stepsRemaining--;
 
     if (s_stepsRemaining == 0U) {
         DL_TimerG_stopCounter(MOTOR_STEP_TIMER_INST);
-        DL_TimerG_clearInterruptStatus(MOTOR_STEP_TIMER_INST,
-            DL_TIMERG_INTERRUPT_ZERO_EVENT);
         NVIC_DisableIRQ(MOTOR_STEP_TIMER_IRQn);
         s_rotateDone = 1U;
+        return;
+    }
+
+    /*
+     * 梯形加减速：每个脉冲调整下一周期的定时器 LOAD/CC。
+     * 末段(剩余<=RAMP_STEPS)减速、起步段加速、中段巡航保持 MIN。
+     * 减速分支优先，避免与加速条件在 MIN 附近来回冲突。
+     */
+    if (s_stepsRemaining <= MOTOR_RAMP_STEPS) {
+        if (s_curPeriod < MOTOR_STEP_PERIOD_START) {
+            s_curPeriod += MOTOR_RAMP_DELTA;
+            if (s_curPeriod > MOTOR_STEP_PERIOD_START) {
+                s_curPeriod = MOTOR_STEP_PERIOD_START;
+            }
+            DL_TimerG_setLoadValue(MOTOR_STEP_TIMER_INST, s_curPeriod - 1U);
+            DL_TimerG_setCaptureCompareValue(MOTOR_STEP_TIMER_INST,
+                s_curPeriod / 2U, DL_TIMER_CC_0_INDEX);
+        }
+    } else if (s_curPeriod > MOTOR_STEP_PERIOD_MIN) {
+        s_curPeriod -= MOTOR_RAMP_DELTA;
+        if (s_curPeriod < MOTOR_STEP_PERIOD_MIN) {
+            s_curPeriod = MOTOR_STEP_PERIOD_MIN;
+        }
+        DL_TimerG_setLoadValue(MOTOR_STEP_TIMER_INST, s_curPeriod - 1U);
+        DL_TimerG_setCaptureCompareValue(MOTOR_STEP_TIMER_INST,
+            s_curPeriod / 2U, DL_TIMER_CC_0_INDEX);
     }
 }

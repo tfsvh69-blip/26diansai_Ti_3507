@@ -48,10 +48,11 @@
 - 步进驱动 TMC2209，STEP=PB10(TIMG0_CCP0)、DIR=PB11、ENN=PA13(低有效，四路共用)、MS1=PB8、MS2=PB9(四路共用细分)。
 - 上电默认安全状态：ENN 拉高禁用、STEP 停止、DIR 正向、MS1=0/MS2=0(1/8 细分)。
 - `MOTOR1` 任务：设细分→定方向→使能 ENN→启动定长步进(1600 脉冲 = 1 整圈)→等完成→禁用 ENN→任务挂起。
-- 步频 20kHz(prescale=0，物理最小分频；`MOTOR_STEP_TIMER_PERIOD`=200)，1 整圈(1600 步)约 80ms 完成。
-- 步频由 `MOTOR_STEP_TIMER_PERIOD` 控制：200→20kHz、400→10kHz、500→8kHz。无加减速斜坡，步频太高会失步。
-- TIMG0 ZERO 中断每 STEP 周期触发一次，ISR 内倒计 `s_stepsRemaining`，归零后停定时器+关 NVIC。
-- 串口输出：`MOTOR1: 1/8 step, 20kHz, rotating 1 rev...`，约 80ms 后输出 `MOTOR1: 1 rev done, motor disabled`。
+- **梯形加减速**：直接 20kHz 起转会失步（电机仅抖几度），故从 1kHz(period=4000) 起步、每脉冲把周期减 8、约 475 步加速到 20kHz(period=200)巡航，末段 475 步对称减速回 1kHz。参数在 `bsp_motor.c`：`MOTOR_STEP_PERIOD_START/MIN`、`MOTOR_RAMP_DELTA/STEPS`。
+- 巡航最高速由 `MOTOR_STEP_TIMER_PERIOD`(=200→20kHz) 控制；若巡航段仍失步，增大该值降低巡航速度，或调大 `MOTOR_RAMP_STEPS`/减小 `MOTOR_RAMP_DELTA` 让加速更缓。
+- TIMG0 ZERO 中断每 STEP 周期触发一次：ISR 倒计 `s_stepsRemaining` 并按梯形曲线更新 LOAD/CC，归零后停定时器+关 NVIC。
+- 串口输出：`MOTOR1: 1/8 step, ramp 1k->20k->1k, rotating 1 rev...`，整圈跑完(约 190ms)后输出 `MOTOR1: 1 rev done, motor disabled`。
+- 这次踩坑确认：步进电机**从静止直接起高频会失步**，高速必须配加减速斜坡；起转频率(本电机 1kHz/125 全步每秒)远低于运动后可达的巡航频率。
 
 ### 电机1调试结论（已实测可正常旋转）
 

@@ -105,15 +105,13 @@ extern "C" {
 #define MOTOR_STEP_TIMER_INST                                             (TIMG0)
 /*
  * STEP 定时器：源 MFCLK=4MHz，预分频 ÷1（物理最小，prescale 寄存器=0）。
- * 定时器时钟 = 4MHz；周期 200 → 20kHz 步频；1/8 细分下一整圈需 1600 脉冲 ≈ 80ms。
- * 当前无加减速斜坡，直接以 20kHz 起转；若电机失步（抖动），增大 MOTOR_STEP_TIMER_PERIOD。
+ * 定时器时钟 = 4MHz；周期 200 → 20kHz 步频，作为加减速的巡航（最高）速度。
+ * 直接 20kHz 起转会失步，故 bsp_motor 内做梯形加减速：从慢速起步、加速到本周期对应的
+ * 20kHz 巡航、末段再减速；起步/加速参数见 bsp_motor.c。
  */
 #define MOTOR_STEP_TIMER_PRESCALE                                           (0U)
 #define MOTOR_STEP_TIMER_PERIOD                                           (200U)
 #define MOTOR_STEP_TIMER_DUTY                                             (100U)
-
-/* 电机满步数/圈（标准 1.8° 步进电机 = 200 整步）。 */
-#define MOTOR_FULL_STEPS_PER_REV                                          (200U)
 
 /* TIMG0 中断号，用于 StartRotateSteps 内部开关 NVIC。 */
 #define MOTOR_STEP_TIMER_IRQn                                    (TIMG0_INT_IRQn)
