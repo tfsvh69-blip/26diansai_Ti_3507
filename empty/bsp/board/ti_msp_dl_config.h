@@ -135,6 +135,23 @@ extern "C" {
 #define TMC_MS2_PIN                                              (DL_GPIO_PIN_9)
 #define TMC_MS2_IOMUX                                            (IOMUX_PINCM26)
 
+/*
+ * 四个功能按键：一端接 GND，按下为低电平，使用 MCU 内部上拉。
+ * A28/A31/A30/A17 均不在核心板慎用引脚列表内。
+ */
+#define KEY1_PORT                                                        (GPIOA)
+#define KEY1_PIN                                                (DL_GPIO_PIN_28)
+#define KEY1_IOMUX                                                (IOMUX_PINCM3)
+#define KEY2_PORT                                                        (GPIOA)
+#define KEY2_PIN                                                (DL_GPIO_PIN_31)
+#define KEY2_IOMUX                                                (IOMUX_PINCM6)
+#define KEY3_PORT                                                        (GPIOA)
+#define KEY3_PIN                                                (DL_GPIO_PIN_30)
+#define KEY3_IOMUX                                                (IOMUX_PINCM5)
+#define KEY4_PORT                                                        (GPIOA)
+#define KEY4_PIN                                                (DL_GPIO_PIN_17)
+#define KEY4_IOMUX                                               (IOMUX_PINCM39)
+
 /* IMU 接线：PB2=SCL，PB3=SDA，PA16=INT 输入；SCL/SDA 已外接上拉，代码保留 MCU 内部上拉用于调试。 */
 #define IMU_I2C_SCL_PORT                                                  (GPIOB)
 #define IMU_I2C_SCL_PIN                                           (DL_GPIO_PIN_2)

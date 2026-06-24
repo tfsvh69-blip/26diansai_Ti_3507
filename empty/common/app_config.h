@@ -15,8 +15,8 @@
 #define APP_IMU_UART_TASK_STACK_WORDS   (configMINIMAL_STACK_SIZE * 4U)
 #define APP_IMU_UART_TASK_PRIORITY      (1U)
 
-/* 电机1测试任务：只做配置和启停，栈保持最小配置。 */
-#define APP_MOTOR_TEST_TASK_STACK_WORDS (configMINIMAL_STACK_SIZE)
+/* 电机1按键控制任务：轮询按键并触发定长旋转，含串口输出，栈适当放大。 */
+#define APP_MOTOR_TEST_TASK_STACK_WORDS (configMINIMAL_STACK_SIZE * 2U)
 #define APP_MOTOR_TEST_TASK_PRIORITY    (1U)
 
 /* PB22 心跳灯翻转周期。 */
@@ -31,8 +31,8 @@
 /* IMU 对外读取/串口输出周期：10ms，即 100Hz。 */
 #define APP_IMU_UART_PERIOD_TICKS       pdMS_TO_TICKS(10U)
 
-/* 电机1测试任务状态打印周期。 */
-#define APP_MOTOR_TEST_PERIOD_TICKS     pdMS_TO_TICKS(1000U)
+/* 电机1按键扫描周期：20ms，兼作简单去抖。 */
+#define APP_MOTOR_KEY_POLL_TICKS        pdMS_TO_TICKS(20U)
 
 /*
  * IMU I2C 引脚物理测试开关。

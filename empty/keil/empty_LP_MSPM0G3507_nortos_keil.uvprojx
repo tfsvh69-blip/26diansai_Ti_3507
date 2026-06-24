@@ -617,6 +617,16 @@
               <FileType>5</FileType>
               <FilePath>..\bsp\bsp_motor.h</FilePath>
             </File>
+            <File>
+              <FileName>bsp_key.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\bsp\bsp_key.c</FilePath>
+            </File>
+            <File>
+              <FileName>bsp_key.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\bsp\bsp_key.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

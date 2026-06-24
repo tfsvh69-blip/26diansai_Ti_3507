@@ -12,6 +12,15 @@ extern "C" {
 #define BSP_MOTOR_FULL_STEPS_PER_REV    (200U)
 
 /*
+ * 巡航速度对应的定时器周期（定时器时钟 4MHz，步频 = 4MHz / 周期）。
+ * 周期越小越快；1/8 细分下 1600 脉冲 = 1 圈。
+ * SLOW：2500 → 1.6kHz ≈ 1 圈/秒；FAST：500 → 8kHz ≈ 5 圈/秒。
+ * 注意：巡航周期应不大于 bsp_motor.c 内的起步周期 MOTOR_STEP_PERIOD_START。
+ */
+#define BSP_MOTOR_PERIOD_SLOW           (2500U)
+#define BSP_MOTOR_PERIOD_FAST           (500U)
+
+/*
  * 步进电机 / TMC2209 板级封装（天猛星扩展板 v1.0）。
  * 四路驱动共用 ENN 使能和 MS1/MS2 细分；当前先实现电机1。
  * STEP 由 TIMG0_CCP0 硬件定时器输出，DIR/ENN/MS1/MS2 为普通 GPIO。
@@ -47,11 +56,12 @@ void BspMotor1_StartStep(void);
 void BspMotor1_StopStep(void);
 
 /*
- * 定长步进：启动后由 TIMG0 ZERO 中断倒计脉冲，数到 0 自动停止定时器。
+ * 定长步进（带梯形加减速）：启动后由 TIMG0 ZERO 中断倒计脉冲，数到 0 自动停止定时器。
+ * steps：总脉冲数；cruisePeriod：巡航（最高速）周期，越小越快，用 BSP_MOTOR_PERIOD_SLOW/FAST。
  * 非阻塞，调用后用 BspMotor1_IsRotateDone() 轮询结果。
  * 注意：调用前必须已设置方向并使能 ENN，否则电机不动。
  */
-void BspMotor1_StartRotateSteps(uint32_t steps);
+void BspMotor1_StartRotateSteps(uint32_t steps, uint32_t cruisePeriod);
 bool BspMotor1_IsRotateDone(void);
 
 #ifdef __cplusplus

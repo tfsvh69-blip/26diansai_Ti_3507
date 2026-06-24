@@ -29,4 +29,6 @@
 - 步进电机"原地剧烈抖动、不转"的首要根因是相线圈配对错(把两个线圈各掏一根凑成一对)，不是方向反(方向反只会反转不抖)；断电量电阻找两组导通对即可定位。区分共振/丢步：降到 200Hz 还抖就是配对错。本工程用户改对线序后电机正常旋转。
 - TMC2209 不接 UART 时电流由 VREF 电位器标定，VREF 设每相 RMS 电流(`Irms≈VREF×0.71`，随模块 Rsense 变)；以温热不烫、捏轴有反抗力矩为准，用户已调到合适数值。
 - 步进电机从静止**直接起高频会失步**：实测 20kHz(2500 全步/秒)直接起转，电机只抖 5~10° 不转(定时器照发完 1600 脉冲)；起转频率(本电机约 1kHz/125 全步每秒)远低于运动后可达的巡航频率。高速必须配加减速斜坡。
-- 电机1定长旋转已加梯形加减速(`bsp_motor.c`)：1kHz 起步→每脉冲周期减 8、约 475 步加速到 20kHz 巡航→末段对称减速回 1kHz；ISR(TIMG0 ZERO)倒计步数同时更新 LOAD/CC。巡航最高速由 `MOTOR_STEP_TIMER_PERIOD`(=200→20kHz)定，失步就增大它或放缓加速。
+- 电机1定长旋转已加梯形加减速(`bsp_motor.c`)：1kHz 起步→每脉冲周期减 8 加速到巡航→末段(剩余≤475 步)对称减速回起步；ISR(TIMG0 ZERO)倒计步数同时更新 LOAD/CC。巡航速度由 `BspMotor1_StartRotateSteps(steps, cruisePeriod)` 参数决定。
+- 电机1现为按键控制(`app_motor_test_task.c`，任务名 MOTOR1)：20ms 轮询去抖 + 按下沿检测，运行中忽略按键、转完自动禁用 ENN。KEY1 慢正转1圈/KEY2 慢反转1圈/KEY3 快正转2圈/KEY4 快反转2圈；慢=`BSP_MOTOR_PERIOD_SLOW`(2500≈1圈/秒)、快=`BSP_MOTOR_PERIOD_FAST`(500≈5圈/秒)。
+- 四个功能按键接线：KEY1=PA28/PINCM3、KEY2=PA31/PINCM6、KEY3=PA30/PINCM5、KEY4=PA17/PINCM39，一端接 GND、内部上拉，按下为低；都不在核心板慎用引脚列表内。`bsp_key.c` 提供 `BspKey_IsPressed()` 读瞬时电平。

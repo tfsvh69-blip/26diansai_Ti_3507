@@ -7,14 +7,13 @@
 
 /*
  * 梯形加减速参数（定时器时钟 4MHz，period 越小步频越高）。
- * 直接 20kHz 起转会失步（电机只抖几度），故从 1kHz 起步逐步加速到 20kHz 巡航，
- * 末段对称减速回 1kHz，保证整圈脉冲平稳跑完。
- * 加速段步数 = (START-MIN)/DELTA = (4000-200)/8 = 475，减速段同。
+ * 直接高速起转会失步（电机只抖几度），故从 1kHz 起步逐步加速到调用指定的巡航速度，
+ * 末段对称减速回 1kHz，保证整段脉冲平稳跑完。
+ * 巡航（最高）速度由 StartRotateSteps 的 cruisePeriod 参数决定，不再写死。
  */
-#define MOTOR_STEP_PERIOD_MIN     (MOTOR_STEP_TIMER_PERIOD)  /* 200 → 20kHz 巡航(最高速) */
 #define MOTOR_STEP_PERIOD_START   (4000U)                    /* 4000 → 1kHz 起步速度 */
 #define MOTOR_RAMP_DELTA          (8U)                       /* 每步周期增减量 */
-#define MOTOR_RAMP_STEPS          (475U)                     /* 加速/减速段各自步数 */
+#define MOTOR_RAMP_STEPS          (475U)                     /* 减速段触发的剩余步数阈值 */
 
 /* 定长步进剩余脉冲数，ISR 中倒计；为 0 时表示本次旋转已完成。 */
 static volatile uint32_t s_stepsRemaining = 0U;
@@ -22,6 +21,8 @@ static volatile uint32_t s_stepsRemaining = 0U;
 static volatile uint8_t  s_rotateDone     = 1U;
 /* 当前定时器周期（加减速过程中动态变化）。 */
 static volatile uint32_t s_curPeriod      = MOTOR_STEP_PERIOD_START;
+/* 本次旋转的巡航（最高速）周期，由 StartRotateSteps 设定。 */
+static volatile uint32_t s_cruisePeriod   = MOTOR_STEP_PERIOD_START;
 
 /*
  * 设置 MS1/MS2 电平。
@@ -106,7 +107,7 @@ void BspMotor1_StopStep(void)
     DL_TimerG_stopCounter(MOTOR_STEP_TIMER_INST);
 }
 
-void BspMotor1_StartRotateSteps(uint32_t steps)
+void BspMotor1_StartRotateSteps(uint32_t steps, uint32_t cruisePeriod)
 {
     /* 确保上一次旋转已结束，避免重入冲突。 */
     DL_TimerG_stopCounter(MOTOR_STEP_TIMER_INST);
@@ -115,7 +116,16 @@ void BspMotor1_StartRotateSteps(uint32_t steps)
     s_rotateDone     = 0U;
     s_stepsRemaining = steps;
 
-    /* 从慢速起步，避免直接 20kHz 起转失步；后续由 ISR 逐步加速。 */
+    /* 巡航周期限幅：不快于安全下限、不慢于起步速度（慢于起步则全程按起步速度跑）。 */
+    if (cruisePeriod < 1U) {
+        cruisePeriod = 1U;
+    }
+    if (cruisePeriod > MOTOR_STEP_PERIOD_START) {
+        cruisePeriod = MOTOR_STEP_PERIOD_START;
+    }
+    s_cruisePeriod = cruisePeriod;
+
+    /* 从慢速起步，避免直接高速起转失步；后续由 ISR 逐步加速到巡航速度。 */
     s_curPeriod = MOTOR_STEP_PERIOD_START;
     DL_TimerG_setLoadValue(MOTOR_STEP_TIMER_INST, MOTOR_STEP_PERIOD_START - 1U);
     DL_TimerG_setCaptureCompareValue(MOTOR_STEP_TIMER_INST,
@@ -174,10 +184,10 @@ void TIMG0_IRQHandler(void)
             DL_TimerG_setCaptureCompareValue(MOTOR_STEP_TIMER_INST,
                 s_curPeriod / 2U, DL_TIMER_CC_0_INDEX);
         }
-    } else if (s_curPeriod > MOTOR_STEP_PERIOD_MIN) {
+    } else if (s_curPeriod > s_cruisePeriod) {
         s_curPeriod -= MOTOR_RAMP_DELTA;
-        if (s_curPeriod < MOTOR_STEP_PERIOD_MIN) {
-            s_curPeriod = MOTOR_STEP_PERIOD_MIN;
+        if (s_curPeriod < s_cruisePeriod) {
+            s_curPeriod = s_cruisePeriod;
         }
         DL_TimerG_setLoadValue(MOTOR_STEP_TIMER_INST, s_curPeriod - 1U);
         DL_TimerG_setCaptureCompareValue(MOTOR_STEP_TIMER_INST,

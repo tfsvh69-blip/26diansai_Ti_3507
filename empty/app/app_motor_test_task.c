@@ -1,46 +1,90 @@
 #include "app_motor_test_task.h"
 
+#include <stdbool.h>
+#include <stdint.h>
+
 #include "FreeRTOS.h"
 #include "task.h"
 
 #include "app_config.h"
+#include "bsp_key.h"
 #include "bsp_motor.h"
 #include "bsp_uart.h"
 
+/* 1/8 细分下每圈脉冲数 = 200 全步 × 8 = 1600。 */
+#define MOTOR_MICROSTEPS_PER_REV \
+    ((uint32_t)BSP_MOTOR_FULL_STEPS_PER_REV * 8U)
+
 static TaskHandle_t s_motorTestTaskHandle = NULL;
+
+/* 启动一次定长旋转：设方向、使能驱动，按指定速度走 revs 圈。 */
+static void Motor_StartMotion(BspMotorDir_t dir, uint32_t revs,
+                              uint32_t cruisePeriod)
+{
+    BspMotor1_SetDir(dir);
+    BspTmc_EnableAll();
+    BspMotor1_StartRotateSteps(revs * MOTOR_MICROSTEPS_PER_REV, cruisePeriod);
+}
 
 static void AppMotorTestTask_Entry(void *argument)
 {
-    /* 1/8 细分下一整圈所需脉冲数 = 200 全步 × 8 = 1600。 */
-    const uint32_t stepsOneRev =
-        (uint32_t)BSP_MOTOR_FULL_STEPS_PER_REV * 8U;
+    /* 上一拍各按键电平，用于检测“释放->按下”沿，保证每次按下只触发一次。 */
+    bool keyPrev[BSP_KEY_COUNT] = { false, false, false, false };
+    bool keyNow[BSP_KEY_COUNT];
+    uint8_t motorBusy = 0U;
+    uint32_t i;
+    TickType_t lastWakeTime;
 
     (void)argument;
 
-    /*
-     * 电机1测试：1/8 细分、正向、梯形加减速旋转整圈后停止。
-     * 1kHz 起步 → 20kHz 巡航 → 1kHz 收尾，避免直接 20kHz 起转失步。
-     * 按引脚文档 §3.4 顺序：先设细分和方向，再使能 ENN，最后启动定长步进。
-     */
+    /* 细分四路共用，整机只需设一次。 */
     BspTmc_SetMicrostep(TMC_MICROSTEP_8);
-    BspMotor1_SetDir(MOTOR_DIR_FORWARD);
-    BspTmc_EnableAll();
+    BspUart0_SendString(
+        "MOTOR1 key ctrl: K1 slow fwd1, K2 slow rev1, K3 fast fwd2, K4 fast rev2\r\n");
 
-    BspUart0_SendString("MOTOR1: 1/8 step, ramp 1k->20k->1k, rotating 1 rev...\r\n");
+    lastWakeTime = xTaskGetTickCount();
+    for (;;) {
+        for (i = 0U; i < (uint32_t)BSP_KEY_COUNT; i++) {
+            keyNow[i] = BspKey_IsPressed((BspKeyId_t)i);
+        }
 
-    /* 启动定长步进，TIMG0 ZERO 中断计步，转完自动停。 */
-    BspMotor1_StartRotateSteps(stepsOneRev);
+        if (motorBusy == 0U) {
+            /* 空闲：按优先级检测按下沿，触发一次旋转。 */
+            if (keyNow[BSP_KEY_1] && !keyPrev[BSP_KEY_1]) {
+                Motor_StartMotion(MOTOR_DIR_FORWARD, 1U, BSP_MOTOR_PERIOD_SLOW);
+                motorBusy = 1U;
+                BspUart0_SendString("KEY1: slow forward 1 rev\r\n");
+            } else if (keyNow[BSP_KEY_2] && !keyPrev[BSP_KEY_2]) {
+                Motor_StartMotion(MOTOR_DIR_REVERSE, 1U, BSP_MOTOR_PERIOD_SLOW);
+                motorBusy = 1U;
+                BspUart0_SendString("KEY2: slow reverse 1 rev\r\n");
+            } else if (keyNow[BSP_KEY_3] && !keyPrev[BSP_KEY_3]) {
+                Motor_StartMotion(MOTOR_DIR_FORWARD, 2U, BSP_MOTOR_PERIOD_FAST);
+                motorBusy = 1U;
+                BspUart0_SendString("KEY3: fast forward 2 rev\r\n");
+            } else if (keyNow[BSP_KEY_4] && !keyPrev[BSP_KEY_4]) {
+                Motor_StartMotion(MOTOR_DIR_REVERSE, 2U, BSP_MOTOR_PERIOD_FAST);
+                motorBusy = 1U;
+                BspUart0_SendString("KEY4: fast reverse 2 rev\r\n");
+            }
+        } else if (BspMotor1_IsRotateDone()) {
+            /* 旋转完成：松开使能，回到空闲。 */
+            BspTmc_DisableAll();
+            motorBusy = 0U;
+            BspUart0_SendString("MOTOR1: done, motor disabled\r\n");
+        }
 
-    /* 等待旋转完成（1 rev ≈ 80ms；每 1ms 轮询一次）。 */
-    while (!BspMotor1_IsRotateDone()) {
-        vTaskDelay(pdMS_TO_TICKS(1U));
+        /*
+         * 更新按键基线。
+         * 旋转中也持续刷新，使旋转期间按住的键不会在结束瞬间被误判为新按下沿，
+         * 必须松开再按才会触发下一次动作。
+         */
+        for (i = 0U; i < (uint32_t)BSP_KEY_COUNT; i++) {
+            keyPrev[i] = keyNow[i];
+        }
+
+        vTaskDelayUntil(&lastWakeTime, APP_MOTOR_KEY_POLL_TICKS);
     }
-
-    BspTmc_DisableAll();
-    BspUart0_SendString("MOTOR1: 1 rev done, motor disabled\r\n");
-
-    /* 任务使命完成，挂起自身。 */
-    vTaskSuspend(NULL);
 }
 
 void AppMotorTestTask_Init(void)

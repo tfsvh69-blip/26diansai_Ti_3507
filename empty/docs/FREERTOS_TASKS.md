@@ -7,7 +7,7 @@
 | `LED1` | `app/app_led_task.c` | 300 ms | `APP_LED_TASK_PRIORITY` | `APP_LED_TASK_STACK_WORDS` | 无 | PB22 LED 翻转 | 当前已启动，用作 FreeRTOS 调度心跳 |
 | `UART0TX` | `app/app_uart_test_task.c` | 10 ms 接收轮询 | `APP_UART_TEST_TASK_PRIORITY` | `APP_UART_TEST_TASK_STACK_WORDS` | UART0 RX 任意非换行字符 | 返回 `UART RX OK` | UART0 使用 MFCLK 115200，PA10=TX，PA11=RX |
 | `IMU100Hz` | `app/app_imu_uart_task.c` | 10 ms | `APP_IMU_UART_TASK_PRIORITY` | `APP_IMU_UART_TASK_STACK_WORDS` | ATK-MS6DSV/LSM6DSV16X FIFO 姿态数据、PA16 INT 电平 | UART0 输出 Roll/Pitch/Yaw、FIFO 深度、INT 电平 | 对外读取/输出 100Hz；芯片内部 ODR 配为 120Hz，因为无精确 100Hz 档位 |
-| `MOTOR1` | `app/app_motor_test_task.c` | 单次执行后挂起 | `APP_MOTOR_TEST_TASK_PRIORITY` | `APP_MOTOR_TEST_TASK_STACK_WORDS` | 无 | TIMG0_CCP0(PB10) STEP、TIMG0 ZERO 中断计步+梯形加减速 1600 脉冲、PB11 DIR、PA13 ENN，UART0 打印状态 | 电机1一圈测试：梯形加减速 1kHz→20kHz→1kHz，正向旋转一整圈(≈190ms)后停止并禁用 ENN，任务挂起 |
+| `MOTOR1` | `app/app_motor_test_task.c` | 20ms 按键轮询 | `APP_MOTOR_TEST_TASK_PRIORITY` | `APP_MOTOR_TEST_TASK_STACK_WORDS` | KEY1~4(PA28/PA31/PA30/PA17) 按下沿 | TIMG0_CCP0(PB10) STEP+梯形加减速、PB11 DIR、PA13 ENN，UART0 打印状态 | 电机1按键控制：K1 慢正转1圈/K2 慢反转1圈/K3 快正转2圈/K4 快反转2圈；慢≈1圈/秒、快≈5圈/秒，转完自动禁用 ENN |
 
 ## PB22 心跳灯行为
 
