@@ -15,7 +15,7 @@ int main(void)
     BspBoard_Init();
 
     /*
-     * 最早期启动检查点：此处还没有进入 OLED 初始化和 FreeRTOS 调度。
+     * 最早期启动检查点：此处还没有创建任务、未进入 FreeRTOS 调度。
      * 若 PB22 被点亮但串口无输出，优先排查 UART0 接线、波特率和串口助手。
      */
     BspLed_On(BSP_LED_1);
@@ -25,7 +25,7 @@ int main(void)
 
     /*
      * 若能看到上一条 BOOT 但看不到本条，说明可能卡在 App_Init 内部，
-     * 重点检查 OLED 初始化、任务创建断言或新增模块初始化。
+     * 重点检查任务创建断言或新增模块初始化。
      */
     BspUart0_SendString("BOOT: start scheduler\r\n");
 

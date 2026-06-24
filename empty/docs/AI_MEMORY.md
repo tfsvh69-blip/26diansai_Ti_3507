@@ -9,7 +9,7 @@
 - 尽量不要使用核心板特殊功能引脚：A23、A21、A20、A19、A18、A11、A10、A5、A6、A4、A3、A2；确需使用时必须先说明风险并等待人工确认。
 - 硬件接线统一维护在 `docs/HARDWARE_WIRING.md`；修改 GPIO、外设复用或引脚时必须同步更新。
 - 当前 PB22 为 LED1，引脚实测高电平点亮、低电平熄灭；`App_Init()` 启动 `LED1` 任务后每 300ms 翻转一次，用作 FreeRTOS 心跳灯。
-- 当前 OLED 使用 GPIO 模拟 I2C：SCL=PB9，SDA=PB8。
+- OLED 历史接线为 GPIO 模拟 I2C SCL=PB9、SDA=PB8；自天猛星扩展板 v1.0 起这两脚改作 TMC 细分 MS1/MS2，OLED 已停用（详见下方电机相关条目）。
 - 任务配置集中放在 `common/app_config.h`；新增或修改任务后同步更新 `docs/FREERTOS_TASKS.md`。
 - 串口乱码最终解决思路：不要继续猜文本编码或 BUSCLK 频率，改用确定的 MFCLK 4MHz 作为 UART0 时钟源；115200 使用 16x 过采样，`IBRD=2`、`FBRD=11`。
 - 后续新增或修改 UART 时必须先按 `docs/UART_DEBUG_GUIDE.md` 的流程确认实例、引脚、共地、电平、时钟源、分频和 bit 宽，不要直接反复试波特率。
@@ -24,3 +24,8 @@
 - `APP_IMU_I2C_PIN_TEST_ENABLE` 是临时硬件排查宏；置 1 时 IMU 任务只用开漏模拟方式翻转 PB2/PB3 并读取 GPIO DIN 输出 SET/READ，不会读取 IMU。2026-06-18 用户实测 PB2/PB3 SET/READ 一致，MCU 端 GPIO 读写正常；当前宏已改回 0。
 - MSPM0G3507 上 PB2/PB3 的 I2C1 复用为 `IOMUX_PINCM15_PF_I2C1_SCL` 和 `IOMUX_PINCM16_PF_I2C1_SDA`；用户接线表里的 U2.15/U2.17 是板口/封装编号，不要误把 SDA 配成 `PINCM17`。
 - IMU 对外读取和 UART0 输出按 100Hz，即 `IMU100Hz` 任务周期 10ms；LSM6DSV16X 内部 ODR 无精确 100Hz 档位，当前加速度、陀螺仪和 SFLP 使用 120Hz。
+- 工程已迁到天猛星扩展板 v1.0（四路 TMC2209 步进 + 舵机 + 循迹 + 激光测距），引脚以 `pcb引脚配置文档/v1.0/tianmengxing_pin_config.md` 为准；原 OLED 的 PB8/PB9 改作 TMC 细分 MS1/MS2，本板不再接 OLED，`app_main.c` 已移除 OLED 启动屏，`OLED_*` 宏暂留只为 `module/oled` 能编译。
+- 电机1驱动：STEP=PB10(TIMG0_CCP0 硬件定时器)、DIR=PB11、ENN=PA13(低有效，四路共用)、MS1=PB8/MS2=PB9(四路共用细分)；STEP 定时器源 MFCLK 4MHz、预分频/40=100kHz，步频由 `MOTOR_STEP_TIMER_PERIOD` 决定(25→4kHz、125→800Hz、500→200Hz)。
+- 步进电机"原地剧烈抖动、不转"的首要根因是相线圈配对错(把两个线圈各掏一根凑成一对)，不是方向反(方向反只会反转不抖)；断电量电阻找两组导通对即可定位。区分共振/丢步：降到 200Hz 还抖就是配对错。本工程用户改对线序后电机正常旋转。
+- TMC2209 不接 UART 时电流由 VREF 电位器标定，VREF 设每相 RMS 电流(`Irms≈VREF×0.71`，随模块 Rsense 变)；以温热不烫、捏轴有反抗力矩为准，用户已调到合适数值。
+- 电机当前无加减速斜坡、直接启动，步频有上限，拉太高会失步重新表现为抖动；要更高转速需先加加速度斜坡。

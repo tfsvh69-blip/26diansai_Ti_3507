@@ -74,11 +74,13 @@ void SYSCFG_DL_initPower(void)
     DL_GPIO_reset(GPIOB);
     DL_UART_Main_reset(UART_0_INST);
     DL_I2C_reset(IMU_I2C_1_INST);
+    DL_TimerG_reset(MOTOR_STEP_TIMER_INST);
 
     DL_GPIO_enablePower(GPIOA);
     DL_GPIO_enablePower(GPIOB);
     DL_UART_Main_enablePower(UART_0_INST);
     DL_I2C_enablePower(IMU_I2C_1_INST);
+    DL_TimerG_enablePower(MOTOR_STEP_TIMER_INST);
 
     delay_cycles(POWER_STARTUP_DELAY);
 }
@@ -99,12 +101,23 @@ void SYSCFG_DL_GPIO_init(void)
         DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_DOWN,
         DL_GPIO_DRIVE_STRENGTH_LOW, DL_GPIO_HIZ_DISABLE);
 
-    DL_GPIO_initDigitalOutputFeatures(OLED_PIN_SCL_IOMUX,
+    /*
+     * 步进电机 / TMC2209 控制脚（天猛星扩展板 v1.0）。
+     * PB8/PB9 在本板改作 TMC 细分 MS1/MS2，不再用于 OLED。
+     * STEP 为 TIMG0_CCP0 复用输出；DIR/ENN/MS1/MS2 为普通 GPIO 输出。
+     */
+    DL_GPIO_initPeripheralOutputFunction(MOTOR1_STEP_IOMUX, MOTOR1_STEP_IOMUX_FUNC);
+    DL_GPIO_initDigitalOutputFeatures(MOTOR1_DIR_IOMUX,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_DOWN,
+        DL_GPIO_DRIVE_STRENGTH_LOW, DL_GPIO_HIZ_DISABLE);
+    DL_GPIO_initDigitalOutputFeatures(TMC_ENN_IOMUX,
         DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
         DL_GPIO_DRIVE_STRENGTH_LOW, DL_GPIO_HIZ_DISABLE);
-
-    DL_GPIO_initDigitalOutputFeatures(OLED_PIN_SDA_IOMUX,
-        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
+    DL_GPIO_initDigitalOutputFeatures(TMC_MS1_IOMUX,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_DOWN,
+        DL_GPIO_DRIVE_STRENGTH_LOW, DL_GPIO_HIZ_DISABLE);
+    DL_GPIO_initDigitalOutputFeatures(TMC_MS2_IOMUX,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_DOWN,
         DL_GPIO_DRIVE_STRENGTH_LOW, DL_GPIO_HIZ_DISABLE);
 
     /*
@@ -128,9 +141,18 @@ void SYSCFG_DL_GPIO_init(void)
         DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_DOWN,
         DL_GPIO_HYSTERESIS_ENABLE, DL_GPIO_WAKEUP_DISABLE);
 
-    DL_GPIO_setPins(GPIOB, OLED_PIN_SCL_PIN | OLED_PIN_SDA_PIN);
-    DL_GPIO_clearPins(GPIOB, LED_LED1_PIN);
-    DL_GPIO_enableOutput(GPIOB, LED_LED1_PIN | OLED_PIN_SCL_PIN | OLED_PIN_SDA_PIN);
+    /*
+     * 上电安全默认状态（对应引脚文档 §3.4 初始化顺序）：
+     * 先 ENN 拉高禁用四路驱动；DIR 正向(低)；MS1=0/MS2=0 → 1/8 细分；LED 灭。
+     * STEP 由定时器输出，这里不手动置位。
+     */
+    DL_GPIO_setPins(GPIOA, TMC_ENN_PIN);
+    DL_GPIO_enableOutput(GPIOA, TMC_ENN_PIN);
+
+    DL_GPIO_clearPins(GPIOB,
+        LED_LED1_PIN | MOTOR1_DIR_PIN | TMC_MS1_PIN | TMC_MS2_PIN);
+    DL_GPIO_enableOutput(GPIOB,
+        LED_LED1_PIN | MOTOR1_STEP_PIN | MOTOR1_DIR_PIN | TMC_MS1_PIN | TMC_MS2_PIN);
 }
 
 void SYSCFG_DL_SYSCTL_init(void)
@@ -210,4 +232,43 @@ void SYSCFG_DL_I2C_1_init(void)
     DL_I2C_enableControllerClockStretching(IMU_I2C_1_INST);
     DL_I2C_disableControllerACK(IMU_I2C_1_INST);
     DL_I2C_enableController(IMU_I2C_1_INST);
+}
+
+/*
+ * 电机1 STEP 定时器：TIMG0_CCP0 输出连续方波作为步进脉冲。
+ * 时钟源选 MFCLK(4MHz)，与 UART/I2C 同源，避免 BUSCLK/ULPCLK 分频带来的步频不确定。
+ * 预分频 /40 → 100kHz；周期 25 → 4000Hz 步频；占空比约 50%（脉宽足够 TMC2209 识别）。
+ * 初始化后定时器保持停止，由 bsp_motor 在使能电机时再启动计数。
+ */
+static const DL_TimerG_ClockConfig gMotorStepClockConfig = {
+    .clockSel    = DL_TIMER_CLOCK_MFCLK,
+    .divideRatio = DL_TIMER_CLOCK_DIVIDE_1,
+    .prescale    = MOTOR_STEP_TIMER_PRESCALE
+};
+
+static const DL_TimerG_PWMConfig gMotorStepConfig = {
+    .pwmMode           = DL_TIMER_PWM_MODE_EDGE_ALIGN,
+    .period            = MOTOR_STEP_TIMER_PERIOD,
+    .isTimerWithFourCC = false,
+    .startTimer        = DL_TIMER_STOP
+};
+
+void SYSCFG_DL_TIMER_STEP_init(void)
+{
+    DL_TimerG_setClockConfig(MOTOR_STEP_TIMER_INST,
+        (DL_TimerG_ClockConfig *) &gMotorStepClockConfig);
+    DL_TimerG_initPWMMode(MOTOR_STEP_TIMER_INST,
+        (DL_TimerG_PWMConfig *) &gMotorStepConfig);
+
+    /* CCP0 输出：初值低、不反相、使用功能值驱动。 */
+    DL_TimerG_setCaptureCompareOutCtl(MOTOR_STEP_TIMER_INST,
+        DL_TIMER_CC_OCTL_INIT_VAL_LOW, DL_TIMER_CC_OCTL_INV_OUT_DISABLED,
+        DL_TIMER_CC_OCTL_SRC_FUNCVAL, DL_TIMERG_CAPTURE_COMPARE_0_INDEX);
+    DL_TimerG_setCaptCompUpdateMethod(MOTOR_STEP_TIMER_INST,
+        DL_TIMER_CC_UPDATE_METHOD_IMMEDIATE, DL_TIMERG_CAPTURE_COMPARE_0_INDEX);
+    DL_TimerG_setCaptureCompareValue(MOTOR_STEP_TIMER_INST,
+        MOTOR_STEP_TIMER_DUTY, DL_TIMER_CC_0_INDEX);
+
+    DL_TimerG_enableClock(MOTOR_STEP_TIMER_INST);
+    DL_TimerG_setCCPDirection(MOTOR_STEP_TIMER_INST, DL_TIMER_CC0_OUTPUT);
 }

@@ -552,6 +552,16 @@
               <FileType>5</FileType>
               <FilePath>..\app\app_uart_test_task.h</FilePath>
             </File>
+            <File>
+              <FileName>app_motor_test_task.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\app\app_motor_test_task.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_motor_test_task.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\app\app_motor_test_task.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
@@ -596,6 +606,16 @@
               <FileName>bsp_uart.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\bsp\bsp_uart.h</FilePath>
+            </File>
+            <File>
+              <FileName>bsp_motor.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\bsp\bsp_motor.c</FilePath>
+            </File>
+            <File>
+              <FileName>bsp_motor.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\bsp\bsp_motor.h</FilePath>
             </File>
           </Files>
         </Group>

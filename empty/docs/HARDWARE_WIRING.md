@@ -24,8 +24,11 @@
 | 硬件 | 信号 | MCU 引脚 | 工程宏 | IOMUX/封装脚位 | 电气/功能说明 | 排查现象 |
 |---|---|---|---|---|---|---|
 | LED1 | LED1 控制 | PB22 | `LED_LED1_PIN` | `IOMUX_PINCM50`，package pin 21 | GPIO 输出，实测高电平点亮、低电平熄灭 | FreeRTOS 启动后每 300ms 翻转一次，用作系统心跳 |
-| OLED | SCL | PB9 | `OLED_PIN_SCL_PIN` | `IOMUX_PINCM26`，package pin 61 | GPIO 模拟 I2C 时钟线，上拉输出 | OLED 无显示时优先检查该线是否接反或悬空 |
-| OLED | SDA | PB8 | `OLED_PIN_SDA_PIN` | `IOMUX_PINCM25`，package pin 60 | GPIO 模拟 I2C 数据线，上拉输出 | OLED 无显示时优先检查该线是否接反或悬空 |
+| 电机1 | M1_STEP | PB10 | `MOTOR1_STEP_PIN` | `IOMUX_PINCM27` / `IOMUX_PINCM27_PF_TIMG0_CCP0`，U2.49 | TIMG0_CCP0 硬件定时器输出，当前 200Hz 方波步进脉冲 | 测试任务运行时 PB10 应有连续方波；不转优先查 ENN、VM、电流 |
+| 电机1 | M1_DIR | PB11 | `MOTOR1_DIR_PIN` | `IOMUX_PINCM28`，U2.47 | GPIO 输出，低=正向，高=反向 | 方向不对就翻转该电平或调线序 |
+| TMC2209 | TMC_ENN | PA13 | `TMC_ENN_PIN` | `IOMUX_PINCM35`，U2.30 | GPIO 输出，低有效，四路驱动共用使能 | 高电平电机失力；测试任务会拉低使能 |
+| TMC2209 | TMC_MS1 | PB8 | `TMC_MS1_PIN` | `IOMUX_PINCM25`，U2.27 | GPIO 输出，四路共用细分；原 OLED SDA 改用 | MS1=0,MS2=0 → 1/8 细分 |
+| TMC2209 | TMC_MS2 | PB9 | `TMC_MS2_PIN` | `IOMUX_PINCM26`，U2.28 | GPIO 输出，四路共用细分；原 OLED SCL 改用 | 见引脚文档 §3.3 MS1/MS2 细分表 |
 | UART0 | TX | PA10 | `GPIO_UART_0_TX_PIN` | `IOMUX_PINCM21` / `IOMUX_PINCM21_PF_UART0_TX` | UART0 发送，MFCLK/115200 8N1；PA10 属于核心板特殊功能风险引脚，已按用户确认使用 | 串口助手应收到启动提示、IMU 输出或 `UART RX OK` 回显 |
 | UART0 | RX | PA11 | `GPIO_UART_0_RX_PIN` | `IOMUX_PINCM22` / `IOMUX_PINCM22_PF_UART0_RX` | UART0 接收，用于接收串口助手发来的命令；PA11 属于核心板特殊功能风险引脚 | 发送任意非换行字符后回显 `UART RX OK` |
 | ATK-MS6DSV | IMU_SCL | PB2 | `IMU_I2C_SCL_PIN` | `IOMUX_PINCM15` / `IOMUX_PINCM15_PF_I2C1_SCL`，U2.15 | GPIO 软件 I2C SCL；已外接上拉，代码保留 MCU 内部上拉用于调试 | 串口应输出 `IMU INIT OK`，否则优先查 SCL 是否接到 B02 |
@@ -34,18 +37,27 @@
 
 > 当前 UART0 TX 已从 PB0 改为 PA10。PA10/PA11 均属于核心板特殊功能风险引脚，本次按用户确认使用。
 
-## 当前 OLED 上电显示内容
+## OLED 停用说明
 
-烧录并运行当前程序后，OLED 应显示以下 ASCII 内容：
+- 天猛星扩展板 v1.0 把原 OLED 的 PB8/PB9 改作 TMC 细分 MS1/MS2，本板不再接 OLED。
+- `app_main.c` 已移除 OLED 启动屏，`SYSCFG_DL_GPIO_init` 已把 PB8/PB9 改为 GPIO 输出驱动 MS1/MS2。
+- `ti_msp_dl_config.h` 仍保留 `OLED_*` 宏仅为兼容 `module/oled` 编译，运行时不再初始化这两脚；`module/oled` 后续可整体移除。
 
-| 行 | 内容 |
-|---|---|
-| 第 1 行 | `MSPM0G3507` |
-| 第 2 行 | `FreeRTOS OK` |
-| 第 3 行 | `IMU SWI2C 0x6A` |
-| 第 4 行 | `PB22 Heartbeat` |
+## 电机1驱动测试
 
-若 PB22 LED 正常闪烁但 OLED 无显示，优先检查 OLED 供电、GND、SCL=PB9、SDA=PB8，以及 OLED I2C 地址是否为驱动中使用的 `0x78` 写地址。
+- 步进驱动 TMC2209，STEP=PB10(TIMG0_CCP0)、DIR=PB11、ENN=PA13(低有效，四路共用)、MS1=PB8、MS2=PB9(四路共用细分)。
+- 上电默认安全状态：ENN 拉高禁用、STEP 停止、DIR 正向、MS1=0/MS2=0(1/8 细分)。
+- `MOTOR1` 任务按引脚文档 §3.4 顺序启动：设细分→定方向→启 STEP 定时器→拉低 ENN 使能，随后电机 1/8 细分、4kHz、持续匀速旋转。
+- 当前步频 4kHz(1/8 细分约 500 整步/秒、约 2.5 转/秒)，由 `MOTOR_STEP_TIMER_PERIOD` 决定(周期 25 → 4000Hz；500→200Hz、125→800Hz)。
+- 串口会先输出 `MOTOR1: 1/8 step, 4kHz, spinning`，随后每秒 `MOTOR1: running`。
+
+### 电机1调试结论（已实测可正常旋转）
+
+- **原地剧烈抖动 = 相线圈配对错**：4 根电机线必须按"同一线圈两根"成对接入驱动 A1/A2、B1/B2，不能两个线圈各掏一根凑一对。断电用万用表电阻档量出两组导通对(同线圈约 1~10Ω，异线圈开路)即可确认。本工程实测把线序改对后电机正常旋转。
+- 区分"线序错"与"共振/丢步"的方法：把步频降到 200Hz 观察——降频后能顺转多为共振/丢步；200Hz 仍只原地抖则是线圈配对错。
+- **TMC2209 电流靠 VREF 电位器标定**(不接 UART)：VREF 设的是每相 RMS 电流，`Irms ≈ VREF×0.71`(常见 0.11Ω Rsense 模块，具体随模块 Rsense 变)。调法：塑料螺丝刀小步拧、边量 VREF 电压边调，最终以电机/驱动温热不烫(<60~70℃)、手捏轴有明显反抗力矩为准。本工程已由用户调到合适数值。
+- **无加减速直接启动有步频上限**：当前无加速度斜坡，步频拉太高会瞬间失步、重新表现为原地抖动。需要更高转速时应先加加速度斜坡，再逐步减小 `MOTOR_STEP_TIMER_PERIOD`。
+- 电机不转排查顺序：① VM(4S) 是否上电；② TMC2209 VREF 电流是否调到有力矩；③ ENN 是否确实拉低；④ PB10 是否有方波；⑤ A/B 相线序是否接错。
 
 ## PB22 心跳灯
 

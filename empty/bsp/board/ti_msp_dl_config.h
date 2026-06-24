@@ -82,12 +82,56 @@ extern "C" {
 #define LED_LED1_PIN                                            (DL_GPIO_PIN_22)
 #define LED_LED1_IOMUX                                           (IOMUX_PINCM50)
 
-/* OLED：GPIO 模拟 I2C。 */
+/*
+ * OLED：GPIO 模拟 I2C。
+ * 注意：天猛星扩展板 v1.0 上 PB8/PB9 已改作 TMC 细分 MS1/MS2，本板不再接 OLED。
+ * 这里保留宏仅为兼容 module/oled 的编译，运行时不会再初始化/驱动这两脚。
+ */
 #define OLED_PORT                                                        (GPIOB)
 #define OLED_PIN_SCL_PIN                                         (DL_GPIO_PIN_9)
 #define OLED_PIN_SCL_IOMUX                                       (IOMUX_PINCM26)
 #define OLED_PIN_SDA_PIN                                         (DL_GPIO_PIN_8)
 #define OLED_PIN_SDA_IOMUX                                       (IOMUX_PINCM25)
+
+/*
+ * 步进电机 / TMC2209（天猛星扩展板 v1.0）。
+ * 四路驱动共用 TMC_ENN / TMC_MS1 / TMC_MS2；当前先实现电机1。
+ */
+/* 电机1 STEP：PB10（PINCM27），使用 TIMG0_CCP0 硬件定时器输出方波。 */
+#define MOTOR1_STEP_PORT                                                 (GPIOB)
+#define MOTOR1_STEP_PIN                                          (DL_GPIO_PIN_10)
+#define MOTOR1_STEP_IOMUX                                        (IOMUX_PINCM27)
+#define MOTOR1_STEP_IOMUX_FUNC                        IOMUX_PINCM27_PF_TIMG0_CCP0
+#define MOTOR_STEP_TIMER_INST                                             (TIMG0)
+/*
+ * STEP 定时器：源 MFCLK=4MHz，预分频 /40 得 100kHz 计数节拍。
+ * 周期 25 → 4000Hz 步频；1/8 细分下约 500 整步/秒、约 2.5 转/秒。
+ * 线序与 VREF 电流标定完成后把分频调小提速观察正常运行。
+ * 注意：当前无加减速斜坡，直接启动；步频不能再无限提高，否则瞬间失步会重新表现为原地抖动，
+ * 需更高速时应先加加速度斜坡，再逐步减小 MOTOR_STEP_TIMER_PERIOD。
+ */
+#define MOTOR_STEP_TIMER_PRESCALE                                          (39U)
+#define MOTOR_STEP_TIMER_PERIOD                                            (25U)
+#define MOTOR_STEP_TIMER_DUTY                                              (12U)
+
+/* 电机1 DIR：PB11（PINCM28），普通 GPIO，低电平为正向。 */
+#define MOTOR1_DIR_PORT                                                  (GPIOB)
+#define MOTOR1_DIR_PIN                                           (DL_GPIO_PIN_11)
+#define MOTOR1_DIR_IOMUX                                         (IOMUX_PINCM28)
+
+/* TMC 总使能 ENN：PA13（PINCM35），低有效，四路共用。 */
+#define TMC_ENN_PORT                                                     (GPIOA)
+#define TMC_ENN_PIN                                             (DL_GPIO_PIN_13)
+#define TMC_ENN_IOMUX                                            (IOMUX_PINCM35)
+
+/* TMC 细分 MS1：PB8（PINCM25，原 OLED SDA），四路共用。 */
+#define TMC_MS1_PORT                                                     (GPIOB)
+#define TMC_MS1_PIN                                              (DL_GPIO_PIN_8)
+#define TMC_MS1_IOMUX                                            (IOMUX_PINCM25)
+/* TMC 细分 MS2：PB9（PINCM26，原 OLED SCL），四路共用。 */
+#define TMC_MS2_PORT                                                     (GPIOB)
+#define TMC_MS2_PIN                                              (DL_GPIO_PIN_9)
+#define TMC_MS2_IOMUX                                            (IOMUX_PINCM26)
 
 /* IMU 接线：PB2=SCL，PB3=SDA，PA16=INT 输入；SCL/SDA 已外接上拉，代码保留 MCU 内部上拉用于调试。 */
 #define IMU_I2C_SCL_PORT                                                  (GPIOB)
@@ -110,6 +154,7 @@ void SYSCFG_DL_GPIO_init(void);
 void SYSCFG_DL_SYSCTL_init(void);
 void SYSCFG_DL_UART_0_init(void);
 void SYSCFG_DL_I2C_1_init(void);
+void SYSCFG_DL_TIMER_STEP_init(void);
 void SYSCFG_DL_SYSTICK_init(void);
 
 #ifdef __cplusplus

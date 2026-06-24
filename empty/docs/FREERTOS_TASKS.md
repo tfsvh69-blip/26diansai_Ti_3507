@@ -7,6 +7,7 @@
 | `LED1` | `app/app_led_task.c` | 300 ms | `APP_LED_TASK_PRIORITY` | `APP_LED_TASK_STACK_WORDS` | 无 | PB22 LED 翻转 | 当前已启动，用作 FreeRTOS 调度心跳 |
 | `UART0TX` | `app/app_uart_test_task.c` | 10 ms 接收轮询 | `APP_UART_TEST_TASK_PRIORITY` | `APP_UART_TEST_TASK_STACK_WORDS` | UART0 RX 任意非换行字符 | 返回 `UART RX OK` | UART0 使用 MFCLK 115200，PA10=TX，PA11=RX |
 | `IMU100Hz` | `app/app_imu_uart_task.c` | 10 ms | `APP_IMU_UART_TASK_PRIORITY` | `APP_IMU_UART_TASK_STACK_WORDS` | ATK-MS6DSV/LSM6DSV16X FIFO 姿态数据、PA16 INT 电平 | UART0 输出 Roll/Pitch/Yaw、FIFO 深度、INT 电平 | 对外读取/输出 100Hz；芯片内部 ODR 配为 120Hz，因为无精确 100Hz 档位 |
+| `MOTOR1` | `app/app_motor_test_task.c` | 1000 ms 状态打印 | `APP_MOTOR_TEST_TASK_PRIORITY` | `APP_MOTOR_TEST_TASK_STACK_WORDS` | 无 | TIMG0_CCP0(PB10) 持续 4kHz STEP、PB11 DIR、PA13 ENN、PB8/PB9 MS1/MS2，UART0 打印状态 | 电机1驱动测试：线序+VREF 电流已标定，实测可正常旋转；当前 1/8 细分、4kHz、约 2.5 转/秒 |
 
 ## PB22 心跳灯行为
 
@@ -16,7 +17,7 @@
 
 ## 当前串口测试行为
 
-- `main()` 在 `BspBoard_Init()` 后立即输出 `BOOT: board init ok`，此时还未进入 OLED 初始化和 FreeRTOS 调度。
+- `main()` 在 `BspBoard_Init()` 后立即输出 `BOOT: board init ok`，此时还未创建任务、未进入 FreeRTOS 调度。
 - `main()` 在 `App_Init()` 返回后输出 `BOOT: start scheduler`，随后才启动 FreeRTOS 调度器。
 - 上电后输出 `UART0 RX READY, PB22 heartbeat active`。
 - 收到任意非换行字符后返回 `UART RX OK`。

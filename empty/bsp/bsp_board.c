@@ -1,6 +1,7 @@
 #include "bsp_board.h"
 
 #include "bsp_led.h"
+#include "bsp_motor.h"
 #include "ti_msp_dl_config.h"
 
 void BspBoard_Init(void)
@@ -14,6 +15,8 @@ void BspBoard_Init(void)
     SYSCFG_DL_SYSCTL_init();
     SYSCFG_DL_UART_0_init();
     SYSCFG_DL_I2C_1_init();
+    SYSCFG_DL_TIMER_STEP_init();
 
     BspLed_Init();
+    BspMotor_Init();
 }
