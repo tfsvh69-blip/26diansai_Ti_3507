@@ -24,7 +24,7 @@
 | 硬件 | 信号 | MCU 引脚 | 工程宏 | IOMUX/封装脚位 | 电气/功能说明 | 排查现象 |
 |---|---|---|---|---|---|---|
 | LED1 | LED1 控制 | PB22 | `LED_LED1_PIN` | `IOMUX_PINCM50`，package pin 21 | GPIO 输出，实测高电平点亮、低电平熄灭 | FreeRTOS 启动后每 300ms 翻转一次，用作系统心跳 |
-| 电机1 | M1_STEP | PB10 | `MOTOR1_STEP_PIN` | `IOMUX_PINCM27` / `IOMUX_PINCM27_PF_TIMG0_CCP0`，U2.49 | TIMG0_CCP0 硬件定时器输出，当前 200Hz 方波步进脉冲 | 测试任务运行时 PB10 应有连续方波；不转优先查 ENN、VM、电流 |
+| 电机1 | M1_STEP | PB10 | `MOTOR1_STEP_PIN` | `IOMUX_PINCM27` / `IOMUX_PINCM27_PF_TIMG0_CCP0`，U2.49 | TIMG0_CCP0 硬件定时器输出，20kHz 方波步进脉冲；TIMG0 ZERO 中断计步 | 旋转期间 PB10 有约 80ms 的连续方波；旋转完成后定时器停止 |
 | 电机1 | M1_DIR | PB11 | `MOTOR1_DIR_PIN` | `IOMUX_PINCM28`，U2.47 | GPIO 输出，低=正向，高=反向 | 方向不对就翻转该电平或调线序 |
 | TMC2209 | TMC_ENN | PA13 | `TMC_ENN_PIN` | `IOMUX_PINCM35`，U2.30 | GPIO 输出，低有效，四路驱动共用使能 | 高电平电机失力；测试任务会拉低使能 |
 | TMC2209 | TMC_MS1 | PB8 | `TMC_MS1_PIN` | `IOMUX_PINCM25`，U2.27 | GPIO 输出，四路共用细分；原 OLED SDA 改用 | MS1=0,MS2=0 → 1/8 细分 |
@@ -47,9 +47,11 @@
 
 - 步进驱动 TMC2209，STEP=PB10(TIMG0_CCP0)、DIR=PB11、ENN=PA13(低有效，四路共用)、MS1=PB8、MS2=PB9(四路共用细分)。
 - 上电默认安全状态：ENN 拉高禁用、STEP 停止、DIR 正向、MS1=0/MS2=0(1/8 细分)。
-- `MOTOR1` 任务按引脚文档 §3.4 顺序启动：设细分→定方向→启 STEP 定时器→拉低 ENN 使能，随后电机 1/8 细分、4kHz、持续匀速旋转。
-- 当前步频 4kHz(1/8 细分约 500 整步/秒、约 2.5 转/秒)，由 `MOTOR_STEP_TIMER_PERIOD` 决定(周期 25 → 4000Hz；500→200Hz、125→800Hz)。
-- 串口会先输出 `MOTOR1: 1/8 step, 4kHz, spinning`，随后每秒 `MOTOR1: running`。
+- `MOTOR1` 任务：设细分→定方向→使能 ENN→启动定长步进(1600 脉冲 = 1 整圈)→等完成→禁用 ENN→任务挂起。
+- 步频 20kHz(prescale=0，物理最小分频；`MOTOR_STEP_TIMER_PERIOD`=200)，1 整圈(1600 步)约 80ms 完成。
+- 步频由 `MOTOR_STEP_TIMER_PERIOD` 控制：200→20kHz、400→10kHz、500→8kHz。无加减速斜坡，步频太高会失步。
+- TIMG0 ZERO 中断每 STEP 周期触发一次，ISR 内倒计 `s_stepsRemaining`，归零后停定时器+关 NVIC。
+- 串口输出：`MOTOR1: 1/8 step, 20kHz, rotating 1 rev...`，约 80ms 后输出 `MOTOR1: 1 rev done, motor disabled`。
 
 ### 电机1调试结论（已实测可正常旋转）
 

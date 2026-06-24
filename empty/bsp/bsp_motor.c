@@ -1,6 +1,14 @@
 #include "bsp_motor.h"
 
+#include <stdbool.h>
+#include <stdint.h>
+
 #include "ti_msp_dl_config.h"
+
+/* 定长步进剩余脉冲数，ISR 中倒计；为 0 时表示本次旋转已完成。 */
+static volatile uint32_t s_stepsRemaining = 0U;
+/* 旋转完成标志；StartRotateSteps 置 0，ISR 完成后置 1。 */
+static volatile uint8_t  s_rotateDone     = 1U;
 
 /*
  * 设置 MS1/MS2 电平。
@@ -83,4 +91,51 @@ void BspMotor1_StopStep(void)
 {
     /* 停止计数，STEP 输出停在当前电平，电机停步。 */
     DL_TimerG_stopCounter(MOTOR_STEP_TIMER_INST);
+}
+
+void BspMotor1_StartRotateSteps(uint32_t steps)
+{
+    /* 确保上一次旋转已结束，避免重入冲突。 */
+    DL_TimerG_stopCounter(MOTOR_STEP_TIMER_INST);
+    NVIC_DisableIRQ(MOTOR_STEP_TIMER_IRQn);
+
+    s_rotateDone     = 0U;
+    s_stepsRemaining = steps;
+
+    /* 清除可能残留的 ZERO 中断标志，再使能中断和 NVIC。 */
+    DL_TimerG_clearInterruptStatus(MOTOR_STEP_TIMER_INST,
+        DL_TIMERG_INTERRUPT_ZERO_EVENT);
+    DL_TimerG_enableInterrupt(MOTOR_STEP_TIMER_INST,
+        DL_TIMERG_INTERRUPT_ZERO_EVENT);
+    NVIC_EnableIRQ(MOTOR_STEP_TIMER_IRQn);
+
+    DL_TimerG_startCounter(MOTOR_STEP_TIMER_INST);
+}
+
+bool BspMotor1_IsRotateDone(void)
+{
+    return (s_rotateDone != 0U);
+}
+
+/*
+ * TIMG0 ZERO 中断处理：每个 STEP 脉冲周期结束时触发一次。
+ * 倒计步数；归零后停定时器、关中断并置完成标志。
+ * ISR 中不调用 FreeRTOS API（符合 CLAUDE.md FreeRTOS 规则）。
+ */
+void TIMG0_IRQHandler(void)
+{
+    DL_TimerG_clearInterruptStatus(MOTOR_STEP_TIMER_INST,
+        DL_TIMERG_INTERRUPT_ZERO_EVENT);
+
+    if (s_stepsRemaining > 0U) {
+        s_stepsRemaining--;
+    }
+
+    if (s_stepsRemaining == 0U) {
+        DL_TimerG_stopCounter(MOTOR_STEP_TIMER_INST);
+        DL_TimerG_clearInterruptStatus(MOTOR_STEP_TIMER_INST,
+            DL_TIMERG_INTERRUPT_ZERO_EVENT);
+        NVIC_DisableIRQ(MOTOR_STEP_TIMER_IRQn);
+        s_rotateDone = 1U;
+    }
 }

@@ -11,29 +11,36 @@ static TaskHandle_t s_motorTestTaskHandle = NULL;
 
 static void AppMotorTestTask_Entry(void *argument)
 {
-    TickType_t lastWakeTime;
+    /* 1/8 细分下一整圈所需脉冲数 = 200 全步 × 8 = 1600。 */
+    const uint32_t stepsOneRev =
+        (uint32_t)MOTOR_FULL_STEPS_PER_REV * 8U;
 
     (void)argument;
 
     /*
-     * 电机1驱动测试：1/8 细分、正向、持续匀速旋转。
-     * 按引脚文档 §3.4 顺序：先停 STEP、定方向和细分，再启 STEP，最后使能 ENN。
-     * 线序与 VREF 电流已标定完成，步频提到 4kHz 观察正常转速运行。
-     * 仍无加减速斜坡，直接启动；后续要更高速需加速度斜坡，否则会失步重新表现为原地抖动。
+     * 电机1测试：物理最小分频（prescale=0，定时器 4MHz）、20kHz 步频、正向旋转整圈后停止。
+     * 按引脚文档 §3.4 顺序：先设细分和方向，再使能 ENN，最后启动定长步进。
+     * 无加减速斜坡；若电机失步（重现抖动），增大 MOTOR_STEP_TIMER_PERIOD（减慢步频）。
      */
     BspTmc_SetMicrostep(TMC_MICROSTEP_8);
     BspMotor1_SetDir(MOTOR_DIR_FORWARD);
-    BspMotor1_StartStep();
     BspTmc_EnableAll();
 
-    BspUart0_SendString("MOTOR1: 1/8 step, 4kHz, spinning\r\n");
+    BspUart0_SendString("MOTOR1: 1/8 step, 20kHz, rotating 1 rev...\r\n");
 
-    lastWakeTime = xTaskGetTickCount();
-    for (;;) {
-        /* 持续旋转期间周期性输出心跳，便于确认任务仍在运行。 */
-        BspUart0_SendString("MOTOR1: running\r\n");
-        vTaskDelayUntil(&lastWakeTime, APP_MOTOR_TEST_PERIOD_TICKS);
+    /* 启动定长步进，TIMG0 ZERO 中断计步，转完自动停。 */
+    BspMotor1_StartRotateSteps(stepsOneRev);
+
+    /* 等待旋转完成（1 rev ≈ 80ms；每 1ms 轮询一次）。 */
+    while (!BspMotor1_IsRotateDone()) {
+        vTaskDelay(pdMS_TO_TICKS(1U));
     }
+
+    BspTmc_DisableAll();
+    BspUart0_SendString("MOTOR1: 1 rev done, motor disabled\r\n");
+
+    /* 任务使命完成，挂起自身。 */
+    vTaskSuspend(NULL);
 }
 
 void AppMotorTestTask_Init(void)

@@ -40,6 +40,14 @@ void BspMotor1_SetDir(BspMotorDir_t dir);
 void BspMotor1_StartStep(void);
 void BspMotor1_StopStep(void);
 
+/*
+ * 定长步进：启动后由 TIMG0 ZERO 中断倒计脉冲，数到 0 自动停止定时器。
+ * 非阻塞，调用后用 BspMotor1_IsRotateDone() 轮询结果。
+ * 注意：调用前必须已设置方向并使能 ENN，否则电机不动。
+ */
+void BspMotor1_StartRotateSteps(uint32_t steps);
+bool BspMotor1_IsRotateDone(void);
+
 #ifdef __cplusplus
 }
 #endif

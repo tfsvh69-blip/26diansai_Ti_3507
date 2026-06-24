@@ -104,15 +104,19 @@ extern "C" {
 #define MOTOR1_STEP_IOMUX_FUNC                        IOMUX_PINCM27_PF_TIMG0_CCP0
 #define MOTOR_STEP_TIMER_INST                                             (TIMG0)
 /*
- * STEP 定时器：源 MFCLK=4MHz，预分频 /40 得 100kHz 计数节拍。
- * 周期 25 → 4000Hz 步频；1/8 细分下约 500 整步/秒、约 2.5 转/秒。
- * 线序与 VREF 电流标定完成后把分频调小提速观察正常运行。
- * 注意：当前无加减速斜坡，直接启动；步频不能再无限提高，否则瞬间失步会重新表现为原地抖动，
- * 需更高速时应先加加速度斜坡，再逐步减小 MOTOR_STEP_TIMER_PERIOD。
+ * STEP 定时器：源 MFCLK=4MHz，预分频 ÷1（物理最小，prescale 寄存器=0）。
+ * 定时器时钟 = 4MHz；周期 200 → 20kHz 步频；1/8 细分下一整圈需 1600 脉冲 ≈ 80ms。
+ * 当前无加减速斜坡，直接以 20kHz 起转；若电机失步（抖动），增大 MOTOR_STEP_TIMER_PERIOD。
  */
-#define MOTOR_STEP_TIMER_PRESCALE                                          (39U)
-#define MOTOR_STEP_TIMER_PERIOD                                            (25U)
-#define MOTOR_STEP_TIMER_DUTY                                              (12U)
+#define MOTOR_STEP_TIMER_PRESCALE                                           (0U)
+#define MOTOR_STEP_TIMER_PERIOD                                           (200U)
+#define MOTOR_STEP_TIMER_DUTY                                             (100U)
+
+/* 电机满步数/圈（标准 1.8° 步进电机 = 200 整步）。 */
+#define MOTOR_FULL_STEPS_PER_REV                                          (200U)
+
+/* TIMG0 中断号，用于 StartRotateSteps 内部开关 NVIC。 */
+#define MOTOR_STEP_TIMER_IRQn                                    (TIMG0_INT_IRQn)
 
 /* 电机1 DIR：PB11（PINCM28），普通 GPIO，低电平为正向。 */
 #define MOTOR1_DIR_PORT                                                  (GPIOB)

@@ -237,7 +237,7 @@ void SYSCFG_DL_I2C_1_init(void)
 /*
  * 电机1 STEP 定时器：TIMG0_CCP0 输出连续方波作为步进脉冲。
  * 时钟源选 MFCLK(4MHz)，与 UART/I2C 同源，避免 BUSCLK/ULPCLK 分频带来的步频不确定。
- * 预分频 /40 → 100kHz；周期 25 → 4000Hz 步频；占空比约 50%（脉宽足够 TMC2209 识别）。
+ * 预分频 ÷1（物理最小，prescale=0）→ 定时器时钟 = MFCLK 4MHz；周期 200 → 20kHz 步频；占空比约 50%。
  * 初始化后定时器保持停止，由 bsp_motor 在使能电机时再启动计数。
  */
 static const DL_TimerG_ClockConfig gMotorStepClockConfig = {
