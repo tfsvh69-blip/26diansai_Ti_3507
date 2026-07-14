@@ -51,7 +51,7 @@ void BspMotor_Init(void)
      */
     BspTmc_DisableAll();
     BspMotor1_SetDir(MOTOR_DIR_FORWARD);
-    BspTmc_SetMicrostep(TMC_MICROSTEP_8);
+    BspTmc_SetMicrostep(TMC_MICROSTEP_32);
     BspMotor1_StopStep();
 }
 

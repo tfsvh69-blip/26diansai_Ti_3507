@@ -5,7 +5,8 @@
 - 芯片：Texas Instruments MSPM0G3507，Cortex-M0+。
 - 工程：Keil uVision，目标名 `empty_LP_MSPM0G3507_nortos_keil`。
 - RTOS：FreeRTOS Kernel V11.3.0，使用 `ARM_CM0` 移植层和 `heap_4.c`。
-- 当前主频：80 MHz，`SYSOSC 32MHz -> PDIV /2 -> QDIV *10 -> VCO 160MHz -> CLK0 /2 -> MCLK 80MHz`。
+- 当前主频：80 MHz，**由 40MHz 外部晶振 HFXT 经 SYSPLL 倍频锁定**：`HFXT 40MHz -> PDIV /2 -> 20MHz -> QDIV *8 -> VCO 160MHz -> CLK0 /2 -> MCLK 80MHz`。晶振起振失败自动回退内部 SYSOSC（`32MHz -> PDIV /2 -> QDIV *10 -> 160MHz -> 80MHz`），启动串口打印实际时钟源，全局标志 `g_sysClockUsingHFXT`。
+- 外设时钟：UART0/I2C1/步进定时器均走内部 MFCLK 4MHz，与主频时钟源解耦，波特率/分频常数不随晶振切换变化。
 - FreeRTOS tick：1000 Hz，即 1 ms。
 
 ## 当前分层
@@ -34,10 +35,11 @@
 ## 当前硬件
 
 - LED：PB22，实测高电平点亮，低电平熄灭；当前由 `LED1` 任务每 300ms 翻转一次，用作 FreeRTOS 心跳。
-- OLED：GPIO 模拟 I2C，SCL=PB9，SDA=PB8。
+- OLED：天猛星扩展板 v1.0 上 PB8/PB9 已改作 TMC 细分 MS1/MS2，本板不再接 OLED（`OLED_*` 宏仅为兼容 `module/oled` 编译保留）。
 - UART0：MFCLK 4MHz，115200 8N1，PA10=TX，PA11=RX。
 - PA10/PA11 属于核心板特殊功能风险引脚，本次已按用户确认用于 UART0。
-- ATK-MS6DSV：GPIO 软件 I2C，SCL=PB2/B02，SDA=PB3/B03，INT=PA16/A16，SA0 接地后 7bit 地址为 `0x6A`；SCL/SDA 已外接上拉，代码仍启用 MCU 内部上拉用于调试，软件时序按正点原子官方例程显式处理 ACK/NACK/STOP。
+- 40MHz 晶振：PA5=HFXIN、PA6=HFXOUT，作 SYSPLL 参考锁定 80MHz 主频（详见接线表“系统时钟”节）。
+- ATK-MS6DSV：**GPIO 软件 I2C**（开漏模拟），SCL=PB2/B02，SDA=PB3/B03，INT=PA16/A16，SA0 接地后 7bit 地址 `0x6A`；扩展板已焊 4.7k 上拉到 3.3V，IMU 供电 3.3V。端口层 `bsp_imu_port.c` 首次访问时关闭 I2C1 硬件控制器并切 PB2/PB3 为 GPIO 模式。
 - IMU 姿态输出：`IMU100Hz` 任务每 10ms 通过 UART0 输出 Roll/Pitch/Yaw；LSM6DSV16X 内部加速度、陀螺仪和 SFLP 使用 120Hz ODR，因为芯片枚举无精确 100Hz 档位。
 - 当前 IMU 已实测可连续输出姿态数据；`FIFO=0/1/2` 小范围跳动属于 120Hz 产数与 100Hz 读取节拍不完全同步的正常现象，只要角度连续、FIFO 不持续累积即可。
 

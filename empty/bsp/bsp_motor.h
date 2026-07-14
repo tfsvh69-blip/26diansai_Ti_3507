@@ -13,12 +13,12 @@ extern "C" {
 
 /*
  * 巡航速度对应的定时器周期（定时器时钟 4MHz，步频 = 4MHz / 周期）。
- * 周期越小越快；1/8 细分下 1600 脉冲 = 1 圈。
- * SLOW：2500 → 1.6kHz ≈ 1 圈/秒；FAST：500 → 8kHz ≈ 5 圈/秒。
+ * 周期越小越快；1/32 细分下 6400 脉冲 = 1 圈。
+ * SLOW：625 → 6.4kHz ≈ 1 圈/秒；FAST：125 → 32kHz ≈ 5 圈/秒。
  * 注意：巡航周期应不大于 bsp_motor.c 内的起步周期 MOTOR_STEP_PERIOD_START。
  */
-#define BSP_MOTOR_PERIOD_SLOW           (2500U)
-#define BSP_MOTOR_PERIOD_FAST           (500U)
+#define BSP_MOTOR_PERIOD_SLOW           (625U)
+#define BSP_MOTOR_PERIOD_FAST           (125U)
 
 /*
  * 步进电机 / TMC2209 板级封装（天猛星扩展板 v1.0）。

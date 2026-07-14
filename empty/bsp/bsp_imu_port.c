@@ -4,6 +4,17 @@
 
 #include "ti_msp_dl_config.h"
 
+/*
+ * IMU I2C 端口层。
+ *
+ * PB2/PB3 使用 GPIO 软件模拟 I2C，与参考项目 v1.3 的读取方式一致。
+ * 首次访问时关闭 I2C1 硬件控制器并将引脚切为 GPIO 开漏模拟模式；
+ * 此后所有 I2C 通信均通过 GPIO 位操作实现，不依赖硬件 I2C 外设。
+ *
+ * 对外只暴露 WriteReg / ReadReg / ProbeAddress 三个数据接口，
+ * 上层 module/imu 完全不感知底层实现。
+ */
+
 #define BSP_IMU_I2C_TIMEOUT_LOOPS       (120000UL)
 #define BSP_IMU_I2C_RECOVERY_PULSES     (18U)
 #define BSP_IMU_I2C_ACK_TIMEOUT_LOOPS   (250U)

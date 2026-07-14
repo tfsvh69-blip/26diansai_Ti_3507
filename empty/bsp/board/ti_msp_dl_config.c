@@ -39,12 +39,35 @@
 
 #include "ti_msp_dl_config.h"
 
+/* 运行时记录实际时钟参考源，供启动日志读取。 */
+volatile bool g_sysClockUsingHFXT = false;
+
 /*
- * 80MHz 主频配置。
- * SYSOSC=32MHz，先经 PDIV /2，再经 QDIV *10 得到 160MHz VCO。
- * CLK0 再 /2 得到 80MHz MCLK。
+ * 主用 80MHz 配置：以 40MHz 外部晶振 HFXT 为 SYSPLL 参考。
+ * 40MHz 经 PDIV /2 = 20MHz 入 PLL；再经 QDIV *8 得到 160MHz VCO；
+ * CLK0 分频 /2（rDivClk0=0 表示 /2）得到 80MHz MCLK。
+ * CLK0 输出的 80MHz 由外部 40MHz 晶振锁定，比内部 RC 更准更稳。
  */
-static DL_SYSCTL_SYSPLLConfig gSYSPLLConfig80MHz = {
+static const DL_SYSCTL_SYSPLLConfig gSYSPLLConfigHFXT80MHz = {
+    .rDivClk2x = 0,
+    .rDivClk1 = 0,
+    .rDivClk0 = 0,
+    .enableCLK2x = DL_SYSCTL_SYSPLL_CLK2X_DISABLE,
+    .enableCLK1 = DL_SYSCTL_SYSPLL_CLK1_DISABLE,
+    .enableCLK0 = DL_SYSCTL_SYSPLL_CLK0_ENABLE,
+    .sysPLLMCLK = DL_SYSCTL_SYSPLL_MCLK_CLK0,
+    .sysPLLRef = DL_SYSCTL_SYSPLL_REF_HFCLK,
+    .qDiv = 8,
+    .pDiv = DL_SYSCTL_SYSPLL_PDIV_2,
+    .inputFreq = DL_SYSCTL_SYSPLL_INPUT_FREQ_16_32_MHZ,
+};
+
+/*
+ * 备用 80MHz 配置：晶振起振失败时回退到内部 SYSOSC(32MHz)。
+ * 32MHz 经 PDIV /2 = 16MHz，QDIV *10 得到 160MHz VCO，/2 得到 80MHz。
+ * 保证晶振异常时整机仍能以 80MHz 运行、串口可用，不会卡死无输出。
+ */
+static const DL_SYSCTL_SYSPLLConfig gSYSPLLConfigSYSOSC80MHz = {
     .rDivClk2x = 0,
     .rDivClk1 = 0,
     .rDivClk0 = 0,
@@ -57,6 +80,29 @@ static DL_SYSCTL_SYSPLLConfig gSYSPLLConfig80MHz = {
     .pDiv = DL_SYSCTL_SYSPLL_PDIV_2,
     .inputFreq = DL_SYSCTL_SYSPLL_INPUT_FREQ_16_32_MHZ,
 };
+
+/*
+ * 尝试启用 40MHz 外部晶振 HFXT，带超时轮询。
+ * 关键：monitor 传 false，避免落入 DriverLib 内部“死等 HFCLK_GOOD”的无限循环——
+ * 若晶振不起振（虚焊、负载电容不对等），那里会永久卡死、串口毫无输出、板子像变砖。
+ * 这里改为自己带超时轮询，超时即关闭 HFXT 返回 false，交由上层回退内部 SYSOSC。
+ */
+static bool SYSCFG_DL_tryStartHFXT(void)
+{
+    uint32_t timeout = 1000000UL;
+
+    DL_SYSCTL_setHFCLKSourceHFXTParams(DL_SYSCTL_HFXT_RANGE_32_48_MHZ, 8U, false);
+
+    while (timeout-- > 0U) {
+        if ((DL_SYSCTL_getClockStatus() & SYSCTL_CLKSTATUS_HFCLKGOOD_MASK) ==
+            DL_SYSCTL_CLK_STATUS_HFCLK_GOOD) {
+            return true;
+        }
+    }
+
+    DL_SYSCTL_disableHFXT();
+    return false;
+}
 
 void SYSCFG_DL_init(void)
 {
@@ -87,6 +133,13 @@ void SYSCFG_DL_initPower(void)
 
 void SYSCFG_DL_GPIO_init(void)
 {
+    /*
+     * 40MHz 外部晶振 HFXT：PA5=HFXIN、PA6=HFXOUT 必须配为模拟功能，否则晶振无法起振。
+     * 本函数在 SYSCFG_DL_SYSCTL_init() 之前调用，确保启用 HFXT 时引脚已就绪。
+     */
+    DL_GPIO_initPeripheralAnalogFunction(GPIO_HFXIN_IOMUX);
+    DL_GPIO_initPeripheralAnalogFunction(GPIO_HFXOUT_IOMUX);
+
     /* UART0 使用 PA10=TX、PA11=RX；两者为核心板慎用引脚，已按用户确认接入串口模块。 */
     DL_GPIO_initPeripheralOutputFunctionFeatures(GPIO_UART_0_IOMUX_TX,
         GPIO_UART_0_IOMUX_TX_FUNC, DL_GPIO_INVERSION_DISABLE,
@@ -180,10 +233,23 @@ void SYSCFG_DL_SYSCTL_init(void)
      */
     DL_SYSCTL_setFlashWaitState(DL_SYSCTL_FLASH_WAIT_STATE_2);
     DL_SYSCTL_setSYSOSCFreq(DL_SYSCTL_SYSOSC_FREQ_BASE);
-    DL_SYSCTL_disableHFXT();
+
+    /*
+     * 先尝试启用 40MHz 外部晶振作为 PLL 参考；起振失败则回退内部 SYSOSC。
+     * 两种情况 PLL 输出都是 80MHz MCLK，CPU 主频不变，FreeRTOS 节拍无需改动。
+     * UART/I2C/步进定时器仍走内部 MFCLK 4MHz，与本次时钟源切换解耦。
+     */
+    g_sysClockUsingHFXT = SYSCFG_DL_tryStartHFXT();
+
     DL_SYSCTL_enableMFCLK();
     DL_SYSCTL_setULPCLKDivider(DL_SYSCTL_ULPCLK_DIV_2);
-    DL_SYSCTL_configSYSPLL(&gSYSPLLConfig80MHz);
+
+    if (g_sysClockUsingHFXT) {
+        DL_SYSCTL_configSYSPLL((DL_SYSCTL_SYSPLLConfig *) &gSYSPLLConfigHFXT80MHz);
+    } else {
+        DL_SYSCTL_configSYSPLL((DL_SYSCTL_SYSPLLConfig *) &gSYSPLLConfigSYSOSC80MHz);
+    }
+
     DL_SYSCTL_setMCLKSource(SYSOSC, HSCLK, DL_SYSCTL_HSCLK_SOURCE_SYSPLL);
     DL_SYSCTL_setMCLKDivider(DL_SYSCTL_MCLK_DIVIDER_DISABLE);
 }

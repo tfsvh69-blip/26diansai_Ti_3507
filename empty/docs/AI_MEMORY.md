@@ -4,7 +4,10 @@
 - 每次完成代码修改后，要说明烧录或运行后应该观察到的现象，方便用户排查。
 - MSPM0G3507 FreeRTOS 工程不要使用 `SYSCFG_DL_init()` 做总初始化，避免其中的 SysTick 初始化占用 FreeRTOS SysTick。
 - 当前主频配置为 80 MHz；`CPUCLK_FREQ` 和 `configCPU_CLOCK_HZ` 都必须保持为 `80000000`。
-- 80 MHz 由 SYSOSC 32 MHz 进入 SYSPLL 得到：`PDIV=/2`、`QDIV=10`、`CLK0=/2`；Flash wait state 使用 2，ULPCLK 使用 /2。
+- 【2026-07-14 时钟源改为外部晶振】80 MHz 现由核心板 40MHz 外部晶振 HFXT 经 SYSPLL 倍频锁定：`HFXT 40MHz -> PDIV=/2 -> 20MHz -> QDIV=8 -> VCO 160MHz -> CLK0=/2 -> 80MHz`（PLL 结构体 `sysPLLRef=REF_HFCLK`）。关键：`rDivClk0=0` 表示 CLK0=VCO/2，不是/1；VCO=参考频率×qDiv。
+- HFXT 引脚 PA5=HFXIN(`IOMUX_PINCM10`)、PA6=HFXOUT(`IOMUX_PINCM11`)，必须在 GPIO_init 里 `DL_GPIO_initPeripheralAnalogFunction` 配为模拟功能，否则不起振。范围枚举用 `DL_SYSCTL_HFXT_RANGE_32_48_MHZ`。
+- 【锁死坑】DriverLib `setHFCLKSourceHFXT`/`configSYSPLL` 内部会死等 HFCLK_GOOD/SYSPLL_GOOD；晶振不起振会永久卡死、串口无输出像变砖。本工程用 `SYSCFG_DL_tryStartHFXT()`（`monitor=false` 不进死等 + 自带超时轮询）规避，超时回退内部 SYSOSC 备用 PLL 配置（`PDIV=/2、QDIV=10`），保证仍 80MHz、串口可用。启动打印实际源，标志 `g_sysClockUsingHFXT`。
+- 外设时钟（UART0/I2C1/步进定时器）仍走内部 MFCLK 4MHz，与主频时钟源切换解耦，UART 115200 的 IBRD=2/FBRD=11 不变，晶振只锁 CPU 主频、不动 FreeRTOS 节拍。
 - 当前工程已与 TI SysConfig 生成流程解耦：Keil `BeforeMake` 不再调用 `syscfg.bat`，`empty.syscfg` 仅作历史参考，`ti_msp_dl_config.c/h` 手写维护。
 - 尽量不要使用核心板特殊功能引脚：A23、A21、A20、A19、A18、A11、A10、A5、A6、A4、A3、A2；确需使用时必须先说明风险并等待人工确认。
 - 硬件接线统一维护在 `docs/HARDWARE_WIRING.md`；修改 GPIO、外设复用或引脚时必须同步更新。
@@ -16,7 +19,10 @@
 - 当前 UART0 使用 PA10=TX、PA11=RX；PA10/PA11 属于核心板特殊功能风险引脚，本次已按用户确认使用；串口助手设置为 115200 8N1，无流控。
 - 当前 UART0 接收测试不再控制 PB22；收到任意非换行字符后回显 `UART RX OK`，PB22 固定作为心跳灯使用。
 - ATK-MS6DSV 当前接线：SCL=PB2/B02，SDA=PB3/B03，INT=PA16/A16，SA0 接地，LSM6DSV16X 7bit I2C 地址为 `0x6A`。
-- ATK-MS6DSV 当前 SCL/SDA 已外接上拉，代码仍启用 MCU 内部上拉；2026-06-18 已改为 PB2/PB3 GPIO 软件 I2C，对齐正点原子官方例程，显式执行最后一字节 NACK 和 STOP，避免硬件 I2C 读事务后 SDA 被拉低。
+- ATK-MS6DSV 当前 SCL/SDA 已外接上拉，代码仍启用 MCU 内部上拉；2026-06-18 曾改为 PB2/PB3 GPIO 软件 I2C，对齐正点原子官方例程，显式执行最后一字节 NACK 和 STOP，避免硬件 I2C 读事务后 SDA 被拉低。
+- 【2026-07-14 确定使用软件 I2C】端口层 `bsp_imu_port.c` 使用纯 GPIO 软件 I2C（开漏模拟），对齐参考项目 v1.3 的读取方式。首次访问时关闭 I2C1 硬件控制器、PB2/PB3 切为 GPIO 模式；此后所有 I2C 通信通过 GPIO 位操作实现。重复起始读时序：写寄存器地址→重复起始→读 N 字节，末字节 NACK 后 STOP。
+- 上层 module/imu 只用 `BspImuPort_WriteReg/ReadReg/ProbeAddress` 三个接口，底层为纯 GPIO 软件 I2C 实现；总线诊断/引脚测试函数基于 GPIO 位操作。
+- 上层 module/imu 只用 `BspImuPort_WriteReg/ReadReg/ProbeAddress` 三个接口，换 I2C 内核（硬件/软件）时上层零改动；总线诊断/引脚测试函数始终用 GPIO 位操作，硬件模式下调用后下次读写由 `UseHwI2cPins` 重置回 I2C 复用。
 - 2026-06-18 软件 I2C 修改后，用户实测 IMU 已能连续输出姿态；`FIFO=0/1/2` 小范围跳动正常，因为 SFLP 为 120Hz、任务读取为 100Hz。
 - 2026-06-18 用户日志出现 `IMU INIT FAIL:2 LAST_ID=0x70`，说明 WHO_AM_I 已读通，后续排查重点应放在 reset/config 阶段和 SDA 被拉低；代码已增加 `STEP=...` 初始化步骤输出。
 - 2026-06-18 用户进一步定位到 `STEP=RESET_SET LAST_ID=0x70` 后 SDA 被拉低；当前 `ATK_MS6DSV_USE_BOOT_RESET` 默认为 0，跳过 ST 驱动 `RESTORE_CTRL_REGS`/boot reset，直接配置传感器。
@@ -25,10 +31,11 @@
 - MSPM0G3507 上 PB2/PB3 的 I2C1 复用为 `IOMUX_PINCM15_PF_I2C1_SCL` 和 `IOMUX_PINCM16_PF_I2C1_SDA`；用户接线表里的 U2.15/U2.17 是板口/封装编号，不要误把 SDA 配成 `PINCM17`。
 - IMU 对外读取和 UART0 输出按 100Hz，即 `IMU100Hz` 任务周期 10ms；LSM6DSV16X 内部 ODR 无精确 100Hz 档位，当前加速度、陀螺仪和 SFLP 使用 120Hz。
 - 工程已迁到天猛星扩展板 v1.0（四路 TMC2209 步进 + 舵机 + 循迹 + 激光测距），引脚以 `pcb引脚配置文档/v1.0/tianmengxing_pin_config.md` 为准；原 OLED 的 PB8/PB9 改作 TMC 细分 MS1/MS2，本板不再接 OLED，`app_main.c` 已移除 OLED 启动屏，`OLED_*` 宏暂留只为 `module/oled` 能编译。
-- 电机1驱动：STEP=PB10(TIMG0_CCP0 硬件定时器)、DIR=PB11、ENN=PA13(低有效，四路共用)、MS1=PB8/MS2=PB9(四路共用细分)；STEP 定时器源 MFCLK 4MHz、预分频/40=100kHz，步频由 `MOTOR_STEP_TIMER_PERIOD` 决定(25→4kHz、125→800Hz、500→200Hz)。
+- 电机1驱动：STEP=PB10(TIMG0_CCP0 硬件定时器)、DIR=PB11、ENN=PA13(低有效，四路共用)、MS1=PB8/MS2=PB9(四路共用细分)；STEP 定时器源 MFCLK 4MHz、预分频 ÷1（物理最小，prescale=0）→ 定时器时钟=4MHz；步频 = 4MHz / period，period 由梯形加减速动态调整（起步 4000→1kHz，巡航由参数决定，慢 625→6.4kHz、快 125→32kHz）。
 - 步进电机"原地剧烈抖动、不转"的首要根因是相线圈配对错(把两个线圈各掏一根凑成一对)，不是方向反(方向反只会反转不抖)；断电量电阻找两组导通对即可定位。区分共振/丢步：降到 200Hz 还抖就是配对错。本工程用户改对线序后电机正常旋转。
 - TMC2209 不接 UART 时电流由 VREF 电位器标定，VREF 设每相 RMS 电流(`Irms≈VREF×0.71`，随模块 Rsense 变)；以温热不烫、捏轴有反抗力矩为准，用户已调到合适数值。
 - 步进电机从静止**直接起高频会失步**：实测 20kHz(2500 全步/秒)直接起转，电机只抖 5~10° 不转(定时器照发完 1600 脉冲)；起转频率(本电机约 1kHz/125 全步每秒)远低于运动后可达的巡航频率。高速必须配加减速斜坡。
 - 电机1定长旋转已加梯形加减速(`bsp_motor.c`)：1kHz 起步→每脉冲周期减 8 加速到巡航→末段(剩余≤475 步)对称减速回起步；ISR(TIMG0 ZERO)倒计步数同时更新 LOAD/CC。巡航速度由 `BspMotor1_StartRotateSteps(steps, cruisePeriod)` 参数决定。
-- 电机1现为按键控制(`app_motor_test_task.c`，任务名 MOTOR1)：20ms 轮询去抖 + 按下沿检测，运行中忽略按键、转完自动禁用 ENN。KEY1 慢正转1圈/KEY2 慢反转1圈/KEY3 快正转2圈/KEY4 快反转2圈；慢=`BSP_MOTOR_PERIOD_SLOW`(2500≈1圈/秒)、快=`BSP_MOTOR_PERIOD_FAST`(500≈5圈/秒)。
+- 电机1现为按键控制(`app_motor_test_task.c`，任务名 MOTOR1)：20ms 轮询去抖 + 按下沿检测，运行中忽略按键、转完自动禁用 ENN。KEY1 慢正转1圈/KEY2 慢反转1圈/KEY3 快正转2圈/KEY4 快反转2圈；慢=`BSP_MOTOR_PERIOD_SLOW`(625≈1圈/秒)、快=`BSP_MOTOR_PERIOD_FAST`(125≈5圈/秒)，1/32 细分。
 - 四个功能按键接线：KEY1=PA28/PINCM3、KEY2=PA31/PINCM6、KEY3=PA30/PINCM5、KEY4=PA17/PINCM39，一端接 GND、内部上拉，按下为低；都不在核心板慎用引脚列表内。`bsp_key.c` 提供 `BspKey_IsPressed()` 读瞬时电平。
+- 【踩坑】全部设备上电状态下烧录后，IMU（LSM6DSV16X）必定读不出来——即使代码完全正确。根因：烧录期间 IMU 一直带电，芯片内部状态机未经历上电复位（POR），软件 boot/reset 序列无法将其从残留状态中恢复正常。**解决：烧录后必须拔掉 Type-C 数据线或电源彻底断电，再重新上电**，让 IMU 经历完整的 POR 周期。断电→重上电后即可正常工作，不需要改代码。

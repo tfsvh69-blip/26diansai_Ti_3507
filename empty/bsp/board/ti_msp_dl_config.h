@@ -54,6 +54,17 @@ extern "C" {
 #define POWER_STARTUP_DELAY                                                (16)
 #define CPUCLK_FREQ                                                     80000000
 
+/*
+ * 40MHz 外部晶振 HFXT（天猛星核心板 X1，接 PA5/HFXIN、PA6/HFXOUT）。
+ * 作为 SYSPLL 参考，倍频后仍输出 80MHz MCLK；起振失败时自动回退内部 SYSOSC。
+ * 引脚需配为模拟功能：PA5=PINCM10、PA6=PINCM11（由器件手册 IOMUX 表确认）。
+ */
+#define GPIO_HFXIN_IOMUX                                          (IOMUX_PINCM10)
+#define GPIO_HFXOUT_IOMUX                                         (IOMUX_PINCM11)
+
+/* 运行时记录当前系统时钟参考源：true=40MHz 外部晶振，false=内部 SYSOSC 回退。 */
+extern volatile bool g_sysClockUsingHFXT;
+
 /* UART0 手写 115200 8N1 配置：MFCLK=4MHz，16x 过采样，误差约 -0.08%。 */
 #define UART_0_INST                                                       UART0
 #define UART_0_INST_FREQUENCY                                          4000000
@@ -61,7 +72,7 @@ extern "C" {
 #define UART_0_IBRD_115200_MFCLK                                            (2U)
 #define UART_0_FBRD_115200_MFCLK                                           (11U)
 
-/* IMU：ATK-MS6DSV/LSM6DSV16X，PB2/PB3 当前由端口层切为 GPIO 软件 I2C，SA0 接地后 7bit 地址为 0x6A。 */
+/* IMU：ATK-MS6DSV/LSM6DSV16X，PB2/PB3 由端口层切为 GPIO 软件 I2C，SA0 接地后 7bit 地址为 0x6A。 */
 #define IMU_I2C_1_INST                                                      I2C1
 #define IMU_I2C_1_INST_FREQUENCY                                         4000000
 #define IMU_I2C_1_TPR_10KHZ_MFCLK                                          (39U)

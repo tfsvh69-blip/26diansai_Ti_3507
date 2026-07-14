@@ -11,9 +11,9 @@
 #include "bsp_motor.h"
 #include "bsp_uart.h"
 
-/* 1/8 细分下每圈脉冲数 = 200 全步 × 8 = 1600。 */
+/* 1/32 细分下每圈脉冲数 = 200 全步 × 32 = 6400。 */
 #define MOTOR_MICROSTEPS_PER_REV \
-    ((uint32_t)BSP_MOTOR_FULL_STEPS_PER_REV * 8U)
+    ((uint32_t)BSP_MOTOR_FULL_STEPS_PER_REV * 32U)
 
 static TaskHandle_t s_motorTestTaskHandle = NULL;
 
@@ -38,7 +38,7 @@ static void AppMotorTestTask_Entry(void *argument)
     (void)argument;
 
     /* 细分四路共用，整机只需设一次。 */
-    BspTmc_SetMicrostep(TMC_MICROSTEP_8);
+    BspTmc_SetMicrostep(TMC_MICROSTEP_32);
     BspUart0_SendString(
         "MOTOR1 key ctrl: K1 slow fwd1, K2 slow rev1, K3 fast fwd2, K4 fast rev2\r\n");
 

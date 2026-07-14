@@ -9,6 +9,7 @@
 #include "bsp_board.h"
 #include "bsp_led.h"
 #include "bsp_uart.h"
+#include "ti_msp_dl_config.h"
 
 int main(void)
 {
@@ -20,6 +21,16 @@ int main(void)
      */
     BspLed_On(BSP_LED_1);
     BspUart0_SendString("BOOT: board init ok\r\n");
+
+    /*
+     * 报告系统时钟参考源：确认 40MHz 外部晶振是否成功起振。
+     * HFXT OK 表示 MCLK 80MHz 由外部晶振锁定；否则说明晶振未起振，已自动回退内部 SYSOSC。
+     */
+    if (g_sysClockUsingHFXT) {
+        BspUart0_SendString("BOOT: MCLK 80MHz <- HFXT 40MHz OK\r\n");
+    } else {
+        BspUart0_SendString("BOOT: HFXT FAIL, MCLK 80MHz <- internal SYSOSC\r\n");
+    }
 
     App_Init();
 
