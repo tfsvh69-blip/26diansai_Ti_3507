@@ -33,6 +33,13 @@
 | OLED | SDA | PB8 | `OLED_PIN_SDA_PIN` | `IOMUX_PINCM25` | 板载 OLED 软件 I2C SDA，推挽输出 | 约定 SCL=PB9/SDA=PB8，若显示异常可对调 |
 | 电机1 | M1_STEP | PB10 | `MOTOR1_STEP_PIN` | `IOMUX_PINCM27` / `IOMUX_PINCM27_PF_TIMG0_CCP0`，U2.49 | TIMG0_CCP0 硬件定时器输出，连续旋转+梯形加减速可变频方波（L1≈6.4kHz ~ L5≈32kHz）；TIMG0 ZERO 中断在线调速 | 运行期间 PB10 有连续方波；停止时减速到起步速度后定时器停止 |
 | 电机1 | M1_DIR | PB11 | `MOTOR1_DIR_PIN` | `IOMUX_PINCM28`，U2.47 | GPIO 输出，低=正向，高=反向 | 方向不对就翻转该电平或调线序 |
+| 电机2 | M2_STEP | PB6 | `MOTOR2_STEP_PIN` | `IOMUX_PINCM23` / `IOMUX_PINCM23_PF_TIMG8_CCP0` | TIMG8_CCP0 方波，跟随电机1同频 | 四电机测试时应与 M1 同步出脉冲 |
+| 电机2 | M2_DIR | PB7 | `MOTOR2_DIR_PIN` | `IOMUX_PINCM24` | GPIO 输出，低=正向 | 四路 DIR 由 `BspMotorAll_SetDir` 一起设 |
+| 电机3 | M3_STEP | PB13 | `MOTOR3_STEP_PIN` | `IOMUX_PINCM30` / `IOMUX_PINCM30_PF_TIMG12_CCP0` | TIMG12_CCP0(32位) 方波，跟随电机1 | — |
+| 电机3 | M3_DIR | PB14 | `MOTOR3_DIR_PIN` | `IOMUX_PINCM31` | GPIO 输出，低=正向 | — |
+| 电机4 | M4_STEP | PB26 | `MOTOR4_STEP_PIN` | `IOMUX_PINCM57` / `IOMUX_PINCM57_PF_TIMG6_CCP0` | TIMG6_CCP0 方波，跟随电机1 | — |
+| 电机4 | M4_DIR | PB27 | `MOTOR4_DIR_PIN` | `IOMUX_PINCM58` | GPIO 输出，低=正向 | — |
+| 舵机1~4 | SERVO1~4 PWM | PA8/PA9/PB4/PA12 | `SERVO1..4_PIN` | TIMA0_CCP0~3，PINCM19/20/17/34 | 50Hz PWM，脉宽经 bsp_servo 极性补偿 | KEY3/KEY4 测试四路一起动 |
 | TMC2209 | TMC_ENN | PA13 | `TMC_ENN_PIN` | `IOMUX_PINCM35`，U2.30 | GPIO 输出，低有效，四路驱动共用使能 | 高电平电机失力；测试任务会拉低使能 |
 | TMC2209 | TMC_MS1 | PB0 | `TMC_MS1_PIN` | `IOMUX_PINCM13` | GPIO 输出，四路共用细分（v1.1） | 黄排针模块：MS1=1,MS2=0 → 1/32 细分 |
 | TMC2209 | TMC_MS2 | PB1 | `TMC_MS2_PIN` | `IOMUX_PINCM14` | GPIO 输出，四路共用细分（v1.1） | 见引脚文档 §2.2 黄排针细分表（LL=1/8, HH=1/16, HL=1/32, LH=1/64） |
@@ -61,19 +68,22 @@
 - 位延时 `OLED.c::IIC_delay` 已从 10us 降到 2us，减少全屏刷新对同优先级任务（按键轮询）的忙等阻塞。
 - 约定 SCL=PB9、SDA=PB8；文档未标注具体归属，若实物相反在 `ti_msp_dl_config.h` 对调两宏即可。
 
-## 电机1 四按键定圈旋转
+## 电机 / 舵机 四按键测试（KEY1/2 电机，KEY3/4 舵机）
 
-- 步进驱动 TMC2209，STEP=PB10(TIMG0_CCP0)、DIR=PB11、ENN=PA13(低有效，四路共用)、MS1=PB0、MS2=PB1(四路共用细分)。
-- 上电默认安全状态：ENN 拉高禁用、STEP 停止、DIR 正向、MS1=0/MS2=0；运行前由任务设为 MS1=1/MS2=0(1/32 细分)。
-- `MOTOR1` 任务现为**四按键定圈旋转**：20ms 轮询四个按键，检测按下沿；移动期间按键被忽略。
-  - **K1 正转 1 圈**（6400 脉冲）/ **K2 反转 1 圈** / **K3 正转 3 圈**（19200 脉冲）/ **K4 正转 5 圈**（32000 脉冲）。
-  - 1/32 细分 → 1 圈 = 200 × 32 = 6400 脉冲，巡航周期 500（≈1.25 圈/秒）。
-  - 每次移动：`BspMotor1_MoveSteps()` → ISR 梯形加减速起步→巡航→自动减速→停表，停稳后才能触发下一次。
+- 步进驱动 TMC2209：四路 STEP 各占独立定时器（M1=TIMG0/PB10、M2=TIMG8/PB6、M3=TIMG12/PB13、M4=TIMG6/PB26），四路 DIR=PB11/PB7/PB14/PB27；ENN=PA13(低有效)、MS1=PB0/MS2=PB1 四路共用。
+- 上电默认安全状态：ENN 拉高禁用、四路 STEP 停止、四路 DIR 正向、MS1=0/MS2=0；运行前由任务设为 MS1=1/MS2=0(1/32 细分)。
+- **电机测试任务 `MOTORTEST`**（20ms 轮询 KEY1/KEY2，移动期间忽略按键）：
+  - **KEY1：4 电机一起正转 2 圈**；**KEY2：4 电机一起反转 2 圈**（1/32 细分，1 圈=6400 脉冲，巡航周期 500≈1.25 圈/秒）。
+  - 实现：`BspMotorAll_MoveSteps()` → 电机1(TIMG0)做梯形斜坡主控并计步，电机2/3/4 镜像同一周期跟随、同启同停，四电机同频同向"一起转"；走完自动一起减速停表。
+- **舵机测试任务 `SERVOSWEEP`**（20ms，无按键）：
+  - 4 舵机(PA8/PA9/PB4/PA12=TIMA0 CCP0/1/2/3)以**不同相位各自独立**在 **800~2200us** 间来回摆动，演示四路可完全独立控制；单独控制某路用 `BspServo_SetPulseUs(BSP_SERVO_x, us)`。
+  - **两个坑（已修）**：① 脉宽只经 `BspServo_SetPulseUs()`（内部 `period-pulseUs` 极性补偿，勿绕过）；② 四路方向须**一次** `DL_Timer_setCCPDirection(TIMA0, CC0|CC1|CC2|CC3_OUTPUT)` 写全——该寄存器是整体覆盖，分 4 次调只有最后一次生效，会导致只有舵机4动、舵机1/2/3 信号线浮 0.3V。
+  - 脉宽范围 800~2200us 是给舵机机械行程留安全余量；极值不灵是舵机限位所致，非 MCU（补偿在任何脉宽都精确）。
 - **梯形加减速**（双模式并存）：
   - **位置模式**（MoveSteps）：500Hz(period=8000)起步，每脉冲 ±`MOTOR_RAMP_DELTA=4` 朝目标逼近；步数太少时自动退化为三角形曲线。ISR 每脉冲计步，自动判断加速/巡航/减速三段，走完+回起步速度后停表。
   - **连续模式**（RunContinuous，保留供后续扩展）：起步→加速到巡航→手动 RequestStop 后减速停止。
-- 按键定义数组在 `app_motor_test_task.c::s_moveDef[]`；诊断快照 `g_motorDiag` 由 MOTOR1 写入、PERIPH 在 OLED 只读显示（`app_motor_status.h`）。
-- 串口输出：上电 `MOTOR1 ctrl: K1 +1rev, ...`；每次移动 `MOTOR1 key start -> RUN FWD/REV <圈>`，完成后 `MOTOR1 done -> STOP`；每秒诊断行 `MOTOR DIAG pos=1 run=x left=<剩余步数> per=<当前周期>`。
+- 诊断快照 `g_motorDiag` 由 `MOTORTEST` 写入、PERIPH 在 OLED 只读显示（`app_motor_status.h`），反映四电机测试的运行/方向/圈数。
+- 串口输出：上电 `MOTOR test: K1=4 motors FWD 2rev, K2=...`；每次触发 `MOTORx4 key start -> RUN FWD/REV 2 rev`，完成 `MOTORx4 done -> STOP`；每秒 `MOTORx4 DIAG run=x left=<剩余步数> per=<当前周期>`。舵机测试打印 `SERVOx4 -> posA/posB <us>`。
 - 踩坑确认：步进电机**从静止直接起高频会失步**（实测 20kHz 直接起转只抖 5~10°），高速必须配加减速斜坡；速度/加速度现为 500Hz 起步 + RAMP_DELTA=4，换驱动芯片后实测运行平稳。
 
 ### 电机1调试结论（已实测可正常旋转）

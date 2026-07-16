@@ -13,36 +13,63 @@
 #include "laser_ld14.h"
 
 /*
- * v1.1 板 OLED 恢复到板载 PB8/PB9（软件 I2C），TMC 细分改用 PB0/PB1，两者不再冲突。
- * OLED 调试显示、LED2/LED3 与蜂鸣器测试统一放在外设测试任务中。
+ * ============================ 应用层顶层编排 ============================
+ *
+ * App_Init() 是整个系统的"总装线"：硬件已由 BspBoard_Init() 就绪后，
+ * 这里把各功能拆成独立的 FreeRTOS 任务分别创建，任务之间不互相调用，
+ * 各自按周期跑，靠 BSP/模块层的线程安全接口共享硬件。启动关系：
+ *
+ *   main() → BspBoard_Init()(裸机初始化外设) → App_Init()(建任务) → vTaskStartScheduler()
+ *
+ * 【任务清单】（周期/优先级/栈集中在 common/app_config.h）
+ *   LED1      心跳灯，300ms 翻转 PB25，用来一眼确认调度器活着
+ *   UART0TX   UART0 接收回显（调试串口自检）
+ *   PERIPH    500ms 刷 OLED + LED2/LED3 心跳 + 蜂鸣器（外设总验证 + 电机状态显示）
+ *   SERVOSWEEP 4 个舵机各自独立错相摆动（800↔2200us，不用按键，演示独立控制）
+ *   MOTORTEST KEY1/KEY2 让 4 个电机一起正/反转 2 圈（测试四路电机，梯形加减速）
+ *   IMU100Hz  100Hz 读六轴姿态，5Hz 把"姿态 + 激光测距1"整行发到 UART0
+ *
+ * 【中断驱动（非任务）】
+ *   激光测距1：UART2 RX 中断逐字节喂 module/laser 解析器，见下方注释。
+ *   电机 STEP：TIMG0_IRQHandler 做梯形斜坡（bsp_motor.c）。
+ *
+ * 【数据流】
+ *   IMU(软件I2C) ─┐
+ *                 ├─► IMU100Hz 任务拼成一整行 ─► UART0(递归锁保证整行原子) ─► 串口助手
+ *   激光(UART2中断)┘   （激光距离经 module/laser 全局状态，由 IMU 任务读取后追加到行尾）
+ *
+ * 设计约定：任务间不共享业务全局变量；跨层只通过 bsp 层、module 层的接口访问。
+ * OLED 只读电机诊断快照 g_motorDiag；激光只读 module/laser 的解析结果。
+ *
+ * 硬件备注：v1.1 板 OLED 在板载 PB8/PB9（软件 I2C），TMC 细分改用 PB0/PB1，两者不再冲突。
+ * ======================================================================
  */
 
 void App_Init(void)
 {
-    /*
-     * LED1(PB25) 作为系统心跳灯，烧录后若能持续闪烁，说明 FreeRTOS 调度已运行。
-     * UART0 命令仍可返回文本，但不要再用 LED1 常亮/熄灭判断串口命令状态。
-     */
+    /* 心跳灯：每 300ms 翻转 LED1(PB25)，一眼确认 FreeRTOS 调度在跑。 */
     AppLedTask_Init();
+
+    /* UART0 接收自检：收到非换行字符回 "UART RX OK"，验证调试串口收发。 */
     AppUartTestTask_Init();
+
+    /* 外设综合验证：每 500ms 刷 OLED + LED2/LED3 心跳 + 蜂鸣器，并显示电机测试状态。 */
     AppPeriphTestTask_Init();
+
+    /* 舵机测试：4 个舵机各自独立错相摆动(800↔2200us，不用按键)，演示四路可完全独立控制。 */
     AppServoTestTask_Init();
 
-    /*
-     * 【全任务并行，2026-07-16】LED+串口+OLED+蜂鸣器+舵机 已验证正常。
-     * 本阶段放开电机1（四按键定圈旋转）与 IMU（陀螺仪姿态串口打印）。
-     * UART0 已改用递归互斥量替代挂起调度器，多任务共享串口不再造成全局卡顿。
-     */
+    /* 电机测试：KEY1/KEY2 让 4 个电机一起正/反转 2 圈，验证四路步进电机是否都正常。 */
     AppMotorTestTask_Init();
 
     /*
-     * 激光测距1（UART2/PB15/PB16，230400 8N1）：
-     * 接收走 UART2 RX 中断，逐字节喂给 LaserLd14 解析器（无独立任务）；
-     * 解析出的距离由 IMU 任务在打印整行时一并输出（见 app_imu_uart_task.c）。
+     * 激光测距1（UART2/PB15/PB16，230400 8N1）：不是任务，走 UART2 RX 中断，
+     * 逐字节喂给 LaserLd14 解析器；解析出的距离由 IMU 任务在打印整行时一并输出。
      * 先复位解析器，再注册回调并放开中断。
      */
     LaserLd14_Reset();
     BspUart2_Init(LaserLd14_FeedByte);
 
+    /* IMU 姿态：100Hz 读六轴，5Hz 把"姿态 + 激光测距1"整行发到 UART0。 */
     AppImuUartTask_Init();
 }

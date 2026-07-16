@@ -122,6 +122,9 @@ void SYSCFG_DL_initPower(void)
     DL_UART_Main_reset(UART_2_INST);
     DL_I2C_reset(IMU_I2C_1_INST);
     DL_TimerG_reset(MOTOR_STEP_TIMER_INST);
+    DL_TimerG_reset(MOTOR2_STEP_TIMER_INST);
+    DL_TimerG_reset(MOTOR3_STEP_TIMER_INST);
+    DL_TimerG_reset(MOTOR4_STEP_TIMER_INST);
     DL_Timer_reset(SERVO_TIMER_INST);
 
     DL_GPIO_enablePower(GPIOA);
@@ -130,6 +133,9 @@ void SYSCFG_DL_initPower(void)
     DL_UART_Main_enablePower(UART_2_INST);
     DL_I2C_enablePower(IMU_I2C_1_INST);
     DL_TimerG_enablePower(MOTOR_STEP_TIMER_INST);
+    DL_TimerG_enablePower(MOTOR2_STEP_TIMER_INST);
+    DL_TimerG_enablePower(MOTOR3_STEP_TIMER_INST);
+    DL_TimerG_enablePower(MOTOR4_STEP_TIMER_INST);
     DL_Timer_enablePower(SERVO_TIMER_INST);
 
     delay_cycles(POWER_STARTUP_DELAY);
@@ -208,6 +214,20 @@ void SYSCFG_DL_GPIO_init(void)
     DL_GPIO_initDigitalOutputFeatures(MOTOR1_DIR_IOMUX,
         DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_DOWN,
         DL_GPIO_DRIVE_STRENGTH_LOW, DL_GPIO_HIZ_DISABLE);
+
+    /* 电机2/3/4 STEP 为各自定时器 CCP0 复用输出，DIR 为普通推挽 GPIO（低=正向）。 */
+    DL_GPIO_initPeripheralOutputFunction(MOTOR2_STEP_IOMUX, MOTOR2_STEP_IOMUX_FUNC);
+    DL_GPIO_initPeripheralOutputFunction(MOTOR3_STEP_IOMUX, MOTOR3_STEP_IOMUX_FUNC);
+    DL_GPIO_initPeripheralOutputFunction(MOTOR4_STEP_IOMUX, MOTOR4_STEP_IOMUX_FUNC);
+    DL_GPIO_initDigitalOutputFeatures(MOTOR2_DIR_IOMUX,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_DOWN,
+        DL_GPIO_DRIVE_STRENGTH_LOW, DL_GPIO_HIZ_DISABLE);
+    DL_GPIO_initDigitalOutputFeatures(MOTOR3_DIR_IOMUX,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_DOWN,
+        DL_GPIO_DRIVE_STRENGTH_LOW, DL_GPIO_HIZ_DISABLE);
+    DL_GPIO_initDigitalOutputFeatures(MOTOR4_DIR_IOMUX,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_DOWN,
+        DL_GPIO_DRIVE_STRENGTH_LOW, DL_GPIO_HIZ_DISABLE);
     DL_GPIO_initDigitalOutputFeatures(TMC_ENN_IOMUX,
         DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
         DL_GPIO_DRIVE_STRENGTH_LOW, DL_GPIO_HIZ_DISABLE);
@@ -265,10 +285,13 @@ void SYSCFG_DL_GPIO_init(void)
 
     DL_GPIO_setPins(GPIOB, OLED_PIN_SCL_PIN | OLED_PIN_SDA_PIN);
     DL_GPIO_clearPins(GPIOB,
-        LED_LED1_PIN | LED_LED3_PIN | MOTOR1_DIR_PIN | TMC_MS1_PIN | TMC_MS2_PIN);
+        LED_LED1_PIN | LED_LED3_PIN | MOTOR1_DIR_PIN | TMC_MS1_PIN | TMC_MS2_PIN |
+        MOTOR2_DIR_PIN | MOTOR3_DIR_PIN | MOTOR4_DIR_PIN);
     DL_GPIO_enableOutput(GPIOB,
         LED_LED1_PIN | LED_LED3_PIN | MOTOR1_STEP_PIN | MOTOR1_DIR_PIN |
-        TMC_MS1_PIN | TMC_MS2_PIN | OLED_PIN_SCL_PIN | OLED_PIN_SDA_PIN);
+        TMC_MS1_PIN | TMC_MS2_PIN | OLED_PIN_SCL_PIN | OLED_PIN_SDA_PIN |
+        MOTOR2_STEP_PIN | MOTOR2_DIR_PIN | MOTOR3_STEP_PIN | MOTOR3_DIR_PIN |
+        MOTOR4_STEP_PIN | MOTOR4_DIR_PIN);
 }
 
 void SYSCFG_DL_SYSCTL_init(void)
@@ -422,24 +445,42 @@ static const DL_TimerG_PWMConfig gMotorStepConfig = {
     .startTimer        = DL_TIMER_STOP
 };
 
-void SYSCFG_DL_TIMER_STEP_init(void)
+/*
+ * 初始化一路 STEP 定时器为 CCP0 方波 PWM 输出（四路电机配置完全相同）。
+ * 默认周期 200 → 20kHz，运行时由 bsp_motor 写入相同 LOAD 值统一调速。
+ * 初始化后定时器保持停止，由 bsp_motor 在使能电机时再启动计数。
+ */
+static void SYSCFG_DL_initStepTimer(GPTIMER_Regs *inst)
 {
-    DL_TimerG_setClockConfig(MOTOR_STEP_TIMER_INST,
+    DL_TimerG_setClockConfig(inst,
         (DL_TimerG_ClockConfig *) &gMotorStepClockConfig);
-    DL_TimerG_initPWMMode(MOTOR_STEP_TIMER_INST,
+    DL_TimerG_initPWMMode(inst,
         (DL_TimerG_PWMConfig *) &gMotorStepConfig);
 
     /* CCP0 输出：初值低、不反相、使用功能值驱动。 */
-    DL_TimerG_setCaptureCompareOutCtl(MOTOR_STEP_TIMER_INST,
+    DL_TimerG_setCaptureCompareOutCtl(inst,
         DL_TIMER_CC_OCTL_INIT_VAL_LOW, DL_TIMER_CC_OCTL_INV_OUT_DISABLED,
         DL_TIMER_CC_OCTL_SRC_FUNCVAL, DL_TIMERG_CAPTURE_COMPARE_0_INDEX);
-    DL_TimerG_setCaptCompUpdateMethod(MOTOR_STEP_TIMER_INST,
+    DL_TimerG_setCaptCompUpdateMethod(inst,
         DL_TIMER_CC_UPDATE_METHOD_IMMEDIATE, DL_TIMERG_CAPTURE_COMPARE_0_INDEX);
-    DL_TimerG_setCaptureCompareValue(MOTOR_STEP_TIMER_INST,
+    DL_TimerG_setCaptureCompareValue(inst,
         MOTOR_STEP_TIMER_DUTY, DL_TIMER_CC_0_INDEX);
 
-    DL_TimerG_enableClock(MOTOR_STEP_TIMER_INST);
-    DL_TimerG_setCCPDirection(MOTOR_STEP_TIMER_INST, DL_TIMER_CC0_OUTPUT);
+    DL_TimerG_enableClock(inst);
+    DL_TimerG_setCCPDirection(inst, DL_TIMER_CC0_OUTPUT);
+}
+
+void SYSCFG_DL_TIMER_STEP_init(void)
+{
+    /*
+     * 四路电机 STEP 定时器：电机1(TIMG0)兼作梯形斜坡"主控"（唯一开 ZERO 中断），
+     * 电机2/3/4(TIMG8/TIMG12/TIMG6)为"跟随"，只输出 STEP、周期由 bsp_motor 镜像主控，
+     * 使四电机同频同向一起转。四者初始化配置完全相同。
+     */
+    SYSCFG_DL_initStepTimer(MOTOR_STEP_TIMER_INST);
+    SYSCFG_DL_initStepTimer(MOTOR2_STEP_TIMER_INST);
+    SYSCFG_DL_initStepTimer(MOTOR3_STEP_TIMER_INST);
+    SYSCFG_DL_initStepTimer(MOTOR4_STEP_TIMER_INST);
 }
 
 /*
@@ -510,8 +551,14 @@ void SYSCFG_DL_TIMER_SERVO_init(void)
         1500U, DL_TIMER_CC_3_INDEX);
 
     DL_Timer_enableClock(SERVO_TIMER_INST);
-    DL_Timer_setCCPDirection(SERVO_TIMER_INST, DL_TIMER_CC0_OUTPUT);
-    DL_Timer_setCCPDirection(SERVO_TIMER_INST, DL_TIMER_CC1_OUTPUT);
-    DL_Timer_setCCPDirection(SERVO_TIMER_INST, DL_TIMER_CC2_OUTPUT);
-    DL_Timer_setCCPDirection(SERVO_TIMER_INST, DL_TIMER_CC3_OUTPUT);
+    /*
+     * 【关键·勿拆成 4 次调用】DL_Timer_setCCPDirection 是「整体覆盖」CCPD 寄存器
+     * (gptimer->CCPD = ccpConfig)，不是「或入一位」。四路方向必须**一次调用**把
+     * CC0/1/2/3_OUTPUT(0x1|0x2|0x4|0x8=0xF) 全部或在一起写入。
+     * 若分 4 次单独调用，只有最后一次(CC3)生效，CCP0/1/2 退回输入态、舵机1/2/3 无 PWM
+     * 输出、信号线浮在 ~0.3V 不动——这正是"只有舵机4动"的根因(2026-07-16 实测定位)。
+     */
+    DL_Timer_setCCPDirection(SERVO_TIMER_INST,
+        DL_TIMER_CC0_OUTPUT | DL_TIMER_CC1_OUTPUT |
+        DL_TIMER_CC2_OUTPUT | DL_TIMER_CC3_OUTPUT);
 }

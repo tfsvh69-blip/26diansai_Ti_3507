@@ -90,6 +90,16 @@ uint32_t BspMotor1_GetRemainingSteps(void);
 bool BspMotor1_IsStopped(void);
 
 /*
+ * 四电机"一起转"接口（电机测试用）：电机2/3/4(TIMG8/12/6)跟随电机1(TIMG0)，
+ * 同频同向一起转，共用同一套梯形斜坡（TIMG0 ZERO 中断为主控）。
+ *   BspMotorAll_SetDir   ：四路 DIR 同时设向（低=正向）。
+ *   BspMotorAll_MoveSteps ：四电机一起走 steps 个 STEP 脉冲(定圈)后自动减速停表。
+ * 起转前须先 BspTmc_EnableAll()；停/转判定复用 BspMotor1_IsStopped()。
+ */
+void BspMotorAll_SetDir(BspMotorDir_t dir);
+void BspMotorAll_MoveSteps(uint32_t steps, uint32_t cruisePeriod, BspMotorDir_t dir);
+
+/*
  * 诊断只读接口：
  *   GetCurPeriod：当前定时器周期。若从起步值逐步变到巡航值，
  *                 说明 TIMG0 ZERO 中断在跑、定时器在计数、STEP 一定有脉冲输出。

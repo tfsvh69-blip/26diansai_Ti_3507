@@ -7,8 +7,9 @@
 | `LED1` | `app/app_led_task.c` | 300 ms | `APP_LED_TASK_PRIORITY` | `APP_LED_TASK_STACK_WORDS` | 无 | LED1(PB25) 翻转 | 当前已启动，用作 FreeRTOS 调度心跳 |
 | `UART0TX` | `app/app_uart_test_task.c` | 10 ms 接收轮询 | `APP_UART_TEST_TASK_PRIORITY` | `APP_UART_TEST_TASK_STACK_WORDS` | UART0 RX 任意非换行字符 | 返回 `UART RX OK` | UART0 使用 MFCLK 115200，PA10=TX，PA11=RX |
 | `IMU100Hz` | `app/app_imu_uart_task.c` | 10 ms | `APP_IMU_UART_TASK_PRIORITY` | `APP_IMU_UART_TASK_STACK_WORDS` | ATK-MS6DSV/LSM6DSV16X FIFO 融合姿态 + 加速度/角速度输出寄存器、PA16 INT 电平、**激光测距1(`LaserLd14_GetLatest`)** | UART0 输出 Roll/Pitch/Yaw、三轴加速度(mg)、三轴角速度(mdps)、FIFO 深度、**激光测距1(D1,mm)**、INT 电平 | 欧拉角每 10ms 读；串口整行按 `APP_IMU_PRINT_DIVIDER`(默认 **20**) 节流到 **5Hz** 打印（含激光测距，刷新慢便于阅读）；方案A：加速度/角速度只在打印那拍寄存器直读；芯片内部 ODR 配为 120Hz |
-| `MOTOR1` | `app/app_motor_test_task.c` | 20ms 按键轮询 | `APP_MOTOR_TEST_TASK_PRIORITY` | `APP_MOTOR_TEST_TASK_STACK_WORDS` | KEY1~4(PA28/PA31/PA30/PA29) 按下沿 | TIMG0_CCP0(PB10) STEP 脉冲+梯形加减速、PB11 DIR、PA13 ENN、MS1=PB0/MS2=PB1，UART0 打印状态，更新 `g_motorDiag` 供 OLED 显示 | 电机1**四按键定圈旋转**：K1 正转1圈、K2 反转1圈、K3 正转3圈、K4 正转5圈；1/32细分 6400脉冲/圈，巡航周期500(≈1.25圈/秒)；起转/巡航/停止全程梯形加减速(+500Hz起步+RAMP_DELTA=4)，移动期间忽略按键
-| `PERIPH` | `app/app_periph_test_task.c` | 500 ms | `APP_PERIPH_TEST_TASK_PRIORITY` | `APP_PERIPH_TEST_TASK_STACK_WORDS` | `g_motorDiag`（只读） | OLED(PB8/PB9 软件I2C) 刷屏、LED2(PA7)/LED3(PB12) 翻转、蜂鸣器(PA15) 通断 | 外设功能验证+电机状态显示：OLED 显示标题/运行秒+LED+BUZZ状态/电机1运行·方向·速度档；LED2/LED3 交替心跳；蜂鸣器保持静音；上电自检点亮 LED2/LED3 并短响 |
+| `MOTORTEST` | `app/app_motor_test_task.c` | 20ms 按键轮询 | `APP_MOTOR_TEST_TASK_PRIORITY` | `APP_MOTOR_TEST_TASK_STACK_WORDS` | KEY1/KEY2(PA28/PA31) 按下沿 | 四路 STEP(PB10/PB6/PB13/PB26)+四路 DIR(PB11/PB7/PB14/PB27)，PA13 ENN、MS1/MS2 共用；UART0 打印状态，更新 `g_motorDiag` 供 OLED 显示 | **4 电机一起转测试**：K1 全部正转2圈、K2 全部反转2圈；电机1(TIMG0)梯形斜坡主控计步，电机2/3/4(TIMG8/12/6)镜像同频跟随、同启同停；1/32细分6400脉冲/圈，巡航周期500，移动期间忽略按键 |
+| `SERVOSWEEP` | `app/app_servo_test_task.c` | 20ms | `APP_SERVO_TEST_TASK_PRIORITY` | `APP_SERVO_TEST_TASK_STACK_WORDS` | 无（自动） | 四路 SERVO PWM(PA8/PA9/PB4/PA12)，TIMA0 50Hz | **4 舵机各自独立错相摆动**（800↔2200us，不用按键），演示四路可完全独立控制；每秒串口打印 `SERVO us S1=.. S2=.. S3=.. S4=..`（数值互不相同即独立）。脉宽经 `BspServo_SetPulseUs` 极性补偿；四路方向须一次 `setCCPDirection` 写全(见下) |
+| `PERIPH` | `app/app_periph_test_task.c` | 500 ms | `APP_PERIPH_TEST_TASK_PRIORITY` | `APP_PERIPH_TEST_TASK_STACK_WORDS` | `g_motorDiag`（只读） | OLED(PB8/PB9 软件I2C) 刷屏、LED2(PA7)/LED3(PB12) 翻转、蜂鸣器(PA15) 通断 | 外设功能验证+电机测试状态显示：OLED 显示标题/运行秒+LED+BUZZ状态/电机运行·方向·圈数；LED2/LED3 交替心跳；蜂鸣器保持静音；上电自检点亮 LED2/LED3 并短响 |
 
 ## LED1(PB25) 心跳灯行为
 
@@ -30,22 +31,28 @@
   - 电机状态通过只读 `g_motorDiag`（`running`/`dirForward`/`param`）获取，由 MOTOR1 任务写入。
 - OLED 为板载软件 I2C（PB8/PB9），与 IMU 软件 I2C（PB2/PB3）、TMC 细分（PB0/PB1）均无引脚冲突。
 
-## 电机1 四按键定圈旋转
+## 电机测试（4 电机一起转，KEY1/KEY2）
 
-- 控制模型：`bsp_motor` 提供定步数位置移动接口 `BspMotor1_MoveSteps(steps, cruisePeriod)`，
-  TIMG0 ZERO 中断每脉冲计步，自动判断加速段→巡航段→减速段，走完指定步数且回到起步速度后自动停表。
-  同时保留 `RunContinuous`/`RequestStop` 连续旋转接口供后续扩展。
-- 1/32 细分下 1 圈 = 200 × 32 = **6400 脉冲**。
-- 按键（`APP_MOTOR_KEY_POLL_TICKS`=20ms 轮询，检测按下沿）：
-  - `KEY1`(PA28)：**正转 1 圈**（6400 脉冲）
-  - `KEY2`(PA31)：**反转 1 圈**（6400 脉冲）
-  - `KEY3`(PA30)：**正转 3 圈**（19200 脉冲）
-  - `KEY4`(PA29)：**正转 5 圈**（32000 脉冲）
-- 巡航周期 500（≈1.25 圈/秒），统一用于所有移动；若总步数不足以加速到巡航速度，自动退化为三角形速度曲线。
-- 移动期间按键被忽略；移动完成（停稳）后才能触发下一次移动。
-- 起步速度 500Hz（`MOTOR_STEP_PERIOD_START=8000`），斜坡增量 `MOTOR_RAMP_DELTA=4`（原为 8，加倍平滑以消除换驱动芯片后的轻微抖动）。
-- 每秒 UART0 诊断：`MOTOR DIAG pos=1 run=0/1 left=<剩余步数> per=<当前周期>`。
-- 移动开始/完成时各输出一条日志供排查。
+- 目的：一次让 4 个步进电机同频同向转起来，验证四路电机都正常。
+- 硬件：四路 STEP 各占独立定时器 CCP0（M1=TIMG0/PB10、M2=TIMG8/PB6、M3=TIMG12/PB13、M4=TIMG6/PB26），四路 DIR=PB11/PB7/PB14/PB27；ENN/MS1/MS2 四路共用。
+- **控制模型（方案B：主控+跟随）**：只有电机1(TIMG0)开 ZERO 中断做梯形斜坡与计步（复用原 `BspMotor1_MoveSteps` 那套逻辑）；电机2/3/4 由 `bsp_motor` 在每次改周期时把**相同 LOAD 值镜像**给 TIMG8/12/6，并与电机1同启同停 → 四电机同频同向"一起转"。跟随者不产生中断，CPU 开销与单电机相同。
+- 对外接口：`BspMotorAll_SetDir(dir)`（四路 DIR 一起设）、`BspMotorAll_MoveSteps(steps, cruisePeriod, dir)`。
+- 按键（`MOTORTEST` 任务，20ms 轮询按下沿，移动期间忽略按键）：
+  - `KEY1`(PA28)：**4 电机一起正转 2 圈**（2×6400=12800 脉冲）
+  - `KEY2`(PA31)：**4 电机一起反转 2 圈**
+- 1/32 细分下 1 圈 = 6400 脉冲；巡航周期 500（≈1.25 圈/秒）；起步 500Hz + `MOTOR_RAMP_DELTA=4` 梯形加减速，走完自动一起停表。
+- 串口：上电 `MOTOR test: K1=...`；触发 `MOTORx4 key start -> RUN FWD/REV 2 rev`，完成 `MOTORx4 done -> STOP`；每秒 `MOTORx4 DIAG run=x left=y per=z`。
+
+## 舵机测试（4 舵机各自独立摆动，`SERVOSWEEP` 任务）
+
+- 目的：验证四路舵机都正常，并演示"4 个舵机可完全独立控制"。四路共用 TIMA0 50Hz，各通道有独立比较值(CCP0/1/2/3)、脉宽互不影响。
+- 行为：不用按键，四路以**不同起始相位**在 800↔2200us 之间各自三角波来回摆动（约 2.8s 单程），所以任意时刻四个舵机处于不同角度，直观体现独立。
+- **独立控制**：单独控制某一路直接 `BspServo_SetPulseUs(BSP_SERVO_x, us)`，只动那一路、其它不变。
+- 串口：每秒打印 `SERVO us S1=.. S2=.. S3=.. S4=..`（四值互不相同即证明独立）。
+- **脉宽范围**：安全范围收窄到 **800~2200us**（中心 1500，见 bsp_servo.h），给舵机机械行程留余量；极值不灵是舵机机械限位所致，非 MCU 问题（补偿在任何脉宽都精确）。
+- **两个避坑（都已修）**：
+  1. 脉宽只经 `BspServo_SetPulseUs()`（内部 `period-pulseUs` 极性补偿，EDGE_ALIGN 下高电平=period-CC；直接写 CC=pulseUs 会反相、舵机不动）。
+  2. 四路 CCP 方向必须**一次** `DL_Timer_setCCPDirection(TIMA0, CC0|CC1|CC2|CC3_OUTPUT)` 写全——该函数整体覆盖 CCPD 寄存器，分 4 次单独调用只有最后一次(CC3)生效，会导致只有舵机4能动、舵机1/2/3 信号线浮 0.3V（2026-07-16 实测根因）。
 
 ## 激光测距1（UART2 RX 中断，无独立任务）
 

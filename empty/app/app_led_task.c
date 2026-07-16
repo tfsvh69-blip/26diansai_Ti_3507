@@ -6,6 +6,12 @@
 #include "app_config.h"
 #include "bsp_led.h"
 
+/*
+ * LED1 心跳任务：唯一职责是每 300ms 翻转 PB25。
+ * 它是"调度器是否活着"的最直观指示——只要 LED1 在闪，说明 FreeRTOS 在正常轮转。
+ * 特意保持极简、不掺任何业务，避免心跳判断被其它逻辑干扰。
+ */
+
 static TaskHandle_t s_ledTaskHandle = NULL;
 
 static void AppLedTask_Entry(void *argument)

@@ -6,6 +6,12 @@
 #include "app_config.h"
 #include "bsp_uart.h"
 
+/*
+ * UART0 接收自检任务：每 10ms 轮询 UART0 RX，收到任意非换行字符回一句 "UART RX OK"。
+ * 用途单一——验证调试串口的收发链路通不通，不承担业务命令解析。
+ * 与 IMU 任务共享 UART0，靠 bsp_uart 的递归互斥量保证各自整行不被打断。
+ */
+
 static TaskHandle_t s_uartTestTaskHandle = NULL;
 
 static void AppUartTestTask_Entry(void *argument)

@@ -49,9 +49,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 |---|---|---|---|
 | `LED1` | `app/app_led_task.c` | 300 ms | LED1(PB25) 心跳灯，用于判断 FreeRTOS 是否正常调度 |
 | `UART0TX` | `app/app_uart_test_task.c` | 10 ms 轮询 | UART0 接收回显，收到非换行字符返回 `UART RX OK` |
-| `IMU100Hz` | `app/app_imu_uart_task.c` | 10 ms | 读取 ATK-MS6DSV 姿态，通过 UART0 输出 Roll/Pitch/Yaw |
-| `MOTOR1` | `app/app_motor_test_task.c` | 20 ms 轮询 | 电机1 四按键定圈旋转（K1 +1圈/K2 -1圈/K3 +3圈/K4 +5圈，梯形加减速自动停表） |
+| `IMU100Hz` | `app/app_imu_uart_task.c` | 10 ms | 读取 ATK-MS6DSV 姿态 + 追加激光测距1(D1)，按 5Hz 整行输出 Roll/Pitch/Yaw/加减速度/D1 |
+| `MOTORTEST` | `app/app_motor_test_task.c` | 20 ms 轮询 | KEY1/KEY2 让 **4 个电机一起**正/反转 2 圈测试（电机1 TIMG0 斜坡主控，2/3/4 镜像跟随，梯形加减速自动停） |
+| `SERVOSWEEP` | `app/app_servo_test_task.c` | 20 ms | **4 个舵机各自独立错相摆动**（800~2200us，无按键），演示四路可独立控制；单控用 `BspServo_SetPulseUs(id,us)` |
 | `PERIPH` | `app/app_periph_test_task.c` | 500 ms | 外设验证：OLED 显示、LED2/LED3、蜂鸣器通断测试 |
+
+> 激光测距1（UART2）不是任务，而是 **UART2 RX 中断**逐字节喂 `module/laser` 的 LD14 解析器；距离由 `IMU100Hz` 任务读取并随整行输出。
 
 修改或新增任务后必须同步更新 [empty/docs/FREERTOS_TASKS.md](empty/docs/FREERTOS_TASKS.md)。
 
@@ -65,14 +68,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 蜂鸣器 | PA15 | 有源蜂鸣器，高电平响，普通 GPIO |
 | OLED SCL | PB9 | 板载 OLED GPIO 软件 I2C |
 | OLED SDA | PB8 | 板载 OLED GPIO 软件 I2C |
-| 电机1 STEP | PB10 | TIMG0_CCP0 硬件定时器输出 |
-| 电机1 DIR | PB11 | GPIO 输出，低=正向 |
+| 舵机1~4 PWM | PA8/PA9/PB4/PA12 | TIMA0_CCP0~3，50Hz PWM |
+| 电机1 STEP/DIR | PB10/PB11 | TIMG0_CCP0 / GPIO，低=正向 |
+| 电机2 STEP/DIR | PB6/PB7 | TIMG8_CCP0 / GPIO（跟随电机1） |
+| 电机3 STEP/DIR | PB13/PB14 | TIMG12_CCP0 / GPIO（跟随电机1） |
+| 电机4 STEP/DIR | PB26/PB27 | TIMG6_CCP0 / GPIO（跟随电机1） |
 | TMC 使能 ENN | PA13 | 低有效，四路共用 |
 | TMC 细分 MS1 | PB0 | 四路共用细分 |
 | TMC 细分 MS2 | PB1 | 四路共用细分 |
 | 按键 KEY1~4 | PA28/PA31/PA30/PA29 | 按下接地，内部上拉 |
 | UART0 TX | PA10 | MFCLK 4MHz，115200 8N1 |
 | UART0 RX | PA11 | — |
+| 激光测距1 UART2 TX | PB15 | MFCLK 4MHz，230400 8N1（激光只收不发，一般不用） |
+| 激光测距1 UART2 RX | PB16 | 接激光模块 TX，RX 中断逐字节喂 LD14 解析器；⚠️非 5V 容忍，激光 TX 若 5V 先量电平 |
 | ATK-MS6DSV SCL | PB2 | GPIO 软件 I2C，已外接上拉 |
 | ATK-MS6DSV SDA | PB3 | GPIO 软件 I2C，SA0 接地，7bit 地址 `0x6A` |
 | ATK-MS6DSV INT | PA16 | GPIO 输入，下拉 |

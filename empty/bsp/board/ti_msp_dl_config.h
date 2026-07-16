@@ -170,6 +170,41 @@ extern volatile bool g_sysClockUsingHFXT;
 #define MOTOR1_DIR_PIN                                           (DL_GPIO_PIN_11)
 #define MOTOR1_DIR_IOMUX                                         (IOMUX_PINCM28)
 
+/*
+ * 电机2/3/4（v1.1）：STEP 各占独立定时器 CCP0 输出，DIR 为普通 GPIO；
+ * 四路共用 ENN/MS1/MS2。四路 STEP 定时器全部 MFCLK 4MHz、÷1、周期 200(默认 20kHz)，
+ * 运行时由 bsp_motor 统一写入相同 LOAD 值 → 四电机同频同向"一起转"。
+ * 电机2：STEP=PB6(PINCM23,TIMG8_CCP0 PF5)、DIR=PB7(PINCM24)。
+ * 电机3：STEP=PB13(PINCM30,TIMG12_CCP0 PF4)、DIR=PB14(PINCM31)。
+ * 电机4：STEP=PB26(PINCM57,TIMG6_CCP0 PF5)、DIR=PB27(PINCM58)。
+ */
+#define MOTOR2_STEP_PORT                                                 (GPIOB)
+#define MOTOR2_STEP_PIN                                          (DL_GPIO_PIN_6)
+#define MOTOR2_STEP_IOMUX                                        (IOMUX_PINCM23)
+#define MOTOR2_STEP_IOMUX_FUNC                        IOMUX_PINCM23_PF_TIMG8_CCP0
+#define MOTOR2_STEP_TIMER_INST                                           (TIMG8)
+#define MOTOR2_DIR_PORT                                                  (GPIOB)
+#define MOTOR2_DIR_PIN                                           (DL_GPIO_PIN_7)
+#define MOTOR2_DIR_IOMUX                                         (IOMUX_PINCM24)
+
+#define MOTOR3_STEP_PORT                                                 (GPIOB)
+#define MOTOR3_STEP_PIN                                         (DL_GPIO_PIN_13)
+#define MOTOR3_STEP_IOMUX                                        (IOMUX_PINCM30)
+#define MOTOR3_STEP_IOMUX_FUNC                       IOMUX_PINCM30_PF_TIMG12_CCP0
+#define MOTOR3_STEP_TIMER_INST                                          (TIMG12)
+#define MOTOR3_DIR_PORT                                                  (GPIOB)
+#define MOTOR3_DIR_PIN                                          (DL_GPIO_PIN_14)
+#define MOTOR3_DIR_IOMUX                                         (IOMUX_PINCM31)
+
+#define MOTOR4_STEP_PORT                                                 (GPIOB)
+#define MOTOR4_STEP_PIN                                         (DL_GPIO_PIN_26)
+#define MOTOR4_STEP_IOMUX                                        (IOMUX_PINCM57)
+#define MOTOR4_STEP_IOMUX_FUNC                        IOMUX_PINCM57_PF_TIMG6_CCP0
+#define MOTOR4_STEP_TIMER_INST                                           (TIMG6)
+#define MOTOR4_DIR_PORT                                                  (GPIOB)
+#define MOTOR4_DIR_PIN                                          (DL_GPIO_PIN_27)
+#define MOTOR4_DIR_IOMUX                                         (IOMUX_PINCM58)
+
 /* TMC 总使能 ENN：PA13（PINCM35），低有效，四路共用。 */
 #define TMC_ENN_PORT                                                     (GPIOA)
 #define TMC_ENN_PIN                                             (DL_GPIO_PIN_13)

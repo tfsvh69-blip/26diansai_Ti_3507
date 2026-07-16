@@ -11,6 +11,15 @@
 
 #include "OLED.h"
 
+/*
+ * 外设综合验证任务（500ms 周期）：一处驱动多个"次要"外设，避免每个都单开一个任务。
+ *   - OLED：整屏刷新，显示运行秒、LED 状态、电机1 运行/方向/速度档（只读 g_motorDiag 快照）。
+ *   - LED2/LED3：交替翻转，直观表明本任务在调度。
+ *   - 蜂鸣器：当前保持静音（已验证，仅上电自检短响）。
+ * 注意：OLED_Update 整屏是软件 I2C 忙等大户（每次 ~45~57ms），是本工程第二大 CPU 消耗，
+ * 若要降 CPU 优先改这里（局部刷新/降频），详见 docs/PROJECT_CONTEXT.md 的 CPU 占用预算。
+ */
+
 static TaskHandle_t s_periphTestTaskHandle = NULL;
 
 /*

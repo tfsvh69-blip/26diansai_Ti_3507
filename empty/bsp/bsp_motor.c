@@ -32,6 +32,12 @@ static volatile uint32_t s_accelSteps   = 0U;   /* 加减速段所需脉冲数�
 static volatile uint8_t  s_positionMove = 0U;   /* 1=位置移动模式，0=连续旋转模式 */
 
 /*
+ * 1=四电机一起转模式：电机2/3/4(TIMG8/12/6)跟随电机1，镜像相同周期、同启同停。
+ * 只有电机1(TIMG0)开 ZERO 中断做斜坡与计步，跟随者不产生中断。
+ */
+static volatile uint8_t  s_allMotors    = 0U;
+
+/*
  * 设置 MS1/MS2 电平。
  * MS1/MS2 四路共用，改细分会同时影响所有电机；运行中不建议频繁切换。
  */
@@ -50,12 +56,45 @@ static void BspTmc_ApplyMicrostep(uint8_t ms1, uint8_t ms2)
     }
 }
 
-/* 把周期写入定时器 LOAD 与 50% 占空 CC，下个脉冲生效。 */
+/* 把周期写入电机2/3/4 的 LOAD 与 50% 占空 CC，使跟随者与电机1同频。 */
+static void BspMotor_ApplyPeriodFollowers(uint32_t period)
+{
+    DL_TimerG_setLoadValue(MOTOR2_STEP_TIMER_INST, period - 1U);
+    DL_TimerG_setCaptureCompareValue(MOTOR2_STEP_TIMER_INST, period / 2U, DL_TIMER_CC_0_INDEX);
+    DL_TimerG_setLoadValue(MOTOR3_STEP_TIMER_INST, period - 1U);
+    DL_TimerG_setCaptureCompareValue(MOTOR3_STEP_TIMER_INST, period / 2U, DL_TIMER_CC_0_INDEX);
+    DL_TimerG_setLoadValue(MOTOR4_STEP_TIMER_INST, period - 1U);
+    DL_TimerG_setCaptureCompareValue(MOTOR4_STEP_TIMER_INST, period / 2U, DL_TIMER_CC_0_INDEX);
+}
+
+/* 同时启动/停止电机2/3/4 的计数器（跟随者，无中断）。 */
+static void BspMotor_StartFollowers(void)
+{
+    DL_TimerG_startCounter(MOTOR2_STEP_TIMER_INST);
+    DL_TimerG_startCounter(MOTOR3_STEP_TIMER_INST);
+    DL_TimerG_startCounter(MOTOR4_STEP_TIMER_INST);
+}
+
+static void BspMotor_StopFollowers(void)
+{
+    DL_TimerG_stopCounter(MOTOR2_STEP_TIMER_INST);
+    DL_TimerG_stopCounter(MOTOR3_STEP_TIMER_INST);
+    DL_TimerG_stopCounter(MOTOR4_STEP_TIMER_INST);
+}
+
+/*
+ * 把周期写入电机1定时器 LOAD 与 50% 占空 CC，下个脉冲生效。
+ * 四电机模式下同步镜像给电机2/3/4，保证四路始终同频。
+ */
 static void BspMotor1_ApplyPeriod(uint32_t period)
 {
     DL_TimerG_setLoadValue(MOTOR_STEP_TIMER_INST, period - 1U);
     DL_TimerG_setCaptureCompareValue(MOTOR_STEP_TIMER_INST,
         period / 2U, DL_TIMER_CC_0_INDEX);
+
+    if (s_allMotors != 0U) {
+        BspMotor_ApplyPeriodFollowers(period);
+    }
 }
 
 /* 巡航周期限幅：不快于安全上限、不慢于起步速度。 */
@@ -77,9 +116,9 @@ void BspMotor_Init(void)
      * GPIO 默认电平已在 SYSCFG_DL_GPIO_init 设好，这里再显式收敛一次，避免误动作。
      */
     BspTmc_DisableAll();
-    BspMotor1_SetDir(MOTOR_DIR_FORWARD);
+    BspMotorAll_SetDir(MOTOR_DIR_FORWARD);
     BspTmc_SetMicrostep(TMC_MICROSTEP_32);
-    BspMotor1_StopStep();
+    BspMotor1_StopStep();   /* 停表并停掉四路 STEP 计数器，收敛安全状态。 */
 }
 
 void BspTmc_SetMicrostep(BspTmcMicrostep_t microstep)
@@ -122,14 +161,28 @@ void BspMotor1_SetDir(BspMotorDir_t dir)
     }
 }
 
+void BspMotorAll_SetDir(BspMotorDir_t dir)
+{
+    /* 四路 DIR 都在 GPIOB，一次端口写同时设向，保证四电机一起同向。低=正向。 */
+    uint32_t dirPins = MOTOR1_DIR_PIN | MOTOR2_DIR_PIN | MOTOR3_DIR_PIN | MOTOR4_DIR_PIN;
+
+    if (dir == MOTOR_DIR_REVERSE) {
+        DL_GPIO_setPins(GPIOB, dirPins);
+    } else {
+        DL_GPIO_clearPins(GPIOB, dirPins);
+    }
+}
+
 void BspMotor1_StopStep(void)
 {
     /* 立即停表：STEP 输出停在当前电平，电机停步；同步收敛软件状态。 */
     DL_TimerG_stopCounter(MOTOR_STEP_TIMER_INST);
+    BspMotor_StopFollowers();
     NVIC_DisableIRQ(MOTOR_STEP_TIMER_IRQn);
     s_running      = 0U;
     s_stopRequest  = 1U;
     s_positionMove = 0U;
+    s_allMotors    = 0U;
     s_curPeriod    = MOTOR_STEP_PERIOD_START;
 }
 
@@ -181,7 +234,12 @@ void BspMotor1_RequestStop(void)
  * 自动退化为三角形速度曲线（加速到中点即减速）。
  * 巡航周期 cruisePeriod 会被限幅到安全范围。
  */
-void BspMotor1_MoveSteps(uint32_t steps, uint32_t cruisePeriod)
+/*
+ * 定步数位置移动的公共启动流程（电机1单转 / 四电机一起转共用）。
+ * 调用前须先设好 s_allMotors（0=仅电机1，1=四电机一起）与方向。
+ * s_allMotors=1 时 ApplyPeriod 会把起步周期镜像给电机2/3/4，随后一并启动它们的计数器。
+ */
+static void BspMotor_StartPositionMove(uint32_t steps, uint32_t cruisePeriod)
 {
     uint32_t accel;
 
@@ -207,11 +265,16 @@ void BspMotor1_MoveSteps(uint32_t steps, uint32_t cruisePeriod)
     s_stopRequest  = 0U;
     s_positionMove = 1U;
 
-    /* 从慢速起步，避免直接高速起转失步。 */
+    /* 从慢速起步，避免直接高速起转失步（四电机模式下同时写入跟随者 LOAD）。 */
     s_curPeriod = MOTOR_STEP_PERIOD_START;
     BspMotor1_ApplyPeriod(MOTOR_STEP_PERIOD_START);
 
-    /* 清除可能残留的 ZERO 中断标志，再使能中断和 NVIC。 */
+    /* 四电机模式：跟随者已载入起步周期，与电机1一起启动计数。 */
+    if (s_allMotors != 0U) {
+        BspMotor_StartFollowers();
+    }
+
+    /* 清除可能残留的 ZERO 中断标志，再使能中断和 NVIC（只有电机1 主控开中断）。 */
     DL_TimerG_clearInterruptStatus(MOTOR_STEP_TIMER_INST,
         DL_TIMERG_INTERRUPT_ZERO_EVENT);
     DL_TimerG_enableInterrupt(MOTOR_STEP_TIMER_INST,
@@ -220,6 +283,21 @@ void BspMotor1_MoveSteps(uint32_t steps, uint32_t cruisePeriod)
 
     s_running = 1U;
     DL_TimerG_startCounter(MOTOR_STEP_TIMER_INST);
+}
+
+void BspMotor1_MoveSteps(uint32_t steps, uint32_t cruisePeriod)
+{
+    /* 仅电机1：不牵动跟随者。 */
+    s_allMotors = 0U;
+    BspMotor_StartPositionMove(steps, cruisePeriod);
+}
+
+void BspMotorAll_MoveSteps(uint32_t steps, uint32_t cruisePeriod, BspMotorDir_t dir)
+{
+    /* 四电机一起转：先统一设向，再置四电机模式，走完 steps 步自动一起停。 */
+    BspMotorAll_SetDir(dir);
+    s_allMotors = 1U;
+    BspMotor_StartPositionMove(steps, cruisePeriod);
 }
 
 uint32_t BspMotor1_GetRemainingSteps(void)
@@ -321,6 +399,11 @@ void TIMG0_IRQHandler(void)
         remaining = s_stepsTotal - s_stepsDone;
         if ((remaining == 0U) && (s_curPeriod >= MOTOR_STEP_PERIOD_START)) {
             DL_TimerG_stopCounter(MOTOR_STEP_TIMER_INST);
+            if (s_allMotors != 0U) {
+                /* 四电机模式：跟随者与主控一起停。 */
+                BspMotor_StopFollowers();
+                s_allMotors = 0U;
+            }
             NVIC_DisableIRQ(MOTOR_STEP_TIMER_IRQn);
             s_running      = 0U;
             s_positionMove = 0U;
@@ -329,6 +412,10 @@ void TIMG0_IRQHandler(void)
         /* 连续模式：已请求停止且减速到起步速度 → 停表。 */
         if ((s_stopRequest != 0U) && (s_curPeriod >= MOTOR_STEP_PERIOD_START)) {
             DL_TimerG_stopCounter(MOTOR_STEP_TIMER_INST);
+            if (s_allMotors != 0U) {
+                BspMotor_StopFollowers();
+                s_allMotors = 0U;
+            }
             NVIC_DisableIRQ(MOTOR_STEP_TIMER_IRQn);
             s_running = 0U;
         }

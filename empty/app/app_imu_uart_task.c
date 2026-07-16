@@ -11,6 +11,25 @@
 #include "bsp_uart.h"
 #include "laser_ld14.h"
 
+/*
+ * IMU + 激光测距1 输出任务（本工程 CPU 最大消耗，读写全走软件 I2C 忙等）。
+ *
+ * 【主循环 AppImuUartTask_Entry】
+ *   1) 初始化 IMU，失败则每秒重试并打印详细排查信息（WHOAMI/总线/扫描）。
+ *   2) 成功后进入 100Hz 循环：每 10ms 读一次融合欧拉角(走 FIFO/SFLP，持续排空 FIFO)。
+ *   3) 打印节流：每 APP_IMU_PRINT_DIVIDER(=20) 拍才发一整行 → 5Hz，避免刷屏太快/占串口。
+ *      只有在"要打印那拍"才额外读一次加速度/角速度寄存器(方案A，省软件 I2C 开销)，
+ *      并把激光测距1(D1)追加到同一行，实现"和陀螺仪一起发"。
+ *
+ * 【文件其余部分】全是把数字格式化到 UART0 的小工具(SendUint/SendInt32/SendCentideg/
+ *   SendHex... )和排查用打印(SendStatus/SendWhoAmIProbe/SendBusState/SendI2cScan)，
+ *   以及一个只在 APP_IMU_I2C_PIN_TEST_ENABLE=1 时启用的 PB2/PB3 引脚物理测试模式。
+ *   激光距离本身在 UART2 RX 中断里解析，这里只通过 LaserLd14_GetLatest() 取快照。
+ *
+ * 【为什么它最占 CPU】软件 I2C 每位靠 delayCycles 空转(~5µs/延时)，一次 6 字节读≈1ms，
+ *   100Hz 读融合角≈15~25% CPU。要提速优先换回硬件 I2C，详见 docs/PROJECT_CONTEXT.md。
+ */
+
 static TaskHandle_t s_imuUartTaskHandle = NULL;
 
 #define APP_IMU_WHO_AM_I_REG           (0x0FU)
