@@ -313,7 +313,7 @@
           </ArmAdsMisc>
           <Cads>
             <interw>1</interw>
-            <Optim>7</Optim>
+            <Optim>3</Optim>
             <oTime>0</oTime>
             <SplitLS>0</SplitLS>
             <OneElfS>1</OneElfS>
@@ -339,7 +339,7 @@
               <MiscControls></MiscControls>
               <Define>__MSPM0G3507__</Define>
               <Undefine></Undefine>
-              <IncludePath>..\..\source\third_party\CMSIS\Core\Include;..\..\source;..;..\app;..\bsp;..\bsp\board;..\bsp\delay;..\common;..\module;..\module\oled;..\module\imu;..\algo;..\third_party\FreeRTOS\include;..\third_party\FreeRTOS\portable\ARM_CM0;..\third_party\ti_driverlib;..\third_party\st_lsm6dsv16x</IncludePath>
+              <IncludePath>..\..\source\third_party\CMSIS\Core\Include;..\..\source;..;..\app;..\bsp;..\bsp\board;..\bsp\delay;..\common;..\module;..\module\oled;..\module\imu;..\module\laser;..\algo;..\third_party\FreeRTOS\include;..\third_party\FreeRTOS\portable\ARM_CM0;..\third_party\ti_driverlib;..\third_party\st_lsm6dsv16x</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -563,6 +563,26 @@
               <FileType>5</FileType>
               <FilePath>..\app\app_motor_test_task.h</FilePath>
             </File>
+            <File>
+              <FileName>app_periph_test_task.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\app\app_periph_test_task.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_periph_test_task.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\app\app_periph_test_task.h</FilePath>
+            </File>
+            <File>
+              <FileName>app_servo_test_task.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\app\app_servo_test_task.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_servo_test_task.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\app\app_servo_test_task.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
@@ -622,6 +642,26 @@
               <FileName>bsp_key.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\bsp\bsp_key.c</FilePath>
+            </File>
+            <File>
+              <FileName>bsp_buzzer.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\bsp\bsp_buzzer.c</FilePath>
+            </File>
+            <File>
+              <FileName>bsp_buzzer.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\bsp\bsp_buzzer.h</FilePath>
+            </File>
+            <File>
+              <FileName>bsp_servo.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\bsp\bsp_servo.c</FilePath>
+            </File>
+            <File>
+              <FileName>bsp_servo.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\bsp\bsp_servo.h</FilePath>
             </File>
           </Files>
         </Group>
@@ -707,6 +747,21 @@
               <FileName>OLED_Data.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\module\oled\OLED_Data.h</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>module_laser</GroupName>
+          <Files>
+            <File>
+              <FileName>laser_ld14.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\module\laser\laser_ld14.c</FilePath>
+            </File>
+            <File>
+              <FileName>laser_ld14.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\module\laser\laser_ld14.h</FilePath>
             </File>
           </Files>
         </Group>

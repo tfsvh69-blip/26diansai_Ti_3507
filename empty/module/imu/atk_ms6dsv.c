@@ -346,3 +346,41 @@ bool AtkMs6dsv_ReadEuler(AtkMs6dsvEuler_t *euler)
 
     return updated;
 }
+
+static int32_t AtkMs6dsv_RoundToInt32(float value)
+{
+    return (int32_t)((value >= 0.0f) ? (value + 0.5f) : (value - 0.5f));
+}
+
+bool AtkMs6dsv_ReadImuRaw(AtkMs6dsvImuRaw_t *raw)
+{
+    int16_t acc[3];
+    int16_t gyr[3];
+    uint8_t i;
+
+    if (raw == NULL) {
+        return false;
+    }
+
+    /*
+     * 直接读取加速度/角速度输出寄存器（不经过 FIFO）。
+     * 传感器在初始化里已按 120Hz ODR 使能，输出寄存器持续刷新；BDU 使能保证一帧数据一致。
+     */
+    if (lsm6dsv16x_acceleration_raw_get(&s_lsm6dsvCtx, acc) != 0) {
+        return false;
+    }
+
+    if (lsm6dsv16x_angular_rate_raw_get(&s_lsm6dsvCtx, gyr) != 0) {
+        return false;
+    }
+
+    for (i = 0U; i < 3U; i++) {
+        raw->accRaw[i] = acc[i];
+        raw->gyrRaw[i] = gyr[i];
+        /* 换算量程与初始化保持一致：加速度 ±2g、角速度 ±125dps。 */
+        raw->accMg[i] = AtkMs6dsv_RoundToInt32(lsm6dsv16x_from_fs2_to_mg(acc[i]));
+        raw->gyrMdps[i] = AtkMs6dsv_RoundToInt32(lsm6dsv16x_from_fs125_to_mdps(gyr[i]));
+    }
+
+    return true;
+}

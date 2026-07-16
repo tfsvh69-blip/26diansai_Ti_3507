@@ -23,7 +23,12 @@
 #define configTICK_RATE_HZ                      ( ( TickType_t ) 1000 )
 #define configMAX_PRIORITIES                    ( 5 )
 #define configMINIMAL_STACK_SIZE                ( ( unsigned short ) 128 )
-#define configTOTAL_HEAP_SIZE                   ( ( size_t ) ( 8 * 1024 ) )
+/*
+ * 堆大小 8KB→16KB：新增 PERIPH 任务后，全部 7 个任务(含 idle/timer)栈 + TCB 共约 7.9KB，
+ * 8KB 堆会在 vTaskStartScheduler 创建 idle/timer 时耗尽、调度器返回卡死。
+ * RAM 区 32KB，16KB 堆后总 RW+ZI 约 26KB，留有余量。
+ */
+#define configTOTAL_HEAP_SIZE                   ( ( size_t ) ( 16 * 1024 ) )
 #define configMAX_TASK_NAME_LEN                 ( 16 )
 #define configUSE_TRACE_FACILITY                1
 #define configUSE_16_BIT_TICKS                  0

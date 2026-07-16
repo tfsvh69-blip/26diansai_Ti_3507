@@ -1,7 +1,9 @@
 # Keil 编译产物
 empty/keil/Objects/
+empty/keil/Listings/
 empty/keil/*.map
 empty/keil/*.lst
+empty/keil/*.log
 
 # Keil 每个用户独立的 GUI 布局文件（不同机器/用户各自生成）
 empty/keil/*.uvguix.*

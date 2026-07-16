@@ -15,12 +15,12 @@ static void AppUartTestTask_Entry(void *argument)
     (void)argument;
 
     BspUart0_Lock();
-    BspUart0_SendString("UART0 RX READY, PB22 heartbeat active\r\n");
+    BspUart0_SendString("UART0 RX READY, LED1 heartbeat active\r\n");
     BspUart0_Unlock();
 
     for (;;) {
         /*
-         * PB22 已作为系统心跳灯，串口任务不再控制 LED。
+         * LED1(PB25) 已作为系统心跳灯，串口任务不再控制 LED。
          * 收到任意非换行字符后返回确认，便于单独验证 UART0 RX/TX 是否正常。
          */
         while (BspUart0_ReadByte(&rxByte)) {

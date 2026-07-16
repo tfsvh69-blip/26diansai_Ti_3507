@@ -7,22 +7,29 @@
 
 /*
  * 梯形加减速参数（定时器时钟 4MHz，period 越小步频越高）。
- * 直接高速起转会失步（电机只抖几度），故从 1kHz 起步逐步加速到调用指定的巡航速度，
- * 末段对称减速回 1kHz，保证整段脉冲平稳跑完。
- * 巡航（最高）速度由 StartRotateSteps 的 cruisePeriod 参数决定，不再写死。
+ * 直接高速起转/切速会失步（电机只抖几度），故从 500Hz 起步逐脉冲逼近目标速度，
+ * 停止时对称减速回起步速度再停表，保证全程平稳、不丢步。
+ * RAMP_DELTA 降到 4（原为 8），加倍延长加减速段，减轻换驱动芯片后的轻微抖动。
  */
-#define MOTOR_STEP_PERIOD_START   (4000U)                    /* 4000 → 1kHz 起步速度 */
-#define MOTOR_RAMP_DELTA          (8U)                       /* 每步周期增减量 */
-#define MOTOR_RAMP_STEPS          (475U)                     /* 减速段触发的剩余步数阈值 */
+#define MOTOR_STEP_PERIOD_START   (8000U)   /* 8000 → 500Hz 起步/停止速度 */
+#define MOTOR_RAMP_DELTA          (4U)      /* 每个脉冲周期的增/减量，决定加减速斜率 */
 
-/* 定长步进剩余脉冲数，ISR 中倒计；为 0 时表示本次旋转已完成。 */
-static volatile uint32_t s_stepsRemaining = 0U;
-/* 旋转完成标志；StartRotateSteps 置 0，ISR 完成后置 1。 */
-static volatile uint8_t  s_rotateDone     = 1U;
 /* 当前定时器周期（加减速过程中动态变化）。 */
-static volatile uint32_t s_curPeriod      = MOTOR_STEP_PERIOD_START;
-/* 本次旋转的巡航（最高速）周期，由 StartRotateSteps 设定。 */
-static volatile uint32_t s_cruisePeriod   = MOTOR_STEP_PERIOD_START;
+static volatile uint32_t s_curPeriod    = MOTOR_STEP_PERIOD_START;
+/* 目标巡航（最高速）周期，由 RunContinuous/MoveSteps 在线设定。 */
+static volatile uint32_t s_targetPeriod = MOTOR_STEP_PERIOD_START;
+/* 定时器是否正在输出脉冲（1=转动中或正在减速停止）。 */
+static volatile uint8_t  s_running      = 0U;
+
+/* ---- 连续旋转模式（RunContinuous / RequestStop） ---- */
+/* 停止请求：置 1 后 ISR 把目标拉回起步速度，减速到位即停表。 */
+static volatile uint8_t  s_stopRequest  = 1U;
+
+/* ---- 定步数位置移动模式（MoveSteps） ---- */
+static volatile uint32_t s_stepsTotal   = 0U;   /* 本次移动总脉冲数 */
+static volatile uint32_t s_stepsDone    = 0U;   /* 已发出的脉冲数 */
+static volatile uint32_t s_accelSteps   = 0U;   /* 加减速段所需脉冲数阈值 */
+static volatile uint8_t  s_positionMove = 0U;   /* 1=位置移动模式，0=连续旋转模式 */
 
 /*
  * 设置 MS1/MS2 电平。
@@ -41,6 +48,26 @@ static void BspTmc_ApplyMicrostep(uint8_t ms1, uint8_t ms2)
     } else {
         DL_GPIO_clearPins(TMC_MS2_PORT, TMC_MS2_PIN);
     }
+}
+
+/* 把周期写入定时器 LOAD 与 50% 占空 CC，下个脉冲生效。 */
+static void BspMotor1_ApplyPeriod(uint32_t period)
+{
+    DL_TimerG_setLoadValue(MOTOR_STEP_TIMER_INST, period - 1U);
+    DL_TimerG_setCaptureCompareValue(MOTOR_STEP_TIMER_INST,
+        period / 2U, DL_TIMER_CC_0_INDEX);
+}
+
+/* 巡航周期限幅：不快于安全上限、不慢于起步速度。 */
+static uint32_t BspMotor1_ClampPeriod(uint32_t period)
+{
+    if (period < BSP_MOTOR_PERIOD_MIN) {
+        period = BSP_MOTOR_PERIOD_MIN;
+    }
+    if (period > MOTOR_STEP_PERIOD_START) {
+        period = MOTOR_STEP_PERIOD_START;
+    }
+    return period;
 }
 
 void BspMotor_Init(void)
@@ -95,41 +122,30 @@ void BspMotor1_SetDir(BspMotorDir_t dir)
     }
 }
 
-void BspMotor1_StartStep(void)
-{
-    /* 启动 STEP 定时器，CCP0 连续输出方波，电机持续步进。 */
-    DL_TimerG_startCounter(MOTOR_STEP_TIMER_INST);
-}
-
 void BspMotor1_StopStep(void)
 {
-    /* 停止计数，STEP 输出停在当前电平，电机停步。 */
-    DL_TimerG_stopCounter(MOTOR_STEP_TIMER_INST);
-}
-
-void BspMotor1_StartRotateSteps(uint32_t steps, uint32_t cruisePeriod)
-{
-    /* 确保上一次旋转已结束，避免重入冲突。 */
+    /* 立即停表：STEP 输出停在当前电平，电机停步；同步收敛软件状态。 */
     DL_TimerG_stopCounter(MOTOR_STEP_TIMER_INST);
     NVIC_DisableIRQ(MOTOR_STEP_TIMER_IRQn);
+    s_running      = 0U;
+    s_stopRequest  = 1U;
+    s_positionMove = 0U;
+    s_curPeriod    = MOTOR_STEP_PERIOD_START;
+}
 
-    s_rotateDone     = 0U;
-    s_stepsRemaining = steps;
+void BspMotor1_RunContinuous(uint32_t cruisePeriod)
+{
+    s_targetPeriod = BspMotor1_ClampPeriod(cruisePeriod);
+    s_stopRequest  = 0U;
 
-    /* 巡航周期限幅：不快于安全下限、不慢于起步速度（慢于起步则全程按起步速度跑）。 */
-    if (cruisePeriod < 1U) {
-        cruisePeriod = 1U;
+    if (s_running != 0U) {
+        /* 已在转：本调用等同在线调速，ISR 会平滑逼近新目标。 */
+        return;
     }
-    if (cruisePeriod > MOTOR_STEP_PERIOD_START) {
-        cruisePeriod = MOTOR_STEP_PERIOD_START;
-    }
-    s_cruisePeriod = cruisePeriod;
 
-    /* 从慢速起步，避免直接高速起转失步；后续由 ISR 逐步加速到巡航速度。 */
+    /* 从慢速起步，避免直接高速起转失步；后续由 ISR 逐步加速到目标速度。 */
     s_curPeriod = MOTOR_STEP_PERIOD_START;
-    DL_TimerG_setLoadValue(MOTOR_STEP_TIMER_INST, MOTOR_STEP_PERIOD_START - 1U);
-    DL_TimerG_setCaptureCompareValue(MOTOR_STEP_TIMER_INST,
-        MOTOR_STEP_PERIOD_START / 2U, DL_TIMER_CC_0_INDEX);
+    BspMotor1_ApplyPeriod(MOTOR_STEP_PERIOD_START);
 
     /* 清除可能残留的 ZERO 中断标志，再使能中断和 NVIC。 */
     DL_TimerG_clearInterruptStatus(MOTOR_STEP_TIMER_INST,
@@ -138,59 +154,183 @@ void BspMotor1_StartRotateSteps(uint32_t steps, uint32_t cruisePeriod)
         DL_TIMERG_INTERRUPT_ZERO_EVENT);
     NVIC_EnableIRQ(MOTOR_STEP_TIMER_IRQn);
 
+    s_running = 1U;
     DL_TimerG_startCounter(MOTOR_STEP_TIMER_INST);
 }
 
-bool BspMotor1_IsRotateDone(void)
+void BspMotor1_SetSpeed(uint32_t cruisePeriod)
 {
-    return (s_rotateDone != 0U);
+    /* 仅在运行且未请求停止时更新目标速度；停止流程中忽略，避免打断减速。 */
+    if ((s_running != 0U) && (s_stopRequest == 0U)) {
+        s_targetPeriod = BspMotor1_ClampPeriod(cruisePeriod);
+    }
+}
+
+void BspMotor1_RequestStop(void)
+{
+    /* 连续旋转模式：请求平滑减速停止。位置模式会被覆盖为停止。 */
+    if (s_running != 0U) {
+        s_stopRequest  = 1U;
+        s_positionMove = 0U;
+    }
+}
+
+/*
+ * 定步数位置移动：走 steps 个 STEP 脉冲后自动平滑停止。
+ * 内部自动计算梯形加减速阈值——若步数太少不足以加速到巡航速度，
+ * 自动退化为三角形速度曲线（加速到中点即减速）。
+ * 巡航周期 cruisePeriod 会被限幅到安全范围。
+ */
+void BspMotor1_MoveSteps(uint32_t steps, uint32_t cruisePeriod)
+{
+    uint32_t accel;
+
+    if (steps == 0U) {
+        return;
+    }
+
+    cruisePeriod = BspMotor1_ClampPeriod(cruisePeriod);
+
+    /* 从起步速度加速到巡航速度所需的脉冲数。 */
+    accel = (MOTOR_STEP_PERIOD_START - cruisePeriod) / MOTOR_RAMP_DELTA;
+
+    if (steps <= (2U * accel)) {
+        /* 三角形速度曲线：加速到中点立即减速，不巡航。 */
+        s_accelSteps = steps / 2U;
+    } else {
+        s_accelSteps = accel;
+    }
+
+    s_stepsTotal   = steps;
+    s_stepsDone    = 0U;
+    s_targetPeriod = cruisePeriod;
+    s_stopRequest  = 0U;
+    s_positionMove = 1U;
+
+    /* 从慢速起步，避免直接高速起转失步。 */
+    s_curPeriod = MOTOR_STEP_PERIOD_START;
+    BspMotor1_ApplyPeriod(MOTOR_STEP_PERIOD_START);
+
+    /* 清除可能残留的 ZERO 中断标志，再使能中断和 NVIC。 */
+    DL_TimerG_clearInterruptStatus(MOTOR_STEP_TIMER_INST,
+        DL_TIMERG_INTERRUPT_ZERO_EVENT);
+    DL_TimerG_enableInterrupt(MOTOR_STEP_TIMER_INST,
+        DL_TIMERG_INTERRUPT_ZERO_EVENT);
+    NVIC_EnableIRQ(MOTOR_STEP_TIMER_IRQn);
+
+    s_running = 1U;
+    DL_TimerG_startCounter(MOTOR_STEP_TIMER_INST);
+}
+
+uint32_t BspMotor1_GetRemainingSteps(void)
+{
+    if (s_positionMove == 0U) {
+        return 0U;
+    }
+    if (s_stepsDone >= s_stepsTotal) {
+        return 0U;
+    }
+    return s_stepsTotal - s_stepsDone;
+}
+
+bool BspMotor1_IsStopped(void)
+{
+    return (s_running == 0U);
+}
+
+uint32_t BspMotor1_GetCurPeriod(void)
+{
+    return s_curPeriod;
+}
+
+bool BspTmc_IsEnabled(void)
+{
+    /* ENN 低有效：读输出寄存器 DOUT，低电平=已使能。 */
+    return ((TMC_ENN_PORT->DOUT31_0 & TMC_ENN_PIN) == 0U);
 }
 
 /*
  * TIMG0 ZERO 中断处理：每个 STEP 脉冲周期结束时触发一次。
- * 倒计步数；归零后停定时器、关中断并置完成标志。
+ *
+ * 连续旋转模式（s_positionMove==0）：每脉冲把当前周期朝目标逼近一个 RAMP_DELTA，
+ *   实现梯形加减速与在线调速；减速到起步速度且已请求停止时停表。
+ *
+ * 位置移动模式（s_positionMove==1）：每脉冲步数+1，根据剩余步数自动判断
+ *   加速段→巡航段→减速段，走完所有步数且回到起步速度后自动停表。
+ *   若总步数太少不足以上到巡航速度，自动退化为三角形曲线（无巡航段）。
+ *
  * ISR 中不调用 FreeRTOS API（符合 CLAUDE.md FreeRTOS 规则）。
  */
 void TIMG0_IRQHandler(void)
 {
+    uint32_t target;
+    uint32_t remaining;
+
     DL_TimerG_clearInterruptStatus(MOTOR_STEP_TIMER_INST,
         DL_TIMERG_INTERRUPT_ZERO_EVENT);
 
-    if (s_stepsRemaining == 0U) {
+    if (s_running == 0U) {
         return;
     }
 
-    s_stepsRemaining--;
-
-    if (s_stepsRemaining == 0U) {
-        DL_TimerG_stopCounter(MOTOR_STEP_TIMER_INST);
-        NVIC_DisableIRQ(MOTOR_STEP_TIMER_IRQn);
-        s_rotateDone = 1U;
-        return;
-    }
-
-    /*
-     * 梯形加减速：每个脉冲调整下一周期的定时器 LOAD/CC。
-     * 末段(剩余<=RAMP_STEPS)减速、起步段加速、中段巡航保持 MIN。
-     * 减速分支优先，避免与加速条件在 MIN 附近来回冲突。
-     */
-    if (s_stepsRemaining <= MOTOR_RAMP_STEPS) {
-        if (s_curPeriod < MOTOR_STEP_PERIOD_START) {
-            s_curPeriod += MOTOR_RAMP_DELTA;
-            if (s_curPeriod > MOTOR_STEP_PERIOD_START) {
-                s_curPeriod = MOTOR_STEP_PERIOD_START;
-            }
-            DL_TimerG_setLoadValue(MOTOR_STEP_TIMER_INST, s_curPeriod - 1U);
-            DL_TimerG_setCaptureCompareValue(MOTOR_STEP_TIMER_INST,
-                s_curPeriod / 2U, DL_TIMER_CC_0_INDEX);
+    if (s_positionMove != 0U) {
+        /* ---- 位置移动模式：步数驱动 ---- */
+        if (s_stepsDone < s_stepsTotal) {
+            s_stepsDone++;
         }
-    } else if (s_curPeriod > s_cruisePeriod) {
+        remaining = s_stepsTotal - s_stepsDone;
+
+        if (remaining == 0U) {
+            /* 所有步数已走完，收尾减速。 */
+            target = MOTOR_STEP_PERIOD_START;
+        } else if (remaining <= s_accelSteps) {
+            /* 进入减速段：朝起步速度减速。 */
+            target = MOTOR_STEP_PERIOD_START;
+        } else if (s_stepsDone <= s_accelSteps) {
+            /* 加速段：朝巡航速度加速。 */
+            target = s_targetPeriod;
+        } else {
+            /* 巡航段：保持巡航速度。 */
+            target = s_targetPeriod;
+        }
+    } else {
+        /* ---- 连续旋转模式：手动启停 ---- */
+        target = (s_stopRequest != 0U) ? MOTOR_STEP_PERIOD_START : s_targetPeriod;
+    }
+
+    /* 通用梯形斜坡：逐脉冲朝 target 逼近一个 RAMP_DELTA。 */
+    if (s_curPeriod < target) {
+        /* 减速（周期变大）。 */
+        s_curPeriod += MOTOR_RAMP_DELTA;
+        if (s_curPeriod > target) {
+            s_curPeriod = target;
+        }
+        BspMotor1_ApplyPeriod(s_curPeriod);
+    } else if (s_curPeriod > target) {
+        /* 加速（周期变小）。 */
         s_curPeriod -= MOTOR_RAMP_DELTA;
-        if (s_curPeriod < s_cruisePeriod) {
-            s_curPeriod = s_cruisePeriod;
+        if (s_curPeriod < target) {
+            s_curPeriod = target;
         }
-        DL_TimerG_setLoadValue(MOTOR_STEP_TIMER_INST, s_curPeriod - 1U);
-        DL_TimerG_setCaptureCompareValue(MOTOR_STEP_TIMER_INST,
-            s_curPeriod / 2U, DL_TIMER_CC_0_INDEX);
+        BspMotor1_ApplyPeriod(s_curPeriod);
+    }
+
+    /* 停止判定。 */
+    if (s_positionMove != 0U) {
+        /* 位置模式：所有步数走完且回到起步速度 → 停表。 */
+        remaining = s_stepsTotal - s_stepsDone;
+        if ((remaining == 0U) && (s_curPeriod >= MOTOR_STEP_PERIOD_START)) {
+            DL_TimerG_stopCounter(MOTOR_STEP_TIMER_INST);
+            NVIC_DisableIRQ(MOTOR_STEP_TIMER_IRQn);
+            s_running      = 0U;
+            s_positionMove = 0U;
+        }
+    } else {
+        /* 连续模式：已请求停止且减速到起步速度 → 停表。 */
+        if ((s_stopRequest != 0U) && (s_curPeriod >= MOTOR_STEP_PERIOD_START)) {
+            DL_TimerG_stopCounter(MOTOR_STEP_TIMER_INST);
+            NVIC_DisableIRQ(MOTOR_STEP_TIMER_IRQn);
+            s_running = 0U;
+        }
     }
 }

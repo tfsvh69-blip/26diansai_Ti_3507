@@ -25,41 +25,56 @@
 |---|---|---|---|---|---|---|
 | 40MHz 晶振 | HFXIN | PA5 | `GPIO_HFXIN_IOMUX` | `IOMUX_PINCM10`，package pin 45 | 核心板 X1（40MHz ±10ppm，15pF），配为模拟功能，作 SYSPLL 参考倍频到 80MHz | 起振成功串口打印 `BOOT: MCLK 80MHz <- HFXT 40MHz OK` |
 | 40MHz 晶振 | HFXOUT | PA6 | `GPIO_HFXOUT_IOMUX` | `IOMUX_PINCM11`，package pin 46 | 与 PA5 一起接晶振，配为模拟功能 | 起振失败自动回退内部 SYSOSC，串口打印 `BOOT: HFXT FAIL, ...` |
-| LED1 | LED1 控制 | PB22 | `LED_LED1_PIN` | `IOMUX_PINCM50`，package pin 21 | GPIO 输出，实测高电平点亮、低电平熄灭 | FreeRTOS 启动后每 300ms 翻转一次，用作系统心跳 |
-| 电机1 | M1_STEP | PB10 | `MOTOR1_STEP_PIN` | `IOMUX_PINCM27` / `IOMUX_PINCM27_PF_TIMG0_CCP0`，U2.49 | TIMG0_CCP0 硬件定时器输出，梯形加减速可变频方波（慢≈6.4kHz / 快≈32kHz）；TIMG0 ZERO 中断计步 | 旋转期间 PB10 有连续方波；旋转完成后定时器停止 |
+| LED1 | LED1 控制 | PB25 | `LED_LED1_PIN` | `IOMUX_PINCM56` | GPIO 输出，v1.1 高电平点亮（IO→阳极） | FreeRTOS 启动后每 300ms 翻转一次，用作系统心跳 |
+| LED2 | LED2 控制 | PA7 | `LED_LED2_PIN` | `IOMUX_PINCM12` | GPIO 输出，v1.1 高电平点亮 | 外设测试任务每 500ms 翻转 |
+| LED3 | LED3 控制 | PB12 | `LED_LED3_PIN` | `IOMUX_PINCM29` | GPIO 输出，v1.1 高电平点亮 | 外设测试任务每 500ms 翻转（与 LED2 相位相反） |
+| 蜂鸣器 | BUZZER | PA15 | `BUZZER_PIN` | `IOMUX_PINCM37` | GPIO 输出，有源蜂鸣器高电平响（经 Q3 驱动），普通 GPIO 无需 PWM | 外设测试任务每 5s 通一拍做通断测试；上电自检短响一次 |
+| OLED | SCL | PB9 | `OLED_PIN_SCL_PIN` | `IOMUX_PINCM26` | 板载 OLED 软件 I2C SCL，推挽输出 | 显示 `3507 v1.1 TEST` 及 tick/秒/蜂鸣器状态 |
+| OLED | SDA | PB8 | `OLED_PIN_SDA_PIN` | `IOMUX_PINCM25` | 板载 OLED 软件 I2C SDA，推挽输出 | 约定 SCL=PB9/SDA=PB8，若显示异常可对调 |
+| 电机1 | M1_STEP | PB10 | `MOTOR1_STEP_PIN` | `IOMUX_PINCM27` / `IOMUX_PINCM27_PF_TIMG0_CCP0`，U2.49 | TIMG0_CCP0 硬件定时器输出，连续旋转+梯形加减速可变频方波（L1≈6.4kHz ~ L5≈32kHz）；TIMG0 ZERO 中断在线调速 | 运行期间 PB10 有连续方波；停止时减速到起步速度后定时器停止 |
 | 电机1 | M1_DIR | PB11 | `MOTOR1_DIR_PIN` | `IOMUX_PINCM28`，U2.47 | GPIO 输出，低=正向，高=反向 | 方向不对就翻转该电平或调线序 |
 | TMC2209 | TMC_ENN | PA13 | `TMC_ENN_PIN` | `IOMUX_PINCM35`，U2.30 | GPIO 输出，低有效，四路驱动共用使能 | 高电平电机失力；测试任务会拉低使能 |
-| TMC2209 | TMC_MS1 | PB8 | `TMC_MS1_PIN` | `IOMUX_PINCM25`，U2.27 | GPIO 输出，四路共用细分；原 OLED SDA 改用 | MS1=0,MS2=0 → 1/8 细分 |
-| TMC2209 | TMC_MS2 | PB9 | `TMC_MS2_PIN` | `IOMUX_PINCM26`，U2.28 | GPIO 输出，四路共用细分；原 OLED SCL 改用 | 见引脚文档 §3.3 MS1/MS2 细分表 |
-| 按键1 | KEY1 | PA28 | `KEY1_PIN` | `IOMUX_PINCM3`，U2.4 | GPIO 输入，内部上拉；一端接 GND，按下为低 | 按下→慢速正转 1 圈 |
-| 按键2 | KEY2 | PA31 | `KEY2_PIN` | `IOMUX_PINCM6`，U2.6 | GPIO 输入，内部上拉；一端接 GND，按下为低 | 按下→慢速反转 1 圈 |
-| 按键3 | KEY3 | PA30 | `KEY3_PIN` | `IOMUX_PINCM5`，U2.53 | GPIO 输入，内部上拉；一端接 GND，按下为低 | 按下→快速正转 2 圈 |
-| 按键4 | KEY4 | PA17 | `KEY4_PIN` | `IOMUX_PINCM39`，U2.68 | GPIO 输入，内部上拉；一端接 GND，按下为低 | 按下→快速反转 2 圈 |
+| TMC2209 | TMC_MS1 | PB0 | `TMC_MS1_PIN` | `IOMUX_PINCM13` | GPIO 输出，四路共用细分（v1.1） | 黄排针模块：MS1=1,MS2=0 → 1/32 细分 |
+| TMC2209 | TMC_MS2 | PB1 | `TMC_MS2_PIN` | `IOMUX_PINCM14` | GPIO 输出，四路共用细分（v1.1） | 见引脚文档 §2.2 黄排针细分表（LL=1/8, HH=1/16, HL=1/32, LH=1/64） |
+| 按键1 | KEY1 | PA28 | `KEY1_PIN` | `IOMUX_PINCM3`，U2.4 | GPIO 输入，内部上拉；一端接 GND，按下为低 | 电机1 **启停切换** |
+| 按键2 | KEY2 | PA31 | `KEY2_PIN` | `IOMUX_PINCM6`，U2.6 | GPIO 输入，内部上拉；一端接 GND，按下为低 | 电机1 **换向**（运行中先减速停稳再反向） |
+| 按键3 | KEY3 | PA30 | `KEY3_PIN` | `IOMUX_PINCM5`，U2.53 | GPIO 输入，内部上拉；一端接 GND，按下为低 | 电机1 **加速一档**（L1→L5） |
+| 按键4 | KEY4 | PA29 | `KEY4_PIN` | `IOMUX_PINCM4` | GPIO 输入，内部上拉；一端接 GND，按下为低 | 电机1 **减速一档**（L5→L1） |
 | UART0 | TX | PA10 | `GPIO_UART_0_TX_PIN` | `IOMUX_PINCM21` / `IOMUX_PINCM21_PF_UART0_TX` | UART0 发送，MFCLK/115200 8N1；PA10 属于核心板特殊功能风险引脚，已按用户确认使用 | 串口助手应收到启动提示、IMU 输出或 `UART RX OK` 回显 |
 | UART0 | RX | PA11 | `GPIO_UART_0_RX_PIN` | `IOMUX_PINCM22` / `IOMUX_PINCM22_PF_UART0_RX` | UART0 接收，用于接收串口助手发来的命令；PA11 属于核心板特殊功能风险引脚 | 发送任意非换行字符后回显 `UART RX OK` |
+| 激光测距1 | UART2 TX(MCU) | PB15 | `GPIO_UART_2_TX_PIN` | `IOMUX_PINCM32` / `IOMUX_PINCM32_PF_UART2_TX`，v1.1 排针 H21 | UART2 发送，MFCLK/230400 8N1；接激光模块 RX（本模块只收不发，此脚一般不用） | — |
+| 激光测距1 | UART2 RX(MCU) | PB16 | `GPIO_UART_2_RX_PIN` | `IOMUX_PINCM33` / `IOMUX_PINCM33_PF_UART2_RX`，v1.1 排针 H21 | UART2 接收，接激光模块 TX；RX 中断逐字节喂 `LaserLd14` 解析器 | 串口每行 `D1=<mm>mm`；一直 `D1=---` 见下方排查 |
 | ATK-MS6DSV | IMU_SCL | PB2 | `IMU_I2C_SCL_PIN` | `IOMUX_PINCM15` / `IOMUX_PINCM15_PF_I2C1_SCL`，U2.15 | **GPIO 软件 I2C SCL**（开漏模拟）；扩展板已焊 4.7k 上拉到 3.3V | 串口应输出 `IMU INIT OK`，否则优先查 SCL 是否接到 B02 |
 | ATK-MS6DSV | IMU_SDA | PB3 | `IMU_I2C_SDA_PIN` | `IOMUX_PINCM16` / `IOMUX_PINCM16_PF_I2C1_SDA`，U2.17 | **GPIO 软件 I2C SDA**（开漏模拟）；SA0 接地后 7bit 地址 `0x6A`；IMU 供电 3.3V | 初始化失败码 `2` 多为 I2C ACK/接线/地址/上拉问题 |
 | ATK-MS6DSV | IMU_INT | PA16 | `IMU_INT_PIN` | `IOMUX_PINCM38`，U2.67 | GPIO 输入，下拉；当前任务轮询读取电平，暂未接入 ISR | 串口每行 `INT=0/1` 反映当前 PA16 电平 |
 
 > 当前 UART0 TX 已从 PB0 改为 PA10。PA10/PA11 均属于核心板特殊功能风险引脚，本次按用户确认使用。
 
-## OLED 停用说明
+## OLED / LED / 蜂鸣器 外设测试（v1.1）
 
-- 天猛星扩展板 v1.0 把原 OLED 的 PB8/PB9 改作 TMC 细分 MS1/MS2，本板不再接 OLED。
-- `app_main.c` 已移除 OLED 启动屏，`SYSCFG_DL_GPIO_init` 已把 PB8/PB9 改为 GPIO 输出驱动 MS1/MS2。
-- `ti_msp_dl_config.h` 仍保留 `OLED_*` 宏仅为兼容 `module/oled` 编译，运行时不再初始化这两脚；`module/oled` 后续可整体移除。
+- v1.1 板 OLED 恢复到板载 PB8/PB9（软件 I2C），TMC 细分改用 PB0/PB1，两者不再冲突。
+- 三项验证统一由 `PERIPH` 外设测试任务完成（`app/app_periph_test_task.c`）：
+  - **OLED**：`OLED_Init()` 后每 500ms 刷屏，显示 `3507 MOTOR1 v1.1`(标题) / `T:..s L:.. B:..`(运行秒+LED+蜂鸣器) / `M1:RUN FWD R3`(电机1 运行·方向·圈数，读 `g_motorDiag`)。
+  - **指示灯**：LED2(PA7)、LED3(PB12) 每 500ms 交替翻转（相位相反）；LED1(PB25) 仍由心跳任务独占。
+  - **蜂鸣器**：PA15 当前保持静音（已验证正常）；上电自检时短响一次。
+- OLED 软件 I2C 只做推挽输出、不读 ACK，`SYSCFG_DL_GPIO_init` 已把 PB8/PB9 配为普通数字输出、空闲拉高。
+- 位延时 `OLED.c::IIC_delay` 已从 10us 降到 2us，减少全屏刷新对同优先级任务（按键轮询）的忙等阻塞。
+- 约定 SCL=PB9、SDA=PB8；文档未标注具体归属，若实物相反在 `ti_msp_dl_config.h` 对调两宏即可。
 
-## 电机1驱动测试
+## 电机1 四按键定圈旋转
 
-- 步进驱动 TMC2209，STEP=PB10(TIMG0_CCP0)、DIR=PB11、ENN=PA13(低有效，四路共用)、MS1=PB8、MS2=PB9(四路共用细分)。
-- 上电默认安全状态：ENN 拉高禁用、STEP 停止、DIR 正向、MS1=0/MS2=0(1/8 细分)。
-- `MOTOR1` 任务现为**按键控制**：20ms 轮询四个按键，检测按下沿触发定长旋转；运行中忽略按键，转完自动禁用 ENN。
-  - KEY1：慢速正转 1 圈；KEY2：慢速反转 1 圈；KEY3：快速正转 2 圈；KEY4：快速反转 2 圈。
-- **梯形加减速**：从 1kHz(period=4000)起步、每脉冲周期减 8 加速到巡航速度、末段(剩余≤475 步)对称减速回起步速度。巡航速度由调用参数决定，不再写死。
-  - 慢速巡航 `BSP_MOTOR_PERIOD_SLOW`=625(6.4kHz≈1 圈/秒)，快速巡航 `BSP_MOTOR_PERIOD_FAST`=125(32kHz≈5 圈/秒)，1/32 细分。参数在 `bsp_motor.h/.c`。
-- TIMG0 ZERO 中断每 STEP 周期触发一次：ISR 倒计 `s_stepsRemaining` 并按梯形曲线更新 LOAD/CC，归零后停定时器+关 NVIC。
-- 串口输出：上电 `MOTOR1 key ctrl: ...`；按键时 `KEYx: ...`；每次转完 `MOTOR1: done, motor disabled`。
-- 踩坑确认：步进电机**从静止直接起高频会失步**（实测 20kHz 直接起转只抖 5~10°），高速必须配加减速斜坡；起转频率远低于运动后可达的巡航频率。先前 20kHz 巡航太快，已按需求降为慢 1 圈/秒、快 5 圈/秒。
+- 步进驱动 TMC2209，STEP=PB10(TIMG0_CCP0)、DIR=PB11、ENN=PA13(低有效，四路共用)、MS1=PB0、MS2=PB1(四路共用细分)。
+- 上电默认安全状态：ENN 拉高禁用、STEP 停止、DIR 正向、MS1=0/MS2=0；运行前由任务设为 MS1=1/MS2=0(1/32 细分)。
+- `MOTOR1` 任务现为**四按键定圈旋转**：20ms 轮询四个按键，检测按下沿；移动期间按键被忽略。
+  - **K1 正转 1 圈**（6400 脉冲）/ **K2 反转 1 圈** / **K3 正转 3 圈**（19200 脉冲）/ **K4 正转 5 圈**（32000 脉冲）。
+  - 1/32 细分 → 1 圈 = 200 × 32 = 6400 脉冲，巡航周期 500（≈1.25 圈/秒）。
+  - 每次移动：`BspMotor1_MoveSteps()` → ISR 梯形加减速起步→巡航→自动减速→停表，停稳后才能触发下一次。
+- **梯形加减速**（双模式并存）：
+  - **位置模式**（MoveSteps）：500Hz(period=8000)起步，每脉冲 ±`MOTOR_RAMP_DELTA=4` 朝目标逼近；步数太少时自动退化为三角形曲线。ISR 每脉冲计步，自动判断加速/巡航/减速三段，走完+回起步速度后停表。
+  - **连续模式**（RunContinuous，保留供后续扩展）：起步→加速到巡航→手动 RequestStop 后减速停止。
+- 按键定义数组在 `app_motor_test_task.c::s_moveDef[]`；诊断快照 `g_motorDiag` 由 MOTOR1 写入、PERIPH 在 OLED 只读显示（`app_motor_status.h`）。
+- 串口输出：上电 `MOTOR1 ctrl: K1 +1rev, ...`；每次移动 `MOTOR1 key start -> RUN FWD/REV <圈>`，完成后 `MOTOR1 done -> STOP`；每秒诊断行 `MOTOR DIAG pos=1 run=x left=<剩余步数> per=<当前周期>`。
+- 踩坑确认：步进电机**从静止直接起高频会失步**（实测 20kHz 直接起转只抖 5~10°），高速必须配加减速斜坡；速度/加速度现为 500Hz 起步 + RAMP_DELTA=4，换驱动芯片后实测运行平稳。
 
 ### 电机1调试结论（已实测可正常旋转）
 
@@ -69,11 +84,11 @@
 - **无加减速直接启动有步频上限（历史记录）**：当前已实现梯形加减速（1kHz 起步→加速到巡航→末段对称减速），此条为历史踩坑保留。若未来去掉加减速，需注意直接起高频会失步。
 - 电机不转排查顺序：① VM(4S) 是否上电；② TMC2209 VREF 电流是否调到有力矩；③ ENN 是否确实拉低；④ PB10 是否有方波；⑤ A/B 相线序是否接错。
 
-## PB22 心跳灯
+## LED1(PB25) 心跳灯
 
 - `App_Init()` 当前启动 `AppLedTask_Init()`。
-- PB22 每 300ms 翻转一次，用于判断 FreeRTOS 调度是否正常运行。
-- 若 PB22 不闪，优先排查程序是否进入 `App_Init()`、是否卡在外设初始化、是否触发 `configASSERT` 或 HardFault。
+- LED1(PB25) 每 300ms 翻转一次，用于判断 FreeRTOS 调度是否正常运行。
+- 若 LED1 不闪，优先排查程序是否进入 `App_Init()`、是否卡在外设初始化、是否触发 `configASSERT` 或 HardFault。
 
 ## UART0 接收回显测试
 
@@ -87,13 +102,18 @@
 
 ## ATK-MS6DSV 姿态输出
 
-> **重要提醒**：全部设备上电状态下烧录后，IMU 必定读不出来（代码正确也一样）。
+> **重要提醒 1（临时锁死）**：全部设备上电状态下烧录后，IMU 常读不出来（代码正确也一样）。
 > 根因是烧录期间 IMU 未断电，芯片内部状态机未经历上电复位（POR），残留状态无法通过软件复位恢复。
-> **解决：烧录后拔掉 Type-C 或电源彻底断电，再重新上电。**
+> **解决：彻底断电再重新上电。** ⚠️ v1.1 板 IMU 的 3V3 由开发板 LDO（来自 +5V）供，+5V 有 XL4015(电池) 和 Type-C **两路**（风险 R3）；只掉一路、只按 RST、只重烧都不算断电，**两路都拔、等几秒**才让 IMU 经历 POR。
+>
+> **重要提醒 2（永久损坏，2026-07-16 实测）**：若"两路电全拔彻底断电"后仍 `INIT FAIL:2 STEP=WHOAMI`、`0x6A/0x6B=ERR`、`SCAN none`、总线 `SCL=1 SDA=1`，说明器件在总线上完全不 ACK，多半是**模块硬件坏了**——软件救不了（连地址都不 ACK 就发不进任何命令）。**直接换一颗新 MS6DSV 模块验证**，本工程曾据此换模块后立即恢复正常。
+>
+> **排查顺序**：两路电全拔断电重启 → 仍不行且引脚/供电确认无误 → 换新模块。
 
 - 模块：正点原子 ATK-MS6DSV，核心器件 LSM6DSV16X。
 - 接线：SCL=PB2/B02，SDA=PB3/B03，INT=PA16/A16，SA0 接地。
 - I2C：**当前使用 GPIO 软件 I2C**（开漏模拟方式，400 个 CPU 周期延迟），端口层 `bsp_imu_port.c` 首次访问时关闭 I2C1 硬件控制器，将 PB2/PB3 切换为 GPIO 输入上拉 + 开漏输出模式；SA0 接地时 7bit 地址为 `0x6A`。
+- **【防护·勿回退】`SYSCFG_DL_I2C_1_init()` 只做时钟/FIFO 配置、不调用 `DL_I2C_enableController()`**：否则上电到 IMU 任务接管软件 I2C 的空窗期内，硬件 I2C 会接管 PB2/PB3，可能在总线上打 glitch 把传感器推入锁死态（反复冲击疑似加速永久损坏）。让 PB2/PB3 全程由 GPIO 软件 I2C 控制，别为兼容旧接口把 `enableController` 加回去。
 - 软件 I2C 使用标准重复起始时序：写寄存器地址 → 重复起始 → 读 N 字节，最后一字节 NACK 后 STOP（避免 LSM6DSV16X 继续保持发送态拉低 SDA）。
 - 所有 I2C 等待循环均带超时，总线被拉死时会超时返回失败而非卡任务。
 - 读取节拍：`IMU100Hz` 任务每 10ms 读取一次并通过 UART0 输出一次。
@@ -108,6 +128,19 @@
 - 初始化失败时还会切到 GPIO 软件 I2C，并给 SCL 输出 18 个恢复脉冲，再输出 `IMU BUS SCL=... SDA=... STAT=...`；恢复后 SCL/SDA 都应为 `1`，若任意一根为 `0`，优先查短路、接反、模块供电或上拉不足。
 - 初始化首次失败和之后每 5 次失败会输出 `IMU SCAN: ...`；当前只探测 SA0 可能对应的 `0x6A/0x6B`，避免异常状态下全地址扫描刷出假 ACK。
 - 若输出 `IMU SCAN: bus stuck SCL=1 SDA=0`，不要按地址列表排查；这表示 SDA 物理线被拉低，此时所有地址都可能被误判 ACK，应优先断开 IMU SDA 线观察 PB3 是否回到高电平。
+
+## 激光测距1（LD14，UART2）
+
+- 模块：单点激光测距（协议移植自参考工程 `26RuiKang-AppleRobot-STM32-5.1` 的 `lidar_manager`/`ld14`）。
+- 接线（v1.1 排针 **H21**，脚序 1=+5V / 2=GND / 3=MCU RX / 4=MCU TX）：模块 **TX → PB16(MCU RX)**，模块 RX → PB15(MCU TX)。**只用到 MCU RX**，激光持续外发数据帧，MCU 只接收。
+- 串口参数：**230400 8N1**（依据参考工程 SC16 通道A 配置推定）。MFCLK 4MHz + 8x 过采样，`IBRD=2`/`FBRD=11`，实测波特率误差 -0.08%。**若实物模块波特率不同，改 `ti_msp_dl_config.h` 的 `UART_2_BAUD_RATE` 及分频即可**。
+- 协议：195 字节定长帧，帧头 `0xAA×4` + 命令字 `0x02` + 12 点(每点 15 字节，偏移 10 起) + 时间戳 + 校验和（前 194 字节累加低 8 位，兼容含/不含帧头两种口径）。解析后取 12 点非零距离**平均**作为单值距离。
+- 接收路径：**UART2 RX 中断**（`UART2_IRQHandler` in `bsp_uart.c`）逐字节喂 `LaserLd14_FeedByte()`。230400 连续流下任务轮询来不及，故必须走中断；RX FIFO 阈值设为 1 字节、中断内循环取空。ISR 内不调用 FreeRTOS API。
+- 输出：距离由 `IMU100Hz` 任务在打印整行时一并输出，格式 `... D1=<mm>mm ...`，与陀螺仪数据同一行、5Hz 刷新（见 `FREERTOS_TASKS.md`）。
+- 排查：
+  - 一直 `D1=---`：说明没收到过有效帧。优先查 ① 模块是否上电（H21-1=+5V、H21-2=GND 共地）；② 模块 TX 是否接到 **PB16**；③ 波特率是否真的 230400（不符则改宏）；④ 是否与 H21 上的板载/其它设备 TX 冲突（排针与板载设备二选一）。
+  - `D1` 有值但明显不对/跳变：多为波特率略偏或校验口径问题，可临时打印 `LaserLd14Data_t` 的 `frameOkCnt`/`crcErrCnt`/`rxBytes` 定位是"没在收"还是"收了但过不了校验"。
+- ⚠️ **电平风险（原理图风险 R2）**：激光模块 TX 若为 5V 电平，而 PB16 **不是 5V 容忍引脚**，长期直连有损坏风险。接线前务必先量模块 TX 输出电平；若为 5V 需串分压/加电平转换。
 
 ## IMU I2C 引脚物理测试
 

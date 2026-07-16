@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - 用 Keil 打开工程，`Build (F7)` 编译，`Download` 烧录到板子。
 - Keil 的 `BeforeMake` 已关闭 `syscfg.bat`，**不需要安装 TI SysConfig** 也可以编译。
-- 烧录后打开串口助手（115200 8N1，无流控），连接 PA10=TX、PA11=RX，应依次看到 `BOOT: board init ok`、`BOOT: start scheduler`，随后 PB22 LED 每 300ms 闪烁。
+- 烧录后打开串口助手（115200 8N1，无流控），连接 PA10=TX、PA11=RX，应依次看到 `BOOT: board init ok`、`BOOT: start scheduler`，随后 PB25(LED1) 每 300ms 闪烁。
 
 ## 项目架构
 
@@ -47,19 +47,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | 任务名 | 文件 | 周期 | 说明 |
 |---|---|---|---|
-| `LED1` | `app/app_led_task.c` | 300 ms | PB22 心跳灯，用于判断 FreeRTOS 是否正常调度 |
+| `LED1` | `app/app_led_task.c` | 300 ms | LED1(PB25) 心跳灯，用于判断 FreeRTOS 是否正常调度 |
 | `UART0TX` | `app/app_uart_test_task.c` | 10 ms 轮询 | UART0 接收回显，收到非换行字符返回 `UART RX OK` |
 | `IMU100Hz` | `app/app_imu_uart_task.c` | 10 ms | 读取 ATK-MS6DSV 姿态，通过 UART0 输出 Roll/Pitch/Yaw |
+| `MOTOR1` | `app/app_motor_test_task.c` | 20 ms 轮询 | 电机1 四按键定圈旋转（K1 +1圈/K2 -1圈/K3 +3圈/K4 +5圈，梯形加减速自动停表） |
+| `PERIPH` | `app/app_periph_test_task.c` | 500 ms | 外设验证：OLED 显示、LED2/LED3、蜂鸣器通断测试 |
 
 修改或新增任务后必须同步更新 [empty/docs/FREERTOS_TASKS.md](empty/docs/FREERTOS_TASKS.md)。
 
-### 当前硬件连接
+### 当前硬件连接（v1.1，以 `pcb引脚配置文档/v1.1/机器人控制板_接线说明.md` 为准）
 
 | 硬件 | 引脚 | 说明 |
 |---|---|---|
-| LED1 | PB22 | 高电平点亮，心跳灯 |
-| OLED SCL | PB9 | GPIO 模拟 I2C |
-| OLED SDA | PB8 | GPIO 模拟 I2C |
+| LED1 | PB25 | 高电平点亮，心跳灯 |
+| LED2 | PA7 | 高电平点亮，外设测试任务翻转 |
+| LED3 | PB12 | 高电平点亮，外设测试任务翻转 |
+| 蜂鸣器 | PA15 | 有源蜂鸣器，高电平响，普通 GPIO |
+| OLED SCL | PB9 | 板载 OLED GPIO 软件 I2C |
+| OLED SDA | PB8 | 板载 OLED GPIO 软件 I2C |
+| 电机1 STEP | PB10 | TIMG0_CCP0 硬件定时器输出 |
+| 电机1 DIR | PB11 | GPIO 输出，低=正向 |
+| TMC 使能 ENN | PA13 | 低有效，四路共用 |
+| TMC 细分 MS1 | PB0 | 四路共用细分 |
+| TMC 细分 MS2 | PB1 | 四路共用细分 |
+| 按键 KEY1~4 | PA28/PA31/PA30/PA29 | 按下接地，内部上拉 |
 | UART0 TX | PA10 | MFCLK 4MHz，115200 8N1 |
 | UART0 RX | PA11 | — |
 | ATK-MS6DSV SCL | PB2 | GPIO 软件 I2C，已外接上拉 |
@@ -69,6 +80,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 修改引脚或新增硬件后必须同步更新 [empty/docs/HARDWARE_WIRING.md](empty/docs/HARDWARE_WIRING.md)。
 
 ## 关键约定
+
+### 硬件接线图优先（铁律）
+
+任何涉及引脚、外设复用、接线的操作（判断某引脚接了什么、新增/修改引脚用途、分配指示灯/信号脚等），**必须先查阅权威硬件接线图** [`pcb引脚配置文档/v1.1/机器人控制板_接线说明.md`](pcb引脚配置文档/v1.1/机器人控制板_接线说明.md) 及同目录网表文件，确认该引脚在**当前硬件版本**上的实际物理连接和功能后再动手；不得凭代码现状、注释、git 历史或记忆推断引脚用途。
+
+> 反例（2026-07-15）：PB22 在 git 历史里曾是 LED1，代码与注释也残留该痕迹，但它在 v1.1 实际是 `LINE6`、已接到扩展板承担其它功能，不能想当然拿去做心跳灯。凡"复用某个看似空闲的引脚"之前，务必先在接线图里核实其真实连接。
 
 ### 禁用/慎用引脚
 
@@ -90,7 +107,7 @@ A23、A21、A20、A19、A18、A11、A10、A5、A6、A4、A3、A2
 - UART0 固定使用 MFCLK 4MHz、115200 8N1，分频 `IBRD=2`、`FBRD=11`。
 - 新增或修改 UART 前先阅读 [empty/docs/UART_DEBUG_GUIDE.md](empty/docs/UART_DEBUG_GUIDE.md)。
 - 乱码排查优先怀疑"时钟源或分频不对"，不要先猜文本编码或反复试波特率。
-- `BspUart0_SendString()` 在调度器运行后会挂起调度器保证字符串完整输出；多任务共享 UART0 时注意日志频率。
+- UART0 多任务共享用**递归互斥量**保证整行原子（`BspUart0_Init` 在 `BspBoard_Init` 中于调度器启动前创建）：`BspUart0_SendString` 单次调用自动加锁，多段拼接用 `BspUart0_Lock/Unlock` 包裹。**不再挂起调度器**，发送整行时其它任务照常时间片轮转，避免全局卡顿；但仍需注意单串口日志总频率。
 
 ### SysConfig 解耦
 

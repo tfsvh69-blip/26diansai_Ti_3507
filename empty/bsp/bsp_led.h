@@ -6,7 +6,9 @@ extern "C" {
 #endif
 
 typedef enum {
-    BSP_LED_1 = 0,
+    BSP_LED_1 = 0,   /* PB25 */
+    BSP_LED_2,       /* PA7  */
+    BSP_LED_3,       /* PB12 */
     BSP_LED_COUNT,
 } BspLedId_t;
 

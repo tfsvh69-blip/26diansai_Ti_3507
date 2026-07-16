@@ -96,7 +96,9 @@ uint8_t OLED_DisplayBuf[8][128];
 //延时
 void IIC_delay(void)
 {
-	Delay_us(10);
+	/* 位延时：2us → SCL 约 200kHz，SSD1306(≤400kHz) 可靠；
+	   比原 10us 更短，减少全屏刷新对同优先级任务的忙等阻塞。 */
+	Delay_us(2);
 }
 void OLED_W_SCL(uint8_t BitValue)
 {

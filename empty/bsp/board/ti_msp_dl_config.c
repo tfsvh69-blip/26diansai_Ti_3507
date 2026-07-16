@@ -119,14 +119,18 @@ void SYSCFG_DL_initPower(void)
     DL_GPIO_reset(GPIOA);
     DL_GPIO_reset(GPIOB);
     DL_UART_Main_reset(UART_0_INST);
+    DL_UART_Main_reset(UART_2_INST);
     DL_I2C_reset(IMU_I2C_1_INST);
     DL_TimerG_reset(MOTOR_STEP_TIMER_INST);
+    DL_Timer_reset(SERVO_TIMER_INST);
 
     DL_GPIO_enablePower(GPIOA);
     DL_GPIO_enablePower(GPIOB);
     DL_UART_Main_enablePower(UART_0_INST);
+    DL_UART_Main_enablePower(UART_2_INST);
     DL_I2C_enablePower(IMU_I2C_1_INST);
     DL_TimerG_enablePower(MOTOR_STEP_TIMER_INST);
+    DL_Timer_enablePower(SERVO_TIMER_INST);
 
     delay_cycles(POWER_STARTUP_DELAY);
 }
@@ -149,15 +153,56 @@ void SYSCFG_DL_GPIO_init(void)
         DL_GPIO_RESISTOR_PULL_UP, DL_GPIO_HYSTERESIS_DISABLE,
         DL_GPIO_WAKEUP_DISABLE);
 
-    /* PB22 LED 实测为高电平点亮，GPIO 初始化后由 bsp_led.c 统一设置默认灭灯。 */
+    /*
+     * UART2 使用 PB15=TX、PB16=RX，接激光测距1（v1.1 排针 H21）。
+     * RX 端加内部上拉，激光模块拔出/未上电时接收线保持高电平，避免误触发。
+     */
+    DL_GPIO_initPeripheralOutputFunctionFeatures(GPIO_UART_2_IOMUX_TX,
+        GPIO_UART_2_IOMUX_TX_FUNC, DL_GPIO_INVERSION_DISABLE,
+        DL_GPIO_RESISTOR_PULL_UP, DL_GPIO_DRIVE_STRENGTH_HIGH, DL_GPIO_HIZ_DISABLE);
+    DL_GPIO_initPeripheralInputFunctionFeatures(GPIO_UART_2_IOMUX_RX,
+        GPIO_UART_2_IOMUX_RX_FUNC, DL_GPIO_INVERSION_DISABLE,
+        DL_GPIO_RESISTOR_PULL_UP, DL_GPIO_HYSTERESIS_DISABLE,
+        DL_GPIO_WAKEUP_DISABLE);
+
+    /* 三个指示灯 LED1(PB25)/LED2(PA7)/LED3(PB12)，v1.1 均高电平点亮，默认由 bsp_led.c 熄灭。 */
     DL_GPIO_initDigitalOutputFeatures(LED_LED1_IOMUX,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_DOWN,
+        DL_GPIO_DRIVE_STRENGTH_LOW, DL_GPIO_HIZ_DISABLE);
+    DL_GPIO_initDigitalOutputFeatures(LED_LED2_IOMUX,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_DOWN,
+        DL_GPIO_DRIVE_STRENGTH_LOW, DL_GPIO_HIZ_DISABLE);
+    DL_GPIO_initDigitalOutputFeatures(LED_LED3_IOMUX,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_DOWN,
+        DL_GPIO_DRIVE_STRENGTH_LOW, DL_GPIO_HIZ_DISABLE);
+
+    /* 板载 OLED 软件 I2C：PB8=SDA、PB9=SCL，普通推挽输出，空闲拉高。 */
+    DL_GPIO_initDigitalOutputFeatures(OLED_PIN_SCL_IOMUX,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
+        DL_GPIO_DRIVE_STRENGTH_LOW, DL_GPIO_HIZ_DISABLE);
+    DL_GPIO_initDigitalOutputFeatures(OLED_PIN_SDA_IOMUX,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
+        DL_GPIO_DRIVE_STRENGTH_LOW, DL_GPIO_HIZ_DISABLE);
+
+    /* 蜂鸣器 PA15：有源蜂鸣器高电平响，普通推挽输出，默认低电平（不响）。 */
+    DL_GPIO_initDigitalOutputFeatures(BUZZER_IOMUX,
         DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_DOWN,
         DL_GPIO_DRIVE_STRENGTH_LOW, DL_GPIO_HIZ_DISABLE);
 
     /*
-     * 步进电机 / TMC2209 控制脚（天猛星扩展板 v1.0）。
-     * PB8/PB9 在本板改作 TMC 细分 MS1/MS2，不再用于 OLED。
-     * STEP 为 TIMG0_CCP0 复用输出；DIR/ENN/MS1/MS2 为普通 GPIO 输出。
+     * 舵机 PWM（v1.1）：四路共用 TIMA0，50Hz。
+     * SERVO1=PA8(TIMA0_CCP0)、SERVO2=PA9(CCP1)、SERVO3=PB4(CCP2)、SERVO4=PA12(CCP3)。
+     * 当前先启用 SERVO1~4 四路复用输出，后续按需开关各通道。
+     */
+    DL_GPIO_initPeripheralOutputFunction(SERVO1_IOMUX, SERVO1_IOMUX_FUNC);
+    DL_GPIO_initPeripheralOutputFunction(SERVO2_IOMUX, SERVO2_IOMUX_FUNC);
+    DL_GPIO_initPeripheralOutputFunction(SERVO3_IOMUX, SERVO3_IOMUX_FUNC);
+    DL_GPIO_initPeripheralOutputFunction(SERVO4_IOMUX, SERVO4_IOMUX_FUNC);
+
+    /*
+     * 步进电机 / TMC2209（v1.1）。
+     * 电机1 STEP=PB10(TIMG0_CCP0 复用)，DIR=PB11；四路共用 ENN=PA13、MS1=PB0、MS2=PB1。
+     * STEP 为定时器复用输出；DIR/ENN/MS1/MS2 为普通 GPIO 输出。
      */
     DL_GPIO_initPeripheralOutputFunction(MOTOR1_STEP_IOMUX, MOTOR1_STEP_IOMUX_FUNC);
     DL_GPIO_initDigitalOutputFeatures(MOTOR1_DIR_IOMUX,
@@ -209,17 +254,21 @@ void SYSCFG_DL_GPIO_init(void)
         DL_GPIO_HYSTERESIS_ENABLE, DL_GPIO_WAKEUP_DISABLE);
 
     /*
-     * 上电安全默认状态（对应引脚文档 §3.4 初始化顺序）：
-     * 先 ENN 拉高禁用四路驱动；DIR 正向(低)；MS1=0/MS2=0 → 1/8 细分；LED 灭。
-     * STEP 由定时器输出，这里不手动置位。
+     * 上电安全默认状态（v1.1）：
+     * GPIOA：ENN(PA13) 拉高禁用四路驱动；BUZZER(PA15) 低不响；LED2(PA7) 灭。
+     * GPIOB：LED1/LED3 灭；DIR 正向(低)；MS1=0/MS2=0；OLED SCL/SDA 空闲拉高。
+     * STEP(PB10) 由定时器输出，这里只使能输出、不手动置位。
      */
     DL_GPIO_setPins(GPIOA, TMC_ENN_PIN);
-    DL_GPIO_enableOutput(GPIOA, TMC_ENN_PIN);
+    DL_GPIO_clearPins(GPIOA, BUZZER_PIN | LED_LED2_PIN);
+    DL_GPIO_enableOutput(GPIOA, TMC_ENN_PIN | BUZZER_PIN | LED_LED2_PIN);
 
+    DL_GPIO_setPins(GPIOB, OLED_PIN_SCL_PIN | OLED_PIN_SDA_PIN);
     DL_GPIO_clearPins(GPIOB,
-        LED_LED1_PIN | MOTOR1_DIR_PIN | TMC_MS1_PIN | TMC_MS2_PIN);
+        LED_LED1_PIN | LED_LED3_PIN | MOTOR1_DIR_PIN | TMC_MS1_PIN | TMC_MS2_PIN);
     DL_GPIO_enableOutput(GPIOB,
-        LED_LED1_PIN | MOTOR1_STEP_PIN | MOTOR1_DIR_PIN | TMC_MS1_PIN | TMC_MS2_PIN);
+        LED_LED1_PIN | LED_LED3_PIN | MOTOR1_STEP_PIN | MOTOR1_DIR_PIN |
+        TMC_MS1_PIN | TMC_MS2_PIN | OLED_PIN_SCL_PIN | OLED_PIN_SDA_PIN);
 }
 
 void SYSCFG_DL_SYSCTL_init(void)
@@ -290,6 +339,38 @@ void SYSCFG_DL_UART_0_init(void)
     DL_UART_Main_enable(UART_0_INST);
 }
 
+static const DL_UART_Main_ClockConfig gUART_2ClockConfig = {
+    .clockSel    = DL_UART_MAIN_CLOCK_MFCLK,
+    .divideRatio = DL_UART_MAIN_CLOCK_DIVIDE_RATIO_1
+};
+
+static const DL_UART_Main_Config gUART_2Config = {
+    .mode        = DL_UART_MAIN_MODE_NORMAL,
+    .direction   = DL_UART_MAIN_DIRECTION_TX_RX,
+    .flowControl = DL_UART_MAIN_FLOW_CONTROL_NONE,
+    .parity      = DL_UART_MAIN_PARITY_NONE,
+    .wordLength  = DL_UART_MAIN_WORD_LENGTH_8_BITS,
+    .stopBits    = DL_UART_MAIN_STOP_BITS_ONE
+};
+
+void SYSCFG_DL_UART_2_init(void)
+{
+    /*
+     * UART2：激光测距1，230400 8N1，使用 MFCLK/1。
+     * 采用 8x 过采样，4MHz 下 230400 的分频为 IBRD=2、FBRD=11（误差 -0.08%）。
+     * 接收 FIFO 阈值设为 1 字节，配合中断按字节及时取走，避免高波特率下溢出/尾字节滞留。
+     * 中断与 NVIC 由 bsp_uart.c 的 BspUart2_Init 在注册回调后再放开。
+     */
+    DL_UART_Main_setClockConfig(UART_2_INST,
+        (DL_UART_Main_ClockConfig *) &gUART_2ClockConfig);
+    DL_UART_Main_init(UART_2_INST, (DL_UART_Main_Config *) &gUART_2Config);
+    DL_UART_Main_setOversampling(UART_2_INST, DL_UART_MAIN_OVERSAMPLING_RATE_8X);
+    DL_UART_Main_setBaudRateDivisor(UART_2_INST,
+        UART_2_IBRD_230400_MFCLK, UART_2_FBRD_230400_MFCLK);
+    DL_UART_Main_setRXFIFOThreshold(UART_2_INST, DL_UART_MAIN_RX_FIFO_LEVEL_ONE_ENTRY);
+    DL_UART_Main_enable(UART_2_INST);
+}
+
 static const DL_I2C_ClockConfig gIMU_I2C_1ClockConfig = {
     .clockSel    = DL_I2C_CLOCK_MFCLK,
     .divideRatio = DL_I2C_CLOCK_DIVIDE_1
@@ -298,8 +379,16 @@ static const DL_I2C_ClockConfig gIMU_I2C_1ClockConfig = {
 void SYSCFG_DL_I2C_1_init(void)
 {
     /*
-     * I2C1：当前仅保留外设初始化兼容旧接口。
+     * I2C1：当前仅保留外设初始化兼容旧接口，**不使能硬件控制器**。
+     *
      * IMU 实际访问由 bsp_imu_port.c 切换 PB2/PB3 为 GPIO 软件 I2C。
+     * 若在此处使能 I2C1 控制器，则 PB2/PB3 会被硬件 I2C 外设接管，
+     * 在调度器启动到 IMU 任务首次 GPIO 软件 I2C 接管之间存在空窗期；
+     * 期间硬件控制器可能意外在总线上产生 glitch，导致 LSM6DSV16X 的
+     * I2C 状态机进入错误状态（不响应任何事务，只能断电重启恢复）。
+     *
+     * 因此仅做时钟配置和 FIFO 冲洗，不使能控制器，确保总线全程由
+     * GPIO 软件 I2C 控制，避免硬件/软件 I2C 切换的竞争窗口。
      */
     DL_I2C_setClockConfig(IMU_I2C_1_INST,
         (DL_I2C_ClockConfig *) &gIMU_I2C_1ClockConfig);
@@ -311,7 +400,7 @@ void SYSCFG_DL_I2C_1_init(void)
     DL_I2C_setControllerRXFIFOThreshold(IMU_I2C_1_INST, DL_I2C_RX_FIFO_LEVEL_BYTES_1);
     DL_I2C_enableControllerClockStretching(IMU_I2C_1_INST);
     DL_I2C_disableControllerACK(IMU_I2C_1_INST);
-    DL_I2C_enableController(IMU_I2C_1_INST);
+    /* 不调用 DL_I2C_enableController()，见上方注释。 */
 }
 
 /*
@@ -351,4 +440,78 @@ void SYSCFG_DL_TIMER_STEP_init(void)
 
     DL_TimerG_enableClock(MOTOR_STEP_TIMER_INST);
     DL_TimerG_setCCPDirection(MOTOR_STEP_TIMER_INST, DL_TIMER_CC0_OUTPUT);
+}
+
+/*
+ * 舵机 TIMA0 初始化：四路 50Hz PWM，边沿对齐(向下计数)。
+ * MFCLK=4MHz → prescale=3(÷4) → 1MHz → period=20000 → 50Hz。
+ * 四个 CCP 通道初值由 bsp_servo 动态更新。
+ *
+ * 【极性说明·经实测】该定时器 CCP 输出恒为"周期起点置高、向下计到 CC 时置低"，
+ * 即 高电平 = period - CC，写入的 CC 值实际对应"低电平宽度"。
+ * 曾尝试把 pwmMode 改为 EDGE_ALIGN_UP 想让 CC==高电平脉宽，但实测无效
+ * (PA8 直流仍 ~3V)，故此处保持 EDGE_ALIGN，改由 bsp_servo 层写入
+ * (period - pulseUs) 做极性补偿，使 PA8 实际高脉冲宽度 == pulseUs。
+ */
+static const DL_Timer_ClockConfig gServoClockConfig = {
+    .clockSel    = DL_TIMER_CLOCK_MFCLK,
+    .divideRatio = DL_TIMER_CLOCK_DIVIDE_1,
+    .prescale    = SERVO_TIMER_PRESCALE
+};
+
+static const DL_Timer_PWMConfig gServoPWMConfig = {
+    .pwmMode           = DL_TIMER_PWM_MODE_EDGE_ALIGN,
+    .period            = SERVO_TIMER_PERIOD,
+    .isTimerWithFourCC = true,
+    .startTimer        = DL_TIMER_STOP
+};
+
+void SYSCFG_DL_TIMER_SERVO_init(void)
+{
+    DL_Timer_setClockConfig(SERVO_TIMER_INST,
+        (DL_Timer_ClockConfig *) &gServoClockConfig);
+    DL_Timer_initPWMMode(SERVO_TIMER_INST,
+        (DL_Timer_PWMConfig *) &gServoPWMConfig);
+
+    /* CCP0=SERVO1：初值低、不反相、功能值驱动。 */
+    DL_Timer_setCaptureCompareOutCtl(SERVO_TIMER_INST,
+        DL_TIMER_CC_OCTL_INIT_VAL_LOW, DL_TIMER_CC_OCTL_INV_OUT_DISABLED,
+        DL_TIMER_CC_OCTL_SRC_FUNCVAL, DL_TIMER_CC_0_INDEX);
+    DL_Timer_setCaptCompUpdateMethod(SERVO_TIMER_INST,
+        DL_TIMER_CC_UPDATE_METHOD_IMMEDIATE, DL_TIMER_CC_0_INDEX);
+    DL_Timer_setCaptureCompareValue(SERVO_TIMER_INST,
+        1500U, DL_TIMER_CC_0_INDEX);   /* 中位 1.5ms */
+
+    /* CCP1=SERVO2 */
+    DL_Timer_setCaptureCompareOutCtl(SERVO_TIMER_INST,
+        DL_TIMER_CC_OCTL_INIT_VAL_LOW, DL_TIMER_CC_OCTL_INV_OUT_DISABLED,
+        DL_TIMER_CC_OCTL_SRC_FUNCVAL, DL_TIMER_CC_1_INDEX);
+    DL_Timer_setCaptCompUpdateMethod(SERVO_TIMER_INST,
+        DL_TIMER_CC_UPDATE_METHOD_IMMEDIATE, DL_TIMER_CC_1_INDEX);
+    DL_Timer_setCaptureCompareValue(SERVO_TIMER_INST,
+        1500U, DL_TIMER_CC_1_INDEX);
+
+    /* CCP2=SERVO3 */
+    DL_Timer_setCaptureCompareOutCtl(SERVO_TIMER_INST,
+        DL_TIMER_CC_OCTL_INIT_VAL_LOW, DL_TIMER_CC_OCTL_INV_OUT_DISABLED,
+        DL_TIMER_CC_OCTL_SRC_FUNCVAL, DL_TIMER_CC_2_INDEX);
+    DL_Timer_setCaptCompUpdateMethod(SERVO_TIMER_INST,
+        DL_TIMER_CC_UPDATE_METHOD_IMMEDIATE, DL_TIMER_CC_2_INDEX);
+    DL_Timer_setCaptureCompareValue(SERVO_TIMER_INST,
+        1500U, DL_TIMER_CC_2_INDEX);
+
+    /* CCP3=SERVO4 */
+    DL_Timer_setCaptureCompareOutCtl(SERVO_TIMER_INST,
+        DL_TIMER_CC_OCTL_INIT_VAL_LOW, DL_TIMER_CC_OCTL_INV_OUT_DISABLED,
+        DL_TIMER_CC_OCTL_SRC_FUNCVAL, DL_TIMER_CC_3_INDEX);
+    DL_Timer_setCaptCompUpdateMethod(SERVO_TIMER_INST,
+        DL_TIMER_CC_UPDATE_METHOD_IMMEDIATE, DL_TIMER_CC_3_INDEX);
+    DL_Timer_setCaptureCompareValue(SERVO_TIMER_INST,
+        1500U, DL_TIMER_CC_3_INDEX);
+
+    DL_Timer_enableClock(SERVO_TIMER_INST);
+    DL_Timer_setCCPDirection(SERVO_TIMER_INST, DL_TIMER_CC0_OUTPUT);
+    DL_Timer_setCCPDirection(SERVO_TIMER_INST, DL_TIMER_CC1_OUTPUT);
+    DL_Timer_setCCPDirection(SERVO_TIMER_INST, DL_TIMER_CC2_OUTPUT);
+    DL_Timer_setCCPDirection(SERVO_TIMER_INST, DL_TIMER_CC3_OUTPUT);
 }

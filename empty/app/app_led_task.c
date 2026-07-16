@@ -15,7 +15,7 @@ static void AppLedTask_Entry(void *argument)
     (void)argument;
 
     for (;;) {
-        /* 当前只使用 PB22 连接的 LED，作为系统心跳灯。 */
+        /* LED1(PB25) 作为系统心跳灯；LED2/LED3 与蜂鸣器由外设测试任务驱动。 */
         BspLed_Toggle(BSP_LED_1);
         vTaskDelayUntil(&lastWakeTime, APP_LED1_PERIOD_TICKS);
     }

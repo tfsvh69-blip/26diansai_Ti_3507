@@ -1,7 +1,9 @@
 #include "bsp_board.h"
 
+#include "bsp_buzzer.h"
 #include "bsp_led.h"
 #include "bsp_motor.h"
+#include "bsp_uart.h"
 #include "ti_msp_dl_config.h"
 
 void BspBoard_Init(void)
@@ -14,9 +16,15 @@ void BspBoard_Init(void)
     SYSCFG_DL_GPIO_init();
     SYSCFG_DL_SYSCTL_init();
     SYSCFG_DL_UART_0_init();
+    SYSCFG_DL_UART_2_init();
     SYSCFG_DL_I2C_1_init();
     SYSCFG_DL_TIMER_STEP_init();
+    SYSCFG_DL_TIMER_SERVO_init();
 
     BspLed_Init();
     BspMotor_Init();
+    BspBuzzer_Init();
+
+    /* UART0 互斥量必须在任一任务打印、调度器启动之前创建。 */
+    BspUart0_Init();
 }

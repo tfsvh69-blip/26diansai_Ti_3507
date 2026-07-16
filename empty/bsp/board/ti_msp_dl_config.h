@@ -88,15 +88,48 @@ extern volatile bool g_sysClockUsingHFXT;
 #define GPIO_UART_0_IOMUX_RX                                      (IOMUX_PINCM22)
 #define GPIO_UART_0_IOMUX_RX_FUNC                         IOMUX_PINCM22_PF_UART0_RX
 
-/* LED1：PB22，当前板子实测为高电平点亮。 */
+/*
+ * UART2：激光测距1（v1.1 排针 H21），MCU 视角 PB15=TX / PB16=RX，230400 8N1。
+ * 时钟源 MFCLK=4MHz，采用 8x 过采样：分频 IBRD=2、FBRD=11，
+ * 实际波特率 4MHz/(8*(2+11/64))=230215bps，误差 -0.08%（与 UART0 115200@16x 同一分频）。
+ * 若实测激光模块波特率不同，改 UART_2_BAUD_RATE 与下方分频即可。
+ * 接收采用中断逐字节喂解析器，见 bsp_uart.c 的 UART2_IRQHandler。
+ */
+#define UART_2_INST                                                       UART2
+#define UART_2_INST_IRQn                                        (UART2_INT_IRQn)
+#define UART_2_INST_FREQUENCY                                          4000000
+#define UART_2_BAUD_RATE                                                (230400)
+#define UART_2_IBRD_230400_MFCLK                                            (2U)
+#define UART_2_FBRD_230400_MFCLK                                           (11U)
+
+/* UART2 复用引脚：PB15=TX（PINCM32），PB16=RX（PINCM33），复用功能 PF2。 */
+#define GPIO_UART_2_TX_PORT                                               (GPIOB)
+#define GPIO_UART_2_TX_PIN                                      (DL_GPIO_PIN_15)
+#define GPIO_UART_2_IOMUX_TX                                      (IOMUX_PINCM32)
+#define GPIO_UART_2_IOMUX_TX_FUNC                         IOMUX_PINCM32_PF_UART2_TX
+#define GPIO_UART_2_RX_PORT                                               (GPIOB)
+#define GPIO_UART_2_RX_PIN                                      (DL_GPIO_PIN_16)
+#define GPIO_UART_2_IOMUX_RX                                      (IOMUX_PINCM33)
+#define GPIO_UART_2_IOMUX_RX_FUNC                         IOMUX_PINCM33_PF_UART2_RX
+
+/* LED1：PB25（PINCM56），v1.1 高电平点亮（IO→阳极）。SDK 头文件已确认 IOMUX_PINCM56=GPIOB_DIO25。 */
 #define LED_LED1_PORT                                                    (GPIOB)
-#define LED_LED1_PIN                                            (DL_GPIO_PIN_22)
-#define LED_LED1_IOMUX                                           (IOMUX_PINCM50)
+#define LED_LED1_PIN                                            (DL_GPIO_PIN_25)
+#define LED_LED1_IOMUX                                           (IOMUX_PINCM56)
+/* LED2：PA7（PINCM12），v1.1 高电平点亮。 */
+#define LED_LED2_PORT                                                    (GPIOA)
+#define LED_LED2_PIN                                             (DL_GPIO_PIN_7)
+#define LED_LED2_IOMUX                                           (IOMUX_PINCM12)
+/* LED3：PB12（PINCM29），v1.1 高电平点亮。 */
+#define LED_LED3_PORT                                                    (GPIOB)
+#define LED_LED3_PIN                                            (DL_GPIO_PIN_12)
+#define LED_LED3_IOMUX                                           (IOMUX_PINCM29)
 
 /*
- * OLED：GPIO 模拟 I2C。
- * 注意：天猛星扩展板 v1.0 上 PB8/PB9 已改作 TMC 细分 MS1/MS2，本板不再接 OLED。
- * 这里保留宏仅为兼容 module/oled 的编译，运行时不会再初始化/驱动这两脚。
+ * OLED：板载 0.96 寸 OLED，GPIO 模拟 I2C（v1.1）。
+ * v1.1 板 PB8/PB9 恢复为板载 OLED（软件 I2C），TMC 细分改用 PB0/PB1，两者不再冲突。
+ * 约定：SCL=PB9、SDA=PB8（沿用江协驱动既有约定，若与实物相反在此对调即可）。
+ * 驱动只做推挽输出、不读 ACK，故按普通数字输出初始化即可。
  */
 #define OLED_PORT                                                        (GPIOB)
 #define OLED_PIN_SCL_PIN                                         (DL_GPIO_PIN_9)
@@ -104,9 +137,14 @@ extern volatile bool g_sysClockUsingHFXT;
 #define OLED_PIN_SDA_PIN                                         (DL_GPIO_PIN_8)
 #define OLED_PIN_SDA_IOMUX                                       (IOMUX_PINCM25)
 
+/* 蜂鸣器 BUZZER：PA15（PINCM37），有源蜂鸣器高电平响，普通推挽 GPIO 输出（v1.1）。 */
+#define BUZZER_PORT                                                      (GPIOA)
+#define BUZZER_PIN                                              (DL_GPIO_PIN_15)
+#define BUZZER_IOMUX                                             (IOMUX_PINCM37)
+
 /*
- * 步进电机 / TMC2209（天猛星扩展板 v1.0）。
- * 四路驱动共用 TMC_ENN / TMC_MS1 / TMC_MS2；当前先实现电机1。
+ * 步进电机 / TMC2209（v1.1）。
+ * 四路驱动共用 TMC_ENN(PA13) / TMC_MS1(PB0) / TMC_MS2(PB1)；当前先实现电机1。
  */
 /* 电机1 STEP：PB10（PINCM27），使用 TIMG0_CCP0 硬件定时器输出方波。 */
 #define MOTOR1_STEP_PORT                                                 (GPIOB)
@@ -124,7 +162,7 @@ extern volatile bool g_sysClockUsingHFXT;
 #define MOTOR_STEP_TIMER_PERIOD                                           (200U)
 #define MOTOR_STEP_TIMER_DUTY                                             (100U)
 
-/* TIMG0 中断号，用于 StartRotateSteps 内部开关 NVIC。 */
+/* TIMG0 中断号，连续旋转起转/停表时在 bsp_motor 内开关 NVIC。 */
 #define MOTOR_STEP_TIMER_IRQn                                    (TIMG0_INT_IRQn)
 
 /* 电机1 DIR：PB11（PINCM28），普通 GPIO，低电平为正向。 */
@@ -137,18 +175,52 @@ extern volatile bool g_sysClockUsingHFXT;
 #define TMC_ENN_PIN                                             (DL_GPIO_PIN_13)
 #define TMC_ENN_IOMUX                                            (IOMUX_PINCM35)
 
-/* TMC 细分 MS1：PB8（PINCM25，原 OLED SDA），四路共用。 */
+/* TMC 细分 MS1：PB0（PINCM13），四路共用（v1.1）。 */
 #define TMC_MS1_PORT                                                     (GPIOB)
-#define TMC_MS1_PIN                                              (DL_GPIO_PIN_8)
-#define TMC_MS1_IOMUX                                            (IOMUX_PINCM25)
-/* TMC 细分 MS2：PB9（PINCM26，原 OLED SCL），四路共用。 */
+#define TMC_MS1_PIN                                              (DL_GPIO_PIN_0)
+#define TMC_MS1_IOMUX                                            (IOMUX_PINCM13)
+/* TMC 细分 MS2：PB1（PINCM14），四路共用（v1.1）。 */
 #define TMC_MS2_PORT                                                     (GPIOB)
-#define TMC_MS2_PIN                                              (DL_GPIO_PIN_9)
-#define TMC_MS2_IOMUX                                            (IOMUX_PINCM26)
+#define TMC_MS2_PIN                                              (DL_GPIO_PIN_1)
+#define TMC_MS2_IOMUX                                            (IOMUX_PINCM14)
 
 /*
- * 四个功能按键：一端接 GND，按下为低电平，使用 MCU 内部上拉。
- * A28/A31/A30/A17 均不在核心板慎用引脚列表内。
+ * 舵机 PWM（v1.1）：四路共用 TIMA0，50Hz 周期，边沿对齐 PWM。
+ * MFCLK=4MHz，CPS 预分频=3 → ÷4 → 定时器时钟 1MHz → 50Hz 周期=20000。
+ * 注意：MSPM0G CPS 编码为 divider=CPS+1（非 2^CPS），实测 CPS=2 得到 67.4Hz。
+ * SERVO1~4 对应 TIMA0 C0~C3，PF 值见各宏。
+ */
+#define SERVO_TIMER_INST                                                 (TIMA0)
+#define SERVO_TIMER_PRESCALE                                              (3U)   /* +1 = /4 */
+#define SERVO_TIMER_PERIOD                                             (20000U)   /* 1MHz/50Hz */
+
+/* SERVO1：PA8（PINCM19），TIMA0_CCP0 PF=5 */
+#define SERVO1_PORT                                                      (GPIOA)
+#define SERVO1_PIN                                               (DL_GPIO_PIN_8)
+#define SERVO1_IOMUX                                             (IOMUX_PINCM19)
+#define SERVO1_IOMUX_FUNC                             IOMUX_PINCM19_PF_TIMA0_CCP0
+
+/* SERVO2：PA9（PINCM20），TIMA0_CCP1 PF=5 */
+#define SERVO2_PORT                                                      (GPIOA)
+#define SERVO2_PIN                                               (DL_GPIO_PIN_9)
+#define SERVO2_IOMUX                                             (IOMUX_PINCM20)
+#define SERVO2_IOMUX_FUNC                             IOMUX_PINCM20_PF_TIMA0_CCP1
+
+/* SERVO3：PB4（PINCM17），TIMA0_CCP2 PF=5 */
+#define SERVO3_PORT                                                      (GPIOB)
+#define SERVO3_PIN                                               (DL_GPIO_PIN_4)
+#define SERVO3_IOMUX                                             (IOMUX_PINCM17)
+#define SERVO3_IOMUX_FUNC                             IOMUX_PINCM17_PF_TIMA0_CCP2
+
+/* SERVO4：PA12（PINCM34），TIMA0_CCP3 PF=6 */
+#define SERVO4_PORT                                                      (GPIOA)
+#define SERVO4_PIN                                              (DL_GPIO_PIN_12)
+#define SERVO4_IOMUX                                             (IOMUX_PINCM34)
+#define SERVO4_IOMUX_FUNC                             IOMUX_PINCM34_PF_TIMA0_CCP3
+
+/*
+ * 四个功能按键（v1.1）：一端接 GND，按下为低电平，使用 MCU 内部上拉。
+ * KEY1=PA28、KEY2=PA31、KEY3=PA30、KEY4=PA29，均在 GPIOA bit28~31，可一次端口读。
  */
 #define KEY1_PORT                                                        (GPIOA)
 #define KEY1_PIN                                                (DL_GPIO_PIN_28)
@@ -160,8 +232,8 @@ extern volatile bool g_sysClockUsingHFXT;
 #define KEY3_PIN                                                (DL_GPIO_PIN_30)
 #define KEY3_IOMUX                                                (IOMUX_PINCM5)
 #define KEY4_PORT                                                        (GPIOA)
-#define KEY4_PIN                                                (DL_GPIO_PIN_17)
-#define KEY4_IOMUX                                               (IOMUX_PINCM39)
+#define KEY4_PIN                                                (DL_GPIO_PIN_29)
+#define KEY4_IOMUX                                                (IOMUX_PINCM4)
 
 /* IMU 接线：PB2=SCL，PB3=SDA，PA16=INT 输入；SCL/SDA 已外接上拉，代码保留 MCU 内部上拉用于调试。 */
 #define IMU_I2C_SCL_PORT                                                  (GPIOB)
@@ -183,8 +255,10 @@ void SYSCFG_DL_initPower(void);
 void SYSCFG_DL_GPIO_init(void);
 void SYSCFG_DL_SYSCTL_init(void);
 void SYSCFG_DL_UART_0_init(void);
+void SYSCFG_DL_UART_2_init(void);
 void SYSCFG_DL_I2C_1_init(void);
 void SYSCFG_DL_TIMER_STEP_init(void);
+void SYSCFG_DL_TIMER_SERVO_init(void);
 void SYSCFG_DL_SYSTICK_init(void);
 
 #ifdef __cplusplus
