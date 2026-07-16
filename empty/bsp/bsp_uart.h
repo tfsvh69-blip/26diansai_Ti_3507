@@ -11,6 +11,8 @@ extern "C" {
 /* 创建 UART0 递归互斥量，必须在调度器启动前调用一次。 */
 void BspUart0_Init(void);
 void BspUart0_SendByte(uint8_t byte);
+/* 无锁输出无符号十进制整数（不加锁，供已持锁的日志拼接及关中断的故障处理复用）。 */
+void BspUart0_SendUint(uint32_t value);
 void BspUart0_SendString(const char *str);
 bool BspUart0_ReadByte(uint8_t *byte);
 /* 多段拼接日志时手动加/解锁；单次 SendString 已自动加锁，无需再包裹。 */

@@ -2,6 +2,9 @@
  * MSPM0G3507 FreeRTOS 工程入口。
  */
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "FreeRTOS.h"
 #include "task.h"
 
@@ -51,19 +54,57 @@ int main(void)
     }
 }
 
+/*
+ * 故障可视化辅助（在"关中断"上下文中调用）：
+ * 不能用会加锁的 BspUart0_SendString（互斥量在关中断时无法阻塞/切换会死锁），
+ * 只用不加锁的 BspUart0_SendByte 直接轮询发送。
+ */
+static void App_FaultPuts(const char *s)
+{
+    if (s == NULL) {
+        return;
+    }
+    while (*s != '\0') {
+        BspUart0_SendByte((uint8_t)*s);
+        s++;
+    }
+}
+
+/* 关中断后快闪 LED1 表示系统已挂（配合上面打印的原因定位），永不返回。 */
+static void App_FaultBlink(void)
+{
+    for (;;) {
+        BspLed_Toggle(BSP_LED_1);
+        for (volatile uint32_t i = 0U; i < 2000000U; i++) {
+            /* 关中断下的粗略忙等 (~0.1s @80MHz)，让 LED1 明显快闪。 */
+        }
+    }
+}
+
+/* FreeRTOS configASSERT 失败入口（见 FreeRTOSConfig.h）。 */
+void vAssertCalled(const char *file, unsigned long line)
+{
+    (void)file;
+    taskDISABLE_INTERRUPTS();
+    App_FaultPuts("\r\nFATAL: assert failed at line ");
+    BspUart0_SendUint((uint32_t)line);
+    App_FaultPuts("\r\n");
+    App_FaultBlink();
+}
+
 void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
 {
     (void)xTask;
-    (void)pcTaskName;
-
     taskDISABLE_INTERRUPTS();
-    for (;;) {
-    }
+    App_FaultPuts("\r\nFATAL: stack overflow in task: ");
+    App_FaultPuts((pcTaskName != NULL) ? pcTaskName : "?");
+    App_FaultPuts("\r\n");
+    App_FaultBlink();
 }
 
 void vApplicationMallocFailedHook(void)
 {
     taskDISABLE_INTERRUPTS();
-    for (;;) {
-    }
+    App_FaultPuts("\r\nFATAL: malloc failed (heap exhausted)\r\n");
+    App_FaultBlink();
 }

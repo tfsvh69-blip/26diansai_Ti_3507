@@ -9,7 +9,9 @@
 #include "atk_ms6dsv.h"
 #include "bsp_imu_port.h"
 #include "bsp_uart.h"
+#if (APP_FEATURE_LASER != 0U)
 #include "laser_ld14.h"
+#endif
 
 /*
  * IMU + 激光测距1 输出任务（本工程 CPU 最大消耗，读写全走软件 I2C 忙等）。
@@ -34,26 +36,6 @@ static TaskHandle_t s_imuUartTaskHandle = NULL;
 
 #define APP_IMU_WHO_AM_I_REG           (0x0FU)
 
-static void AppImuUartTask_SendUint(uint32_t value)
-{
-    char buf[10];
-    uint8_t index = 0U;
-
-    if (value == 0U) {
-        BspUart0_SendByte((uint8_t)'0');
-        return;
-    }
-
-    while ((value > 0U) && (index < sizeof(buf))) {
-        buf[index++] = (char)('0' + (value % 10U));
-        value /= 10U;
-    }
-
-    while (index > 0U) {
-        BspUart0_SendByte((uint8_t)buf[--index]);
-    }
-}
-
 /* 输出带符号十进制整数，用于加速度(mg)/角速度(mdps)等可能超出 int16 的量。 */
 static void AppImuUartTask_SendInt32(int32_t value)
 {
@@ -67,7 +49,7 @@ static void AppImuUartTask_SendInt32(int32_t value)
         magnitude = (uint32_t)value;
     }
 
-    AppImuUartTask_SendUint(magnitude);
+    BspUart0_SendUint(magnitude);
 }
 
 static void AppImuUartTask_SendHexByte(uint8_t value)
@@ -106,7 +88,7 @@ static void AppImuUartTask_SendCentideg(int16_t centideg)
     integer = value / 100U;
     fraction = value % 100U;
 
-    AppImuUartTask_SendUint(integer);
+    BspUart0_SendUint(integer);
     BspUart0_SendByte((uint8_t)'.');
     BspUart0_SendByte((uint8_t)('0' + (fraction / 10U)));
     BspUart0_SendByte((uint8_t)('0' + (fraction % 10U)));
@@ -122,7 +104,7 @@ static void AppImuUartTask_SendStatus(AtkMs6dsvStatus_t status)
     step = AtkMs6dsv_GetLastInitStep();
     BspUart0_Lock();
     BspUart0_SendString("IMU INIT FAIL:");
-    AppImuUartTask_SendUint((uint32_t)status);
+    BspUart0_SendUint((uint32_t)status);
     BspUart0_SendString(" STEP=");
     BspUart0_SendString(step);
     if (idValid) {
@@ -237,19 +219,24 @@ static void AppImuUartTask_SendI2cScan(void)
     BspUart0_Unlock();
 }
 
-/* 在已加锁区域内追加激光测距1的读数：" D1=<mm>mm"，无有效帧时输出 " D1=---"。调用方持锁。 */
+/*
+ * 在已加锁区域内追加激光测距1的读数：" D1=<mm>mm"，无有效帧时输出 " D1=---"。调用方持锁。
+ * APP_FEATURE_LASER=0 时函数体为空（不打印 D1 字段），调用点无需再套 #if。
+ */
 static void AppImuUartTask_SendLaser(void)
 {
+#if (APP_FEATURE_LASER != 0U)
     LaserLd14Data_t laser;
 
     BspUart0_SendString(" D1=");
     if (LaserLd14_GetLatest(&laser)) {
-        AppImuUartTask_SendUint((uint32_t)laser.distanceMm);
+        BspUart0_SendUint((uint32_t)laser.distanceMm);
         BspUart0_SendString("mm");
     } else {
         /* 尚未收到有效帧：可能激光未上电/未接/波特率不符，输出占位便于排查。 */
         BspUart0_SendString("---");
     }
+#endif
 }
 
 static void AppImuUartTask_SendImu(const AtkMs6dsvEuler_t *euler, const AtkMs6dsvImuRaw_t *raw)
@@ -280,11 +267,24 @@ static void AppImuUartTask_SendImu(const AtkMs6dsvEuler_t *euler, const AtkMs6ds
     BspUart0_SendString(" GZ=");
     AppImuUartTask_SendInt32(raw->gyrMdps[2]);
     BspUart0_SendString(" FIFO=");
-    AppImuUartTask_SendUint((uint32_t)euler->fifoLevel);
-    /* 与陀螺仪数据同一行输出激光测距1，实现"一起发"。 */
+    BspUart0_SendUint((uint32_t)euler->fifoLevel);
+    /* 与陀螺仪数据同一行输出激光测距1，实现"一起发"（LASER 关闭时该调用为空）。 */
     AppImuUartTask_SendLaser();
     BspUart0_SendString(" INT=");
     BspUart0_SendByte(euler->intLevel ? (uint8_t)'1' : (uint8_t)'0');
+    BspUart0_SendString("\r\n");
+    BspUart0_Unlock();
+}
+
+/*
+ * IMU 暂不可用（初始化失败/后台重试中）时的精简遥测行：
+ * 只报 IMU 状态占位，仍照常输出激光 D1，保证激光遥测不被 IMU 故障拖累。
+ */
+static void AppImuUartTask_SendReportNoImu(void)
+{
+    BspUart0_Lock();
+    BspUart0_SendString("IMU ---(retry)");
+    AppImuUartTask_SendLaser();
     BspUart0_SendString("\r\n");
     BspUart0_Unlock();
 }
@@ -328,6 +328,37 @@ static void AppImuUartTask_RunPinTest(void)
     }
 }
 
+/* IMU 初始化失败累计次数（用于每 5 次失败刷一次 I2C 扫描）。 */
+static uint32_t s_imuInitFailCount = 0U;
+
+/*
+ * 试一次 IMU 初始化：成功打印 "IMU INIT OK" 返回 true；失败打印诊断返回 false。
+ * fullDiag=false（首次尝试）只打 SendStatus；true（循环重试）加打 WHOAMI/总线/扫描。
+ * 合并了原先首次尝试与循环重试各写一遍的 init+打印逻辑。
+ */
+static bool AppImuUartTask_TryInit(bool fullDiag)
+{
+    AtkMs6dsvStatus_t status = AtkMs6dsv_Init();
+
+    if (status == ATK_MS6DSV_OK) {
+        BspUart0_Lock();
+        BspUart0_SendString("IMU INIT OK\r\n");
+        BspUart0_Unlock();
+        return true;
+    }
+
+    AppImuUartTask_SendStatus(status);
+    if (fullDiag) {
+        AppImuUartTask_SendWhoAmIProbe();
+        AppImuUartTask_SendBusState();
+        if ((s_imuInitFailCount % 5U) == 0U) {
+            AppImuUartTask_SendI2cScan();
+        }
+        s_imuInitFailCount++;
+    }
+    return false;
+}
+
 static void AppImuUartTask_Entry(void *argument)
 {
     (void)argument;
@@ -336,61 +367,52 @@ static void AppImuUartTask_Entry(void *argument)
     AppImuUartTask_RunPinTest();
 #else
     TickType_t lastWakeTime;
-    AtkMs6dsvStatus_t initStatus;
     AtkMs6dsvEuler_t euler = {0};
     AtkMs6dsvImuRaw_t imuRaw = {0};
-    uint32_t initFailCount = 0U;
     uint32_t printDivider = 0U;
+    uint32_t reinitDivider = 0U;
+    bool imuOk;
 
     BspUart0_Lock();
     BspUart0_SendString("IMU UART 100Hz START, SWI2C addr=0x6A\r\n");
-    BspUart0_Unlock();
-
-    initStatus = AtkMs6dsv_Init();
-    while (initStatus != ATK_MS6DSV_OK) {
-        AppImuUartTask_SendStatus(initStatus);
-        AppImuUartTask_SendWhoAmIProbe();
-        AppImuUartTask_SendBusState();
-        if ((initFailCount % 5U) == 0U) {
-            AppImuUartTask_SendI2cScan();
-        }
-        initFailCount++;
-        vTaskDelay(pdMS_TO_TICKS(1000U));
-
-        /*
-         * 传感器上电、总线上拉或接线调整后可能恢复，
-         * 失败状态下每秒重试一次，避免必须手动复位开发板。
-         */
-        initStatus = AtkMs6dsv_Init();
-    }
-
-    BspUart0_Lock();
-    BspUart0_SendString("IMU INIT OK\r\n");
     /* 打印一次单位说明，之后每行不再重复单位以缩短行长。 */
     BspUart0_SendString("IMU FORMAT: R/P/Y=deg AX/AY/AZ=mg GX/GY/GZ=mdps D1=mm(激光测距1)\r\n");
     BspUart0_Unlock();
+
+    /*
+     * 【非阻塞初始化·解耦激光】首次尝试初始化 IMU（简诊断）；失败不再死等，
+     * 转入主循环里每秒重试一次（全诊断）。主循环照常 100Hz 运行、按节流打印，
+     * 即使 IMU 缺失/损坏，激光 D1 等遥测也照常输出，不被 IMU 故障拖累。
+     */
+    imuOk = AppImuUartTask_TryInit(false);
+
     lastWakeTime = xTaskGetTickCount();
-
     for (;;) {
-        /*
-         * 融合欧拉角走 FIFO，每周期(100Hz)读取以持续排空 FIFO 并保持角度新鲜，
-         * 无新数据时保留上一次角度值。
-         */
-        (void)AtkMs6dsv_ReadEuler(&euler);
+        if (imuOk) {
+            /*
+             * 融合欧拉角走 FIFO，每周期(100Hz)读取以持续排空 FIFO 并保持角度新鲜，
+             * 无新数据时保留上一次角度值。
+             */
+            (void)AtkMs6dsv_ReadEuler(&euler);
+        } else if (++reinitDivider >= APP_IMU_REINIT_DIVIDER) {
+            /* 非阻塞重试：约每秒尝试重新初始化并打印全诊断，期间不阻塞主循环。 */
+            reinitDivider = 0U;
+            imuOk = AppImuUartTask_TryInit(true);
+        }
 
         /*
-         * 打印节流：整行输出降到 100Hz/APP_IMU_PRINT_DIVIDER=20Hz，避免长串口行挂起调度器。
-         *
-         * 方案A（CPU 优化）：加速度/角速度当前只用于串口显示，尚无 100Hz 消费者。
-         * 软件 I2C 一次 6 字节寄存器读约 1ms 且 CPU 全程忙等，两组共 ~2ms/周期。
-         * 因此把寄存器直读移到「要打印的那一拍」才做，读取开销从 ~2ms/10ms(20%)
-         * 降到 ~0.4ms/10ms(4%)。将来若有算法需要 100Hz 原始数据，
-         * 再把 ReadImuRaw 移回每周期，并优先恢复硬件 I2C(TPR=0=400kHz) 提速。
+         * 打印节流：整行输出降到 100Hz/APP_IMU_PRINT_DIVIDER=5Hz。
+         * 方案A（CPU 优化）：加速度/角速度只在「要打印的那一拍」才寄存器直读，省软件 I2C 忙等。
+         * IMU 不可用时改发精简行（仍含激光 D1）。
          */
         if (++printDivider >= APP_IMU_PRINT_DIVIDER) {
             printDivider = 0U;
-            (void)AtkMs6dsv_ReadImuRaw(&imuRaw);
-            AppImuUartTask_SendImu(&euler, &imuRaw);
+            if (imuOk) {
+                (void)AtkMs6dsv_ReadImuRaw(&imuRaw);
+                AppImuUartTask_SendImu(&euler, &imuRaw);
+            } else {
+                AppImuUartTask_SendReportNoImu();
+            }
         }
 
         vTaskDelayUntil(&lastWakeTime, APP_IMU_UART_PERIOD_TICKS);

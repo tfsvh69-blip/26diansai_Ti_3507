@@ -58,7 +58,7 @@
 | 排名 | 部分 | 触发/频率 | 单次耗时 | 平均 CPU | 性质 |
 |---|---|---|---:|---:|---|
 | 1 | **IMU 融合角读取**（`IMU100Hz`→软件 I2C 读 FIFO_STATUS + 1~2 条 SFLP 记录） | 100Hz（每 10ms） | ~1.5~2.8ms/次 | **~15~25%** | CPU 忙等（`DL_Common_delayCycles` 空转，每位 3×5µs≈15µs，一字节≈0.1~0.14ms） |
-| 2 | **OLED 整屏刷新**（`PERIPH`→`OLED_Update` 软件 I2C 推 ~1050 字节） | 2Hz（每 500ms） | **~45~57ms/次（突发）** | ~9~11% | CPU 忙等（`Delay_us(2)`，每字节≈54µs）；突发期与其它同优先级任务分时轮转 |
+| 2 | **OLED 局部刷新**（`PERIPH`→`OLED_UpdateArea(0,0,128,24)` 只推前 3 页 ~384 字节） | 2Hz（每 500ms） | **~20ms/次（突发）** | ~4~5% | CPU 忙等（`Delay_us(2)`）；已从整屏 8 页(~50ms)改为只刷显示用的前 3 页 |
 | 3 | **激光测距 RX 中断**（UART2 230400，每字节 1 次中断喂解析器） | 跟随激光帧率，连续流最坏 ~23000 次/秒 | ~80 周期/字节 + 每帧 CRC~1500 周期 | ~2~3%（满速流时） | 中断，随实际字节率线性缩放 |
 | 4 | **IMU 原始加速度/角速度读取**（打印那拍 2×6 字节软件 I2C 读） | 5Hz | ~2ms/次 | ~1% | CPU 忙等（方案A 已从 100Hz 降到 5Hz） |
 | 5 | **电机 STEP 中断**（`TIMG0_IRQHandler` 梯形斜坡计算） | 仅电机转动时，巡航 ~8kHz | ~150 周期/次 | ~1.5%（仅转动时） | 中断；**四电机一起转也只有 TIMG0 一个 ISR**（2/3/4 镜像跟随、不产生中断），CPU 开销与单电机相同 |
@@ -72,6 +72,19 @@
 2. **OLED 降刷新率或改局部刷新**：`OLED_Update` 整屏很贵。用 `OLED_UpdateArea` 只刷变化区域，或把 `PERIPH` 周期从 500ms 拉长；也可把 OLED 放到独立低优先级任务，避免突发阻塞同优先级任务。
 3. **激光 RX FIFO 阈值调高 + 批量处理**：若确认激光帧率不高，可把 RX FIFO 阈值从 1 提到 4，减少中断次数（当前为 1 是为了不丢尾字节，权衡后再定）。
 4. **IMU 融合角读取按需降频**：若上层不需要 100Hz 角度，可把 `APP_IMU_UART_PERIOD_TICKS` 拉长。
+
+## 功能总开关
+
+- `common/app_config.h` 顶部有 `APP_FEATURE_*`（1/0），`App_Init` 据此门控各任务创建；用开发板时把不用的外设置 0（不建任务/不占 CPU/不刷串口，硬件初始化保留）。关掉的功能会被链接器移除，实测关 IMU+LASER 后代码从 ~30KB 降到 ~18KB。
+- 激光 D1 随 IMU 遥测整行输出，`APP_FEATURE_IMU=0` 时该行不打印（即使 LASER=1，激光仍后台接收但无打印出口）。
+
+## 稳健性配置（2026-07-16 加固）
+
+- **栈溢出检测已开启**：`configCHECK_FOR_STACK_OVERFLOW 2`。之前未定义(=0)导致 `vApplicationStackOverflowHook` 形同虚设，现命中即触发（钩子会关中断、串口打印溢出的任务名、快闪 LED1）。可用 `uxTaskGetStackHighWaterMark` 查余量。
+- **故障可视化**：`configASSERT` 失败转调 `vAssertCalled`（main.c），StackOverflow/MallocFailed 钩子也一样——关中断后串口打印原因(`FATAL: ...`)并快闪 LED1，不再静默死循环。故障处理里只用不加锁的 `BspUart0_SendByte`（互斥量在关中断上下文会死锁）。
+- **IMU 初始化非阻塞**：IMU 任务首次 init 失败后不再死等，转入主循环每秒重试（`APP_IMU_REINIT_DIVIDER`）；期间主循环照常 100Hz 运行、5Hz 打印，激光 D1 等遥测正常输出——解决"IMU 坏了连激光也发不出"的耦合。IMU 未就绪时打印精简行 `IMU ---(retry) D1=..`。
+- **其它打磨项**：UART2 RX ISR 加溢出(OVRERR)清标志；`g_motorDiag` 写/读都用 `taskENTER_CRITICAL` 取一致快照；OLED 改局部刷新(前 3 页)；`configUSE_TIMERS=0` 去掉空转的软件定时器任务省 ~1KB。
+- **勿删的移植层宏**：`FreeRTOSConfig.h` 的 `configENABLE_MPU/TRUSTZONE/FPB/RUN_FREERTOS_SECURE_ONLY` 是本 SDK 的 ARM_CM0(统一 MPU 支持)移植层强制要求的，`portmacro.h` 会 `#error`；`SECURE_ONLY=1` 对无 TrustZone 的 M0+ 是正确的单映像配置，别当"残留"删。
 
 ## FreeRTOS 注意事项
 

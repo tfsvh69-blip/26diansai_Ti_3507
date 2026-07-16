@@ -3,6 +3,25 @@
 
 #include "FreeRTOS.h"
 
+/*
+ * ==================== 功能总开关 ====================
+ * 用开发板时按需勾选：把不用的外设任务置 0 即可（1=启用，0=禁用）。
+ * 说明：
+ *   - 只门控"任务/功能是否启动"，各外设的板级初始化(BspBoard_Init 里)始终保留，
+ *     即引脚/定时器/串口都已配置好、随时可用，只是对应任务不跑、不占 CPU、不刷串口。
+ *   - 想彻底不初始化某外设硬件时，再去 bsp_board.c / ti_msp_dl_config.c 里注释对应 init。
+ *   - 激光测距(D1)是随 IMU 遥测整行一起输出的：APP_FEATURE_IMU=0 时该行不打印，
+ *     此时即使 APP_FEATURE_LASER=1，激光仍在后台接收但没有打印出口（详见 app_imu_uart_task.c）。
+ */
+#define APP_FEATURE_LED_HEARTBEAT   (1U)  /* LED1(PB25) 心跳灯 */
+#define APP_FEATURE_UART_ECHO       (1U)  /* UART0 接收回显自检 */
+#define APP_FEATURE_PERIPH_OLED     (1U)  /* OLED + LED2/3 + 蜂鸣器 外设测试任务 */
+#define APP_FEATURE_SERVO           (1U)  /* 4 路舵机（SERVOSWEEP 任务） */
+#define APP_FEATURE_MOTOR           (1U)  /* 4 路步进电机（MOTORTEST 任务，KEY1/KEY2） */
+#define APP_FEATURE_IMU             (1U)  /* 六轴 IMU 姿态遥测（也负责打印激光 D1） */
+#define APP_FEATURE_LASER           (1U)  /* UART2 激光测距1（RX 中断接收 + 随 IMU 行输出 D1） */
+/* =================================================== */
+
 /* 任务栈单位为 word，不是 byte。 */
 #define APP_LED_TASK_STACK_WORDS        (configMINIMAL_STACK_SIZE)
 #define APP_LED_TASK_PRIORITY           (1U)
@@ -42,6 +61,13 @@
  * 若想更慢，把 N 调大（如 50→2Hz）。
  */
 #define APP_IMU_PRINT_DIVIDER           (20U)
+
+/*
+ * IMU 初始化失败后的非阻塞重试节流：每 N 个读取周期(10ms)尝试一次重新初始化。
+ * 100 → 每 1s 重试一次。改为非阻塞后，IMU 缺失/损坏时任务不再死等，
+ * 主循环照常运行，激光 D1 等遥测正常输出（解决"IMU 坏了连激光也发不出"的耦合）。
+ */
+#define APP_IMU_REINIT_DIVIDER          (100U)
 
 /* 电机1按键扫描周期：20ms，兼作简单去抖。 */
 #define APP_MOTOR_KEY_POLL_TICKS        pdMS_TO_TICKS(20U)

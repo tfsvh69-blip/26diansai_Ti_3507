@@ -38,25 +38,6 @@ static TaskHandle_t s_servoTestTaskHandle = NULL;
 static uint16_t s_pulse[BSP_SERVO_COUNT];
 static bool     s_inc[BSP_SERVO_COUNT];
 
-/* 输出无符号十进制整数。 */
-static void ServoLog_SendUint(uint32_t value)
-{
-    char buf[6];
-    uint8_t idx = 0U;
-
-    if (value == 0U) {
-        BspUart0_SendByte((uint8_t)'0');
-        return;
-    }
-    while ((value > 0U) && (idx < sizeof(buf))) {
-        buf[idx++] = (char)('0' + (value % 10U));
-        value /= 10U;
-    }
-    while (idx > 0U) {
-        BspUart0_SendByte((uint8_t)buf[--idx]);
-    }
-}
-
 /* 打印四路当前脉宽：SERVO us S1=.. S2=.. S3=.. S4=.. （值各不相同即证明独立）。 */
 static void ServoLog_All(void)
 {
@@ -66,9 +47,9 @@ static void ServoLog_All(void)
     BspUart0_SendString("SERVO us");
     for (i = 0U; i < (uint32_t)BSP_SERVO_COUNT; i++) {
         BspUart0_SendString(" S");
-        ServoLog_SendUint(i + 1U);
+        BspUart0_SendUint(i + 1U);
         BspUart0_SendString("=");
-        ServoLog_SendUint((uint32_t)s_pulse[i]);
+        BspUart0_SendUint((uint32_t)s_pulse[i]);
     }
     BspUart0_SendString("\r\n");
     BspUart0_Unlock();

@@ -62,16 +62,27 @@ static void Periph_DrawScreen(uint32_t sec, uint8_t buzzOn,
     OLED_ShowString(102, 8, buzzOn ? "~" : "_", OLED_6X8);
 
     /*
-     * 第3行(Y=16)：电机1 运行/方向/速度档。
-     * 形如 "M1:RUN  FWD L3" 或 "M1:STOP REV L1"。
+     * 第3行(Y=16)：电机运行/方向/圈数。形如 "M1:RUN  FWD R2" 或 "M1:STOP REV R0"。
+     * 先在临界区取 g_motorDiag 一致快照，避免读到撕裂帧（三字段有语义关联）。
      */
-    OLED_ShowString(0, 16, "M1:", OLED_6X8);
-    OLED_ShowString(18, 16, g_motorDiag.running ? "RUN " : "STOP", OLED_6X8);
-    OLED_ShowString(48, 16, g_motorDiag.dirForward ? "FWD" : "REV", OLED_6X8);
-    OLED_ShowString(72, 16, "R", OLED_6X8);
-    OLED_ShowNum(78, 16, g_motorDiag.param, 1, OLED_6X8);
+    {
+        AppMotorDiag_t diag;
+        taskENTER_CRITICAL();
+        diag = g_motorDiag;
+        taskEXIT_CRITICAL();
 
-    OLED_Update();
+        OLED_ShowString(0, 16, "M1:", OLED_6X8);
+        OLED_ShowString(18, 16, diag.running ? "RUN " : "STOP", OLED_6X8);
+        OLED_ShowString(48, 16, diag.dirForward ? "FWD" : "REV", OLED_6X8);
+        OLED_ShowString(72, 16, "R", OLED_6X8);
+        OLED_ShowNum(78, 16, diag.param, 1, OLED_6X8);
+    }
+
+    /*
+     * 只刷新用到的前 3 行(Y=0..23，共 3 页)，不整屏刷。
+     * 软件 I2C 整屏 1024B≈50ms，局部 3/8≈20ms，明显减轻刷屏对同优先级任务的分时挤压。
+     */
+    OLED_UpdateArea(0, 0, 128, 24);
 }
 
 static void AppPeriphTestTask_Entry(void *argument)

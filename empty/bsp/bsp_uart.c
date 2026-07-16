@@ -71,6 +71,28 @@ void BspUart0_SendByte(uint8_t byte)
     DL_UART_Main_transmitDataBlocking(UART_0_INST, byte);
 }
 
+void BspUart0_SendUint(uint32_t value)
+{
+    char buf[10];   /* uint32 十进制最多 10 位 */
+    uint8_t idx = 0U;
+
+    /*
+     * 不加锁：单字节发送本身原子，由调用方决定是否用 Lock/Unlock 包裹整行；
+     * 关中断的故障处理也能安全调用（不涉及互斥量）。合并了原先散在各任务里的多份同款实现。
+     */
+    if (value == 0U) {
+        BspUart0_SendByte((uint8_t)'0');
+        return;
+    }
+    while ((value > 0U) && (idx < sizeof(buf))) {
+        buf[idx++] = (char)('0' + (value % 10U));
+        value /= 10U;
+    }
+    while (idx > 0U) {
+        BspUart0_SendByte((uint8_t)buf[--idx]);
+    }
+}
+
 void BspUart0_SendString(const char *str)
 {
     if (str == NULL) {
@@ -107,7 +129,9 @@ void BspUart2_Init(BspUart2RxHandler_t handler)
     /* 先登记回调，再放开中断，避免中断先于回调就绪时丢字节（NULL 已在 ISR 内防护）。 */
     s_uart2RxHandler = handler;
 
-    DL_UART_Main_enableInterrupt(UART_2_INST, DL_UART_MAIN_INTERRUPT_RX);
+    /* 同时使能 RX 与溢出错误中断：溢出时也能进 ISR 取空 FIFO 并清标志。 */
+    DL_UART_Main_enableInterrupt(UART_2_INST,
+        DL_UART_MAIN_INTERRUPT_RX | DL_UART_MAIN_INTERRUPT_OVERRUN_ERROR);
     NVIC_EnableIRQ(UART_2_INST_IRQn);
 }
 
@@ -123,11 +147,19 @@ void UART2_IRQHandler(void)
 
     switch (DL_UART_Main_getPendingInterrupt(UART_2_INST)) {
         case DL_UART_MAIN_IIDX_RX:
+        case DL_UART_MAIN_IIDX_OVERRUN_ERROR:
+            /*
+             * RX 阈值到达或发生溢出都在此取空 FIFO。
+             * 230400 连续流下若 ISR 被短暂拖延、4 字节 FIFO 溢出，
+             * 取空数据后显式清 OVRERR 标志，避免错误位滞留；丢掉的字节由帧头重同步自恢复。
+             */
             while (DL_UART_Main_receiveDataCheck(UART_2_INST, &byte)) {
                 if (s_uart2RxHandler != NULL) {
                     s_uart2RxHandler(byte);
                 }
             }
+            DL_UART_Main_clearInterruptStatus(UART_2_INST,
+                DL_UART_MAIN_INTERRUPT_OVERRUN_ERROR);
             break;
 
         default:

@@ -53,33 +53,17 @@ AppMotorDiag_t g_motorDiag = { false, true, 0U };
 
 static void MotorDiag_Publish(bool running, BspMotorDir_t dir, uint8_t param)
 {
+    /* 三字段一起更新，临界区保证 PERIPH 读到的是一致快照（非撕裂帧）。 */
+    taskENTER_CRITICAL();
     g_motorDiag.running    = running;
     g_motorDiag.dirForward = (dir == MOTOR_DIR_FORWARD);
     g_motorDiag.param      = param;
+    taskEXIT_CRITICAL();
 }
 
 /* ------------------------------------------------------------------
  * 3. 串口日志（UART0 递归锁保证整行原子）。
  * ------------------------------------------------------------------ */
-
-/* 输出无符号十进制整数（复用小工具）。 */
-static void MotorLog_SendUint(uint32_t value)
-{
-    char buf[10];
-    uint8_t idx = 0U;
-
-    if (value == 0U) {
-        BspUart0_SendByte((uint8_t)'0');
-        return;
-    }
-    while ((value > 0U) && (idx < sizeof(buf))) {
-        buf[idx++] = (char)('0' + (value % 10U));
-        value /= 10U;
-    }
-    while (idx > 0U) {
-        BspUart0_SendByte((uint8_t)buf[--idx]);
-    }
-}
 
 /* 事件日志：格式 "MOTORx4 <事件> -> RUN/STOP FWD/REV <圈数> rev"。 */
 static void MotorLog_Event(const char *evt, uint8_t revs, BspMotorDir_t dir,
@@ -90,7 +74,7 @@ static void MotorLog_Event(const char *evt, uint8_t revs, BspMotorDir_t dir,
     BspUart0_SendString(evt);
     BspUart0_SendString(running ? " -> RUN " : " -> STOP ");
     BspUart0_SendString((dir == MOTOR_DIR_FORWARD) ? "FWD " : "REV ");
-    MotorLog_SendUint((uint32_t)revs);
+    BspUart0_SendUint((uint32_t)revs);
     BspUart0_SendString(" rev\r\n");
     BspUart0_Unlock();
 }
@@ -102,9 +86,9 @@ static void MotorLog_Periodic(void)
     BspUart0_SendString("MOTORx4 DIAG run=");
     BspUart0_SendByte(BspMotor1_IsStopped() ? (uint8_t)'0' : (uint8_t)'1');
     BspUart0_SendString(" left=");
-    MotorLog_SendUint(BspMotor1_GetRemainingSteps());
+    BspUart0_SendUint(BspMotor1_GetRemainingSteps());
     BspUart0_SendString(" per=");
-    MotorLog_SendUint(BspMotor1_GetCurPeriod());
+    BspUart0_SendUint(BspMotor1_GetCurPeriod());
     BspUart0_SendString("\r\n");
     BspUart0_Unlock();
 }
