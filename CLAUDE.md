@@ -24,7 +24,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | 目录 | 职责 |
 |---|---|
-| `empty/app/` | FreeRTOS 任务创建、业务流程、控制状态机 |
+| `empty/app/` | FreeRTOS 任务创建、业务流程、控制状态机；`app_robot_core` 为 6 道题目 dispatch 模块 |
 | `empty/bsp/` | 板级外设初始化、GPIO、UART、延时硬件封装 |
 | `empty/bsp/board/` | `ti_msp_dl_config.c/h` 手写板级 DriverLib 初始化（不由 SysConfig 生成） |
 | `empty/module/` | 可复用模块（IMU、OLED） |
@@ -49,16 +49,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 |---|---|---|---|
 | `LED1` | `app/app_led_task.c` | 300 ms | LED1(PB25) 心跳灯，用于判断 FreeRTOS 是否正常调度 |
 | `UART0TX` | `app/app_uart_test_task.c` | 10 ms 轮询 | UART0 接收回显，收到非换行字符返回 `UART RX OK` |
+| `UIMENU` | `app/app_ui_task.c` | 30 ms 轮询 | **OLED 题目菜单 UI**：4 键(K1上/K2下/K3确认/K4返回)选题并进入运行界面，**独占 OLED 与 KEY1~4**；每题预留 `onEnter/onLoop/onExit` 钩子（当前 6 个占位题目，钩子留空待填） |
 | `IMU100Hz` | `app/app_imu_uart_task.c` | 10 ms | 读取 ATK-MS6DSV 姿态 + 追加激光测距1(D1)，按 5Hz 整行输出 Roll/Pitch/Yaw/加减速度/D1 |
-| `MOTORTEST` | `app/app_motor_test_task.c` | 20 ms 轮询 | KEY1/KEY2 让 **4 个电机一起**正/反转 2 圈测试（电机1 TIMG0 斜坡主控，2/3/4 镜像跟随，梯形加减速自动停） |
-| `SERVOSWEEP` | `app/app_servo_test_task.c` | 20 ms | **4 个舵机各自独立错相摆动**（800~2200us，无按键），演示四路可独立控制；单控用 `BspServo_SetPulseUs(id,us)` |
-| `PERIPH` | `app/app_periph_test_task.c` | 500 ms | 外设验证：OLED 显示、LED2/LED3、蜂鸣器通断测试 |
+| `MOTORTEST` | `app/app_motor_test_task.c` | 20 ms 轮询 | **【默认禁用】** KEY1/KEY2 让 **4 个电机一起**正/反转 2 圈测试（按键已让给 UIMENU） |
+| `SERVOSWEEP` | `app/app_servo_test_task.c` | 20 ms | **【默认禁用】4 个舵机各自独立错相摆动**（800~2200us，无按键）；单控用 `BspServo_SetPulseUs(id,us)` |
+| `PERIPH` | `app/app_periph_test_task.c` | 500 ms | **【默认禁用】** OLED 已交给 UIMENU（互斥防抢屏）；原为外设验证：OLED/LED2/LED3/蜂鸣器 |
 
 > 激光测距1（UART2）不是任务，而是 **UART2 RX 中断**逐字节喂 `module/laser` 的 LD14 解析器；距离由 `IMU100Hz` 任务读取并随整行输出。
+> 题目菜单 UI 见 [empty/docs/FREERTOS_TASKS.md](empty/docs/FREERTOS_TASKS.md) 的「OLED 题目菜单 UI」小节；题目业务逻辑逐题填 `app_ui_task.c` 的 `s_taskList[]` 钩子。OLED 当前只能显示 ASCII（无中文字库）。
 
 ### 功能总开关（按需启用外设）
 
-[empty/common/app_config.h](empty/common/app_config.h) 顶部有一组 `APP_FEATURE_*`（1=启用/0=禁用），`App_Init` 用它门控各任务创建。用开发板时把不需要的外设置 0 即可（不创建任务、不占 CPU、不刷串口；板级硬件初始化仍保留）：`APP_FEATURE_LED_HEARTBEAT / UART_ECHO / PERIPH_OLED / SERVO / MOTOR / IMU / LASER`。注意激光 D1 随 IMU 遥测行输出，`APP_FEATURE_IMU=0` 时该行不打印。
+[empty/common/app_config.h](empty/common/app_config.h) 顶部有一组 `APP_FEATURE_*`（1=启用/0=禁用），`App_Init` 用它门控各任务创建。用开发板时把不需要的外设置 0 即可（不创建任务、不占 CPU、不刷串口；板级硬件初始化仍保留）：`APP_FEATURE_LED_HEARTBEAT / UART_ECHO / UI_MENU / PERIPH_OLED / SERVO / MOTOR / IMU / IMU_UART_LOG / LASER`。**当前默认**：`UI_MENU=1`（题目菜单）；因 UI 独占 OLED 与按键，`PERIPH_OLED / SERVO / MOTOR` 默认置 0。`UART_ECHO=0`（关接收自检）、`IMU_UART_LOG=0`（IMU 不打印串口遥测——串口彻底静默；但 IMU 读取 + Yaw 快照照常运行供 OLED 状态栏）。调试时把这两个改回 1 即可恢复串口输出。
 
 修改或新增任务后必须同步更新 [empty/docs/FREERTOS_TASKS.md](empty/docs/FREERTOS_TASKS.md)。
 

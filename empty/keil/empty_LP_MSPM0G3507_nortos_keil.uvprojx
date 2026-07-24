@@ -583,6 +583,26 @@
               <FileType>5</FileType>
               <FilePath>..\app\app_servo_test_task.h</FilePath>
             </File>
+            <File>
+              <FileName>app_ui_task.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\app\app_ui_task.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_ui_task.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\app\app_ui_task.h</FilePath>
+            </File>
+            <File>
+              <FileName>app_robot_core.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\app\app_robot_core.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_robot_core.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\app\app_robot_core.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

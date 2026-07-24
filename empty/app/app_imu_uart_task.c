@@ -36,6 +36,35 @@ static TaskHandle_t s_imuUartTaskHandle = NULL;
 
 #define APP_IMU_WHO_AM_I_REG           (0x0FU)
 
+/*
+ * Yaw（偏航角）快照：供其它任务（OLED UI）只读显示，用于判断陀螺仪是否在工作。
+ * IMU 任务每读到一次融合欧拉角就在临界区更新，getter 在临界区取一致快照，
+ * 避免 UI 任务直接访问软件 I2C（那会与本任务争用总线）。
+ */
+static int16_t s_yawCentideg = 0;
+static bool    s_yawValid    = false;
+
+static void AppImuUartTask_PublishYaw(int16_t yawCentideg)
+{
+    taskENTER_CRITICAL();
+    s_yawCentideg = yawCentideg;
+    s_yawValid    = true;
+    taskEXIT_CRITICAL();
+}
+
+bool AppImuUartTask_GetYaw(int16_t *outYawCentideg)
+{
+    bool valid;
+
+    taskENTER_CRITICAL();
+    valid = s_yawValid;
+    if (outYawCentideg != NULL) {
+        *outYawCentideg = s_yawCentideg;
+    }
+    taskEXIT_CRITICAL();
+    return valid;
+}
+
 /* 输出带符号十进制整数，用于加速度(mg)/角速度(mdps)等可能超出 int16 的量。 */
 static void AppImuUartTask_SendInt32(int32_t value)
 {
@@ -341,12 +370,15 @@ static bool AppImuUartTask_TryInit(bool fullDiag)
     AtkMs6dsvStatus_t status = AtkMs6dsv_Init();
 
     if (status == ATK_MS6DSV_OK) {
+#if (APP_FEATURE_IMU_UART_LOG != 0U)
         BspUart0_Lock();
         BspUart0_SendString("IMU INIT OK\r\n");
         BspUart0_Unlock();
+#endif
         return true;
     }
 
+#if (APP_FEATURE_IMU_UART_LOG != 0U)
     AppImuUartTask_SendStatus(status);
     if (fullDiag) {
         AppImuUartTask_SendWhoAmIProbe();
@@ -356,6 +388,7 @@ static bool AppImuUartTask_TryInit(bool fullDiag)
         }
         s_imuInitFailCount++;
     }
+#endif
     return false;
 }
 
@@ -373,11 +406,13 @@ static void AppImuUartTask_Entry(void *argument)
     uint32_t reinitDivider = 0U;
     bool imuOk;
 
+#if (APP_FEATURE_IMU_UART_LOG != 0U)
     BspUart0_Lock();
     BspUart0_SendString("IMU UART 100Hz START, SWI2C addr=0x6A\r\n");
     /* 打印一次单位说明，之后每行不再重复单位以缩短行长。 */
     BspUart0_SendString("IMU FORMAT: R/P/Y=deg AX/AY/AZ=mg GX/GY/GZ=mdps D1=mm(激光测距1)\r\n");
     BspUart0_Unlock();
+#endif
 
     /*
      * 【非阻塞初始化·解耦激光】首次尝试初始化 IMU（简诊断）；失败不再死等，
@@ -394,6 +429,9 @@ static void AppImuUartTask_Entry(void *argument)
              * 无新数据时保留上一次角度值。
              */
             (void)AtkMs6dsv_ReadEuler(&euler);
+
+            /* 发布 Yaw 快照（100Hz 更新），供 OLED UI 等其它任务只读显示。 */
+            AppImuUartTask_PublishYaw(euler.yawCentideg);
         } else if (++reinitDivider >= APP_IMU_REINIT_DIVIDER) {
             /* 非阻塞重试：约每秒尝试重新初始化并打印全诊断，期间不阻塞主循环。 */
             reinitDivider = 0U;
@@ -401,18 +439,21 @@ static void AppImuUartTask_Entry(void *argument)
         }
 
         /*
-         * 打印节流：整行输出降到 100Hz/APP_IMU_PRINT_DIVIDER=5Hz。
+         * 打印节流：计数器每周期递增保持节拍一致；打印体受 APP_FEATURE_IMU_UART_LOG
+         * 控制：置 0 时跳过所有串口输出与 Raw 寄存器读取（省 CPU），但 Yaw 快照
+         * 发布仍在前面每周期执行（供 OLED 状态栏使用）。
          * 方案A（CPU 优化）：加速度/角速度只在「要打印的那一拍」才寄存器直读，省软件 I2C 忙等。
-         * IMU 不可用时改发精简行（仍含激光 D1）。
          */
         if (++printDivider >= APP_IMU_PRINT_DIVIDER) {
             printDivider = 0U;
+#if (APP_FEATURE_IMU_UART_LOG != 0U)
             if (imuOk) {
                 (void)AtkMs6dsv_ReadImuRaw(&imuRaw);
                 AppImuUartTask_SendImu(&euler, &imuRaw);
             } else {
                 AppImuUartTask_SendReportNoImu();
             }
+#endif
         }
 
         vTaskDelayUntil(&lastWakeTime, APP_IMU_UART_PERIOD_TICKS);

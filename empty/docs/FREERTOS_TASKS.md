@@ -5,11 +5,12 @@
 | 任务名 | 所在文件 | 周期 | 优先级 | 栈大小 | 输入 | 输出 | 说明 |
 |---|---|---:|---:|---:|---|---|---|
 | `LED1` | `app/app_led_task.c` | 300 ms | `APP_LED_TASK_PRIORITY` | `APP_LED_TASK_STACK_WORDS` | 无 | LED1(PB25) 翻转 | 当前已启动，用作 FreeRTOS 调度心跳 |
-| `UART0TX` | `app/app_uart_test_task.c` | 10 ms 接收轮询 | `APP_UART_TEST_TASK_PRIORITY` | `APP_UART_TEST_TASK_STACK_WORDS` | UART0 RX 任意非换行字符 | 返回 `UART RX OK` | UART0 使用 MFCLK 115200，PA10=TX，PA11=RX |
-| `IMU100Hz` | `app/app_imu_uart_task.c` | 10 ms | `APP_IMU_UART_TASK_PRIORITY` | `APP_IMU_UART_TASK_STACK_WORDS` | ATK-MS6DSV/LSM6DSV16X FIFO 融合姿态 + 加速度/角速度输出寄存器、PA16 INT 电平、**激光测距1(`LaserLd14_GetLatest`)** | UART0 输出 Roll/Pitch/Yaw、三轴加速度(mg)、三轴角速度(mdps)、FIFO 深度、**激光测距1(D1,mm)**、INT 电平 | 欧拉角每 10ms 读；串口整行按 `APP_IMU_PRINT_DIVIDER`(默认 **20**) 节流到 **5Hz** 打印（含激光测距，刷新慢便于阅读）；方案A：加速度/角速度只在打印那拍寄存器直读；芯片内部 ODR 配为 120Hz |
-| `MOTORTEST` | `app/app_motor_test_task.c` | 20ms 按键轮询 | `APP_MOTOR_TEST_TASK_PRIORITY` | `APP_MOTOR_TEST_TASK_STACK_WORDS` | KEY1/KEY2(PA28/PA31) 按下沿 | 四路 STEP(PB10/PB6/PB13/PB26)+四路 DIR(PB11/PB7/PB14/PB27)，PA13 ENN、MS1/MS2 共用；UART0 打印状态，更新 `g_motorDiag` 供 OLED 显示 | **4 电机一起转测试**：K1 全部正转2圈、K2 全部反转2圈；电机1(TIMG0)梯形斜坡主控计步，电机2/3/4(TIMG8/12/6)镜像同频跟随、同启同停；1/32细分6400脉冲/圈，巡航周期500，移动期间忽略按键 |
-| `SERVOSWEEP` | `app/app_servo_test_task.c` | 20ms | `APP_SERVO_TEST_TASK_PRIORITY` | `APP_SERVO_TEST_TASK_STACK_WORDS` | 无（自动） | 四路 SERVO PWM(PA8/PA9/PB4/PA12)，TIMA0 50Hz | **4 舵机各自独立错相摆动**（800↔2200us，不用按键），演示四路可完全独立控制；每秒串口打印 `SERVO us S1=.. S2=.. S3=.. S4=..`（数值互不相同即独立）。脉宽经 `BspServo_SetPulseUs` 极性补偿；四路方向须一次 `setCCPDirection` 写全(见下) |
-| `PERIPH` | `app/app_periph_test_task.c` | 500 ms | `APP_PERIPH_TEST_TASK_PRIORITY` | `APP_PERIPH_TEST_TASK_STACK_WORDS` | `g_motorDiag`（只读） | OLED(PB8/PB9 软件I2C) 刷屏、LED2(PA7)/LED3(PB12) 翻转、蜂鸣器(PA15) 通断 | 外设功能验证+电机测试状态显示：OLED 显示标题/运行秒+LED+BUZZ状态/电机运行·方向·圈数；LED2/LED3 交替心跳；蜂鸣器保持静音；上电自检点亮 LED2/LED3 并短响 |
+| `UART0TX` | `app/app_uart_test_task.c` | 10 ms 接收轮询 | `APP_UART_TEST_TASK_PRIORITY` | `APP_UART_TEST_TASK_STACK_WORDS` | UART0 RX 任意非换行字符 | 返回 `UART RX OK` | **【默认禁用，`APP_FEATURE_UART_ECHO=0`】** 调试时需串口收发验证可改回 1 启用 |
+| `UIMENU` | `app/app_ui_task.c` | 30ms 按键轮询 | `APP_UI_TASK_PRIORITY` | `APP_UI_TASK_STACK_WORDS` | KEY1~4(PA28/PA31/PA30/PA29) 按下沿；**IMU Yaw 快照**(`AppImuUartTask_GetYaw`)、**激光距离**(`LaserLd14_GetLatest`) | OLED(PB8/PB9 软件I2C) 题目菜单/运行界面 + 底部传感器状态栏 | **OLED 题目菜单 UI**：菜单态列出全部题目、反色高亮当前项；K1上移/K2下移(循环)、K3确认进入运行界面、K4返回菜单；每题预留 `onEnter/onLoop/onExit` 业务钩子(当前 6 个占位题目、钩子全 NULL)。底部常驻**传感器状态栏** `Y:<yaw> D:<dist>mm`(局部低频刷，判断陀螺仪/测距是否工作)。**独占 OLED 与 4 按键**，界面整屏刷为事件驱动 |
+| `IMU100Hz` | `app/app_imu_uart_task.c` | 10 ms | `APP_IMU_UART_TASK_PRIORITY` | `APP_IMU_UART_TASK_STACK_WORDS` | ATK-MS6DSV/LSM6DSV16X FIFO 融合姿态 + 加速度/角速度输出寄存器、PA16 INT 电平、**激光测距1(`LaserLd14_GetLatest`)** | Yaw 快照(`AppImuUartTask_GetYaw`，供 OLED 状态栏)；串口遥测（由 `APP_FEATURE_IMU_UART_LOG` 独立控制，**默认 0=静默**，调试时改 1 恢复 5Hz 打印） | 欧拉角每 10ms 读 + 临界区发布 Yaw 快照；串口打印由 `APP_FEATURE_IMU_UART_LOG` 门控（默认关，不刷任何串口）；IR 读取 + Yaw 发布始终运行，OLED 状态栏不依赖串口 |
+| `MOTORTEST` | `app/app_motor_test_task.c` | 20ms 按键轮询 | `APP_MOTOR_TEST_TASK_PRIORITY` | `APP_MOTOR_TEST_TASK_STACK_WORDS` | KEY1/KEY2(PA28/PA31) 按下沿 | 四路 STEP(PB10/PB6/PB13/PB26)+四路 DIR(PB11/PB7/PB14/PB27)，PA13 ENN、MS1/MS2 共用；UART0 打印状态，更新 `g_motorDiag` 供 OLED 显示 | **【默认禁用，`APP_FEATURE_MOTOR=0`】** 按键让给 UIMENU。4 电机一起转测试：K1 全部正转2圈、K2 全部反转2圈；电机1(TIMG0)梯形斜坡主控计步，电机2/3/4(TIMG8/12/6)镜像同频跟随、同启同停；1/32细分6400脉冲/圈 |
+| `SERVOSWEEP` | `app/app_servo_test_task.c` | 20ms | `APP_SERVO_TEST_TASK_PRIORITY` | `APP_SERVO_TEST_TASK_STACK_WORDS` | 无（自动） | 四路 SERVO PWM(PA8/PA9/PB4/PA12)，TIMA0 50Hz | **【默认禁用，`APP_FEATURE_SERVO=0`】** 4 舵机各自独立错相摆动（800↔2200us，不用按键），演示四路可完全独立控制；每秒串口打印 `SERVO us S1=.. S2=.. S3=.. S4=..`。脉宽经 `BspServo_SetPulseUs` 极性补偿；四路方向须一次 `setCCPDirection` 写全(见下) |
+| `PERIPH` | `app/app_periph_test_task.c` | 500 ms | `APP_PERIPH_TEST_TASK_PRIORITY` | `APP_PERIPH_TEST_TASK_STACK_WORDS` | `g_motorDiag`（只读） | OLED(PB8/PB9 软件I2C) 刷屏、LED2(PA7)/LED3(PB12) 翻转、蜂鸣器(PA15) 通断 | **【默认禁用，`APP_FEATURE_PERIPH_OLED=0`】** OLED 已交给 UIMENU，两任务抢软件 I2C 会花屏故互斥。原功能：OLED 显示标题/运行秒+LED+BUZZ+电机状态；LED2/LED3 交替心跳；上电自检 |
 
 ## LED1(PB25) 心跳灯行为
 
@@ -17,6 +18,24 @@
 - LED1(PB25) 每 300ms 翻转一次；若持续闪烁，说明 FreeRTOS 调度至少已经运行。
 - 串口任务不再控制 LED1，避免心跳判断被串口命令干扰。
 - LED2/LED3/蜂鸣器/OLED 由 `PERIPH` 任务驱动，与 LED1 心跳互不干扰。
+
+## OLED 题目菜单 UI（`UIMENU` 任务）
+
+- 目的：上电即在 OLED 上做题目选择界面，用 4 个按键选题、确认、返回；取代旧的 KEY1/KEY2 电机测试与外设自检显示。
+- **独占资源**：本任务独占板载 OLED（PB8/PB9 软件 I2C）与 KEY1~4；启用它时 `PERIPH`（也刷 OLED）、`MOTORTEST`（占 KEY1/KEY2）默认关闭，避免抢屏/抢键（见 `common/app_config.h` 的 `APP_FEATURE_*`）。
+- **两态状态机**：
+  - `MENU` 菜单态：标题 `== SELECT TASK ==` + 题目列表（`n.名称`），当前项整行**反色高亮**；底部提示 `K1/K2 K3=OK K4=BK`。题目多于一屏（6 项）时按选中项自动滚动。
+  - `RUN` 运行态：大字 `TASK n` + 题名 + `K4: back to menu`；周期调用该题 `onLoop` 钩子。
+- **按键（30ms 轮询，去抖 + 按下沿）**：
+  - `K1`(PA28) 上移（循环回绕）、`K2`(PA31) 下移（循环回绕）
+  - `K3`(PA30) 确认：进入选中题目运行界面（先调 `onEnter`）
+  - `K4`(PA29) 返回：从运行界面回菜单（先调 `onExit`）；菜单态无动作
+- **题目表**（`app_ui_task.c` 内 `s_taskList[]`）：当前 6 个占位 `Task 1`~`Task 6`，每题 `onEnter/onLoop/onExit` 钩子均为 `NULL`。后续按题填充：`onEnter` 做题目初始化/启动硬件，`onLoop`（30ms 节拍）做慢速 UI 更新/状态协调，`onExit` 停机清理；需要高频控制环的题目应另开任务/定时器。
+- **刷屏策略**：软件 I2C 整屏刷约 50ms，故只在选中项/状态变化时才重绘（事件驱动），平时仅轻量轮询按键，CPU 友好。
+- **传感器状态栏**（`Y:<yaw> D:<dist>mm`）：常驻底部（菜单态 Y=56、运行态 Y=48），实时显示陀螺仪 Yaw（度，1 位小数）与激光测距（mm），方便一眼判断两个传感器是否在工作。
+  - 数据来源：Yaw 取 `IMU100Hz` 任务发布的线程安全快照 `AppImuUartTask_GetYaw()`（IMU 未就绪显示 `---`）；距离取 `LaserLd14_GetLatest()`（无有效帧显示 `---`）。UI 任务**不直接访问软件 I2C/激光**，避免与 IMU 任务争用总线。
+  - **不影响实时性的做法**：状态栏用 `OLED_UpdateArea` **只局部刷一行**(128×8≈整屏 1/8)，且每 `APP_UI_STATUS_DIVIDER`(默认 10 拍=300ms) 才刷一次；整屏刷仍只在菜单/运行切换时发生。故周期刷屏的软件 I2C 忙等极小，不拖累按键响应与其它任务。
+- **OLED 只能显示 ASCII**：`OLED_Data.h` 的中文字库 `OLED_CHARSET_GB2312` 处于注释禁用状态且无 `OLED_ShowChinese` 接口，故题名用英文/编号；要中文需另做字模并启用字库。
 
 ## PERIPH 外设测试行为
 
@@ -97,3 +116,22 @@
 - 融合欧拉角走 FIFO，无新 SFLP 数据时保留上一次角度值；加速度/角速度走寄存器直读，不受 FIFO 影响。若角度长时间冻结但 `AX/GX` 仍在变化，说明 SFLP 融合链路异常，而非整条 I2C 断掉。
 - `FIFO=0/1/2` 间歇变化正常，原因是芯片内部 SFLP 为 120Hz，而任务按 100Hz 读取；若 FIFO 长时间持续增大或长时间为 0 且角度不更新，才需要继续排查。
 - `APP_IMU_I2C_PIN_TEST_ENABLE` 当前为 `0`，`IMU100Hz` 正常访问 IMU；若临时置为 `1`，任务不访问 IMU，改为每 500ms 用开漏模拟方式交替翻转 PB2/PB3，并直接读取 GPIO DIN 输出 `SET`/`READ` 电平。
+
+## 机器人题目核心模块（`app_robot_core.c/h`）
+
+- **不是独立 FreeRTOS 任务**——是一组同步钩子函数，被 `UIMENU` 任务在 RUN 态调用。
+- **dispatch 表 `s_robotTasks[]`**：6 道题，每题有 name + `onEnter/onLoop/onExit` 三个函数指针（当前全部为占位空函数，标记 `TODO` 待填）。
+- **接口**：
+  - `RobotCore_GetTaskCount()` — 题目总数（菜单滚动循环用）
+  - `RobotCore_GetTaskName(idx)` — 题目显示名（OLED 菜单/运行界面显示）
+  - `RobotCore_EnterTask(idx)` — 进入题目（调 `onEnter`）
+  - `RobotCore_LoopTask(idx)` — 每周期循环（由 UIMENU 30ms 节拍驱动，调 `onLoop`）
+  - `RobotCore_ExitTask(idx)` — 退出题目（调 `onExit`）
+  - `RobotMaster_Start()` — 机器人总任务入口（占位，后续做按顺序自动执行全部 6 题）
+- **调试日志**：`EnterTask`/`ExitTask`/`RobotMaster_Start` 仅在 `APP_FEATURE_IMU_UART_LOG=1` 时向 UART0 打印（默认静默模式不刷串口）。
+- **题目开发指南**：
+  1. 在 `app_robot_core.c` 找到对应题号的 `TaskN_Enter/Loop/Exit` 函数，填入业务逻辑；
+  2. `Enter` 里可初始化硬件（调 `BspMotorAll_MoveSteps`、`BspServo_SetPulseUs` 等）、创建子任务/定时器；
+  3. `Loop` 里做 30ms 节拍的慢速状态协调、UI 更新；需要高频控制环的题应在 `Enter` 里另开任务/定时器，`Loop` 只做协调；
+  4. `Exit` 里停机清理（禁用电机/舵机输出、删除子任务/定时器）；
+  5. 需要改动题目名时只改 `s_robotTasks[]` 表里的字符串，无需动 UI 代码。

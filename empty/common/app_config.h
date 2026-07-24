@@ -14,12 +14,26 @@
  *     此时即使 APP_FEATURE_LASER=1，激光仍在后台接收但没有打印出口（详见 app_imu_uart_task.c）。
  */
 #define APP_FEATURE_LED_HEARTBEAT   (1U)  /* LED1(PB25) 心跳灯 */
-#define APP_FEATURE_UART_ECHO       (1U)  /* UART0 接收回显自检 */
-#define APP_FEATURE_PERIPH_OLED     (1U)  /* OLED + LED2/3 + 蜂鸣器 外设测试任务 */
-#define APP_FEATURE_SERVO           (1U)  /* 4 路舵机（SERVOSWEEP 任务） */
-#define APP_FEATURE_MOTOR           (1U)  /* 4 路步进电机（MOTORTEST 任务，KEY1/KEY2） */
-#define APP_FEATURE_IMU             (1U)  /* 六轴 IMU 姿态遥测（也负责打印激光 D1） */
-#define APP_FEATURE_LASER           (1U)  /* UART2 激光测距1（RX 中断接收 + 随 IMU 行输出 D1） */
+#define APP_FEATURE_UART_ECHO       (0U)  /* UART0 接收回显自检（默认关闭：串口静默，需调试时改回 1 即可） */
+#define APP_FEATURE_UI_MENU         (1U)  /* OLED 题目菜单 UI（4 键：K1上/K2下/K3确认/K4返回，独占 OLED） */
+#define APP_FEATURE_PERIPH_OLED     (0U)  /* 旧外设测试任务（OLED已交给UI_MENU，两者抢屏，故互斥禁用） */
+#define APP_FEATURE_SERVO           (0U)  /* 4 路舵机（SERVOSWEEP 任务，已取消：按键改做题目菜单） */
+#define APP_FEATURE_MOTOR           (0U)  /* 4 路步进电机（MOTORTEST 任务，已取消：KEY1/KEY2 让给题目菜单） */
+#define APP_FEATURE_IMU             (1U)  /* 六轴 IMU 读取 + Yaw 快照发布（供 OLED 状态栏显示，不依赖串口） */
+#define APP_FEATURE_LASER           (1U)  /* UART2 激光测距1（RX 中断接收，供 OLED 状态栏显示，不依赖串口） */
+/*
+ * IMU 串口遥测日志独立开关：控制 IMU 任务是否向 UART0 打印启动信息、初始化诊断
+ * 和 5Hz 姿态/激光遥测行。置 0 时 IMU 读取与 Yaw 快照发布照常运行（OLED 状态栏
+ * 仍能显示 Yaw/距离），只是串口彻底静默。调试需要看遥测行时改回 1 即可。
+ * 注意：此开关与 APP_FEATURE_IMU 独立，IMU=1+LOG=0 是正常组合（静默传感器模式）。
+ */
+#define APP_FEATURE_IMU_UART_LOG    (0U)  /* IMU 串口调试日志（0=静默/1=打开） */
+/*
+ * 说明：题目菜单 UI 接管 OLED 与 4 个按键，故本版默认把电机/舵机测试任务、旧外设
+ * 测试任务(PERIPH_OLED)一并关闭——它们与 UI 争用按键或 OLED。底层驱动仍在
+ * BspBoard_Init 中初始化，题目业务(onEnter/onLoop)里可直接调 bsp_motor/bsp_servo。
+ * UART_ECHO 与 IMU_UART_LOG 默认关闭：串口保持静默，减少对调试/通信的干扰。
+ */
 /* =================================================== */
 
 /* 任务栈单位为 word，不是 byte。 */
@@ -79,6 +93,22 @@
 #define APP_SERVO_TEST_TASK_STACK_WORDS (configMINIMAL_STACK_SIZE * 2U)
 #define APP_SERVO_TEST_TASK_PRIORITY    (1U)
 #define APP_SERVO_TEST_PERIOD_TICKS     pdMS_TO_TICKS(20U)
+
+/*
+ * OLED 题目菜单 UI 任务：轮询 4 键驱动菜单/运行状态机。
+ * 栈放大到 3 倍（OLED 全屏软件 I2C 刷屏占栈，与旧 PERIPH 任务同量级）。
+ * 30ms 轮询既是按键去抖窗口也是响应节拍；刷屏为事件驱动，非每周期刷。
+ */
+#define APP_UI_TASK_STACK_WORDS         (configMINIMAL_STACK_SIZE * 3U)
+#define APP_UI_TASK_PRIORITY            (1U)
+#define APP_UI_POLL_TICKS               pdMS_TO_TICKS(30U)
+
+/*
+ * 传感器状态栏（Yaw + 激光距离）刷新节流：每 N 个轮询周期局部刷一次。
+ * 10 → 30ms×10=300ms(约3Hz)，人眼看数字够用。状态栏用 OLED_UpdateArea 只推送
+ * 一行(128×8≈整屏1/8)，配合低频，对 CPU/实时性几乎无影响（整屏刷仍只在界面切换时）。
+ */
+#define APP_UI_STATUS_DIVIDER           (10U)
 
 /*
  * IMU I2C 引脚物理测试开关。
