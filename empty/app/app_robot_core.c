@@ -41,40 +41,95 @@ typedef struct {
  * 2. 6 道题占位钩子（后续逐题填充具体业务逻辑）
  * ------------------------------------------------------------------ */
 
-static void Task1_Enter(void) { /* TODO: 题目1 初始化 */ }
+/*
+ * 每道题进入时蜂鸣器短响 + LED2/LED3 用 4 种组合按序错开反馈：
+ *   Task1 ① LED2亮 LED3灭    Task2 ② LED2灭 LED3亮
+ *   Task3 ③ LED2亮 LED3亮    Task4 ④ LED2灭 LED3灭
+ *   Task5 ② + LED1短暂亮    Task6 ①（回环，OLED题号区分）
+ * 退出时统一关灭三个 LED；LED1 会被心跳灯覆盖，关一下无妨。
+ */
+static void Task1_Enter(void)
+{
+    BspLed_On(BSP_LED_2);
+    BspLed_Off(BSP_LED_3);
+    BspBuzzer_On();
+    vTaskDelay(pdMS_TO_TICKS(30U));
+    BspBuzzer_Off();
+}
 
 static void Task1_Loop(void)  { /* TODO: 题目1 主循环 */ }
 
-static void Task1_Exit(void)  { /* TODO: 题目1 清理 */ }
+static void Task1_Exit(void)
+{
+    BspLed_Off(BSP_LED_1);
+    BspLed_Off(BSP_LED_2);
+    BspLed_Off(BSP_LED_3);
+}
 
 
-static void Task2_Enter(void) { /* TODO: 题目2 初始化 */ }
+static void Task2_Enter(void)
+{
+    BspLed_Off(BSP_LED_2);
+    BspLed_On(BSP_LED_3);
+    BspBuzzer_On();
+    vTaskDelay(pdMS_TO_TICKS(30U));
+    BspBuzzer_Off();
+}
 
 static void Task2_Loop(void)  { /* TODO: 题目2 主循环 */ }
 
-static void Task2_Exit(void)  { /* TODO: 题目2 清理 */ }
+static void Task2_Exit(void)
+{
+    BspLed_Off(BSP_LED_1);
+    BspLed_Off(BSP_LED_2);
+    BspLed_Off(BSP_LED_3);
+}
 
 
-static void Task3_Enter(void) { /* TODO: 题目3 初始化 */ }
+static void Task3_Enter(void)
+{
+    BspLed_On(BSP_LED_2);
+    BspLed_On(BSP_LED_3);
+    BspBuzzer_On();
+    vTaskDelay(pdMS_TO_TICKS(30U));
+    BspBuzzer_Off();
+}
 
 static void Task3_Loop(void)  { /* TODO: 题目3 主循环 */ }
 
-static void Task3_Exit(void)  { /* TODO: 题目3 清理 */ }
+static void Task3_Exit(void)
+{
+    BspLed_Off(BSP_LED_1);
+    BspLed_Off(BSP_LED_2);
+    BspLed_Off(BSP_LED_3);
+}
 
 
-static void Task4_Enter(void) { /* TODO: 题目4 初始化 */ }
+static void Task4_Enter(void)
+{
+    BspLed_Off(BSP_LED_2);
+    BspLed_Off(BSP_LED_3);
+    BspBuzzer_On();
+    vTaskDelay(pdMS_TO_TICKS(30U));
+    BspBuzzer_Off();
+}
 
 static void Task4_Loop(void)  { /* TODO: 题目4 主循环 */ }
 
-static void Task4_Exit(void)  { /* TODO: 题目4 清理 */ }
+static void Task4_Exit(void)
+{
+    BspLed_Off(BSP_LED_1);
+    BspLed_Off(BSP_LED_2);
+    BspLed_Off(BSP_LED_3);
+}
 
 
 static void Task5_Enter(void)
 {
+    /* 保留 LED1 短暂亮起作为 Task5 特色（会被心跳灯覆盖，但能短暂看到） */
     BspLed_On(BSP_LED_1);
     BspLed_Off(BSP_LED_2);
     BspLed_On(BSP_LED_3);
-
     BspBuzzer_On();
     vTaskDelay(pdMS_TO_TICKS(30U));
     BspBuzzer_Off();
@@ -82,14 +137,31 @@ static void Task5_Enter(void)
 
 static void Task5_Loop(void)  { /* TODO: 题目5 主循环 */ }
 
-static void Task5_Exit(void)  { /* TODO: 题目5 清理 */ }
+static void Task5_Exit(void)
+{
+    BspLed_Off(BSP_LED_1);
+    BspLed_Off(BSP_LED_2);
+    BspLed_Off(BSP_LED_3);
+}
 
 
-static void Task6_Enter(void) { /* TODO: 题目6 初始化 */ }
+static void Task6_Enter(void)
+{
+    BspLed_On(BSP_LED_2);
+    BspLed_Off(BSP_LED_3);
+    BspBuzzer_On();
+    vTaskDelay(pdMS_TO_TICKS(30U));
+    BspBuzzer_Off();
+}
 
 static void Task6_Loop(void)  { /* TODO: 题目6 主循环 */ }
 
-static void Task6_Exit(void)  { /* TODO: 题目6 清理 */ }
+static void Task6_Exit(void)
+{
+    BspLed_Off(BSP_LED_1);
+    BspLed_Off(BSP_LED_2);
+    BspLed_Off(BSP_LED_3);
+}
 
 /* ------------------------------------------------------------------
  * 3. 题目表（dispatch table）

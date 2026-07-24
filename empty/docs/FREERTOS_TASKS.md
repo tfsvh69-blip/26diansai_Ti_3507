@@ -120,7 +120,7 @@
 ## 机器人题目核心模块（`app_robot_core.c/h`）
 
 - **不是独立 FreeRTOS 任务**——是一组同步钩子函数，被 `UIMENU` 任务在 RUN 态调用。
-- **dispatch 表 `s_robotTasks[]`**：6 道题，每题有 name + `onEnter/onLoop/onExit` 三个函数指针（当前全部为占位空函数，标记 `TODO` 待填）。
+- **dispatch 表 `s_robotTasks[]`**：6 道题，每题有 name + `onEnter/onLoop/onExit` 三个函数指针（`onLoop` 当前全为占位 `TODO`，`onEnter/onExit` 已实现反馈）。
 - **接口**：
   - `RobotCore_GetTaskCount()` — 题目总数（菜单滚动循环用）
   - `RobotCore_GetTaskName(idx)` — 题目显示名（OLED 菜单/运行界面显示）
@@ -129,9 +129,28 @@
   - `RobotCore_ExitTask(idx)` — 退出题目（调 `onExit`）
   - `RobotMaster_Start()` — 机器人总任务入口（占位，后续做按顺序自动执行全部 6 题）
 - **调试日志**：`EnterTask`/`ExitTask`/`RobotMaster_Start` 仅在 `APP_FEATURE_IMU_UART_LOG=1` 时向 UART0 打印（默认静默模式不刷串口）。
-- **题目开发指南**：
+
+### 进入/退出反馈（v1.8 已实现）
+
+每道题进入时蜂鸣器短响 30ms，LED2(PA7)/LED3(PB12) 以 4 种组合按序错开：
+
+| 题目 | 蜂鸣器 | LED1(PB25) | LED2(PA7) | LED3(PB12) | 说明 |
+|---|---|---|---|---|---|
+| Task 1 | 30ms 响 | — | 亮 | 灭 | 组合① |
+| Task 2 | 30ms 响 | — | 灭 | 亮 | 组合② |
+| Task 3 | 30ms 响 | — | 亮 | 亮 | 组合③ |
+| Task 4 | 30ms 响 | — | 灭 | 灭 | 组合④(仅蜂鸣器) |
+| Task 5 | 30ms 响 | 短暂亮 | 灭 | 亮 | ② + LED1 特色标记（会被心跳灯覆盖） |
+| Task 6 | 30ms 响 | — | 亮 | 灭 | 回①(OLED 上看题号区分) |
+
+> **注意**：LED1(PB25) 是心跳灯，每 300ms 翻转一次。Task5 虽然设了它亮，但下一拍心跳任务会翻回去，只能短暂看到——这是预期行为，不是 bug。
+>
+> 退出每题时（按 K4 返回菜单），三个 LED 全部关灭。
+
+### 题目开发指南
+
   1. 在 `app_robot_core.c` 找到对应题号的 `TaskN_Enter/Loop/Exit` 函数，填入业务逻辑；
-  2. `Enter` 里可初始化硬件（调 `BspMotorAll_MoveSteps`、`BspServo_SetPulseUs` 等）、创建子任务/定时器；
+  2. `Enter` 里可初始化硬件（调 `BspMotorAll_MoveSteps`、`BspServo_SetPulseUs` 等）、创建子任务/定时器；【当前已填：蜂鸣器 30ms + LED 反馈，后续可追加业务代码】
   3. `Loop` 里做 30ms 节拍的慢速状态协调、UI 更新；需要高频控制环的题应在 `Enter` 里另开任务/定时器，`Loop` 只做协调；
-  4. `Exit` 里停机清理（禁用电机/舵机输出、删除子任务/定时器）；
+  4. `Exit` 里停机清理（禁用电机/舵机输出、删除子任务/定时器）；【当前已填：三 LED 全部关灭】
   5. 需要改动题目名时只改 `s_robotTasks[]` 表里的字符串，无需动 UI 代码。
