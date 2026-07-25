@@ -22,6 +22,8 @@
 #define APP_FEATURE_IMU             (1U)  /* 六轴 IMU 读取 + Yaw 快照发布（供 OLED 状态栏显示，不依赖串口） */
 #define APP_FEATURE_LASER           (1U)  /* UART2 激光测距1（RX 中断接收，供 OLED 状态栏显示，不依赖串口） */
 #define APP_FEATURE_BALL_VISION     (1U)  /* UART0 接收上位机 $BALL 小球检测报文（RX 中断解析，OLED 右侧文字面板显示） */
+#define APP_FEATURE_LINE_TRACK      (1U)  /* 7 路灰度循迹 PB17~PB23（直接读高低电平，OLED 菜单右半第6/7行显示状态） */
+#define APP_FEATURE_RELAY           (1U)  /* 继电器 PA24 通断测试任务（每 2 秒切换一次吸合/断开） */
 /*
  * IMU 串口遥测日志独立开关：控制 IMU 任务是否向 UART0 打印启动信息、初始化诊断
  * 和 5Hz 姿态/激光遥测行。置 0 时 IMU 读取与 Yaw 快照发布照常运行（OLED 状态栏
@@ -101,6 +103,11 @@
 #define APP_SERVO_TEST_TASK_STACK_WORDS (configMINIMAL_STACK_SIZE * 2U)
 #define APP_SERVO_TEST_TASK_PRIORITY    (1U)
 #define APP_SERVO_TEST_PERIOD_TICKS     pdMS_TO_TICKS(20U)
+
+/* 继电器通断测试任务：只翻转一个 GPIO，栈保持最小配置；每 2 秒切换一次状态。 */
+#define APP_RELAY_TEST_TASK_STACK_WORDS (configMINIMAL_STACK_SIZE)
+#define APP_RELAY_TEST_TASK_PRIORITY    (1U)
+#define APP_RELAY_TEST_PERIOD_TICKS     pdMS_TO_TICKS(2000U)
 
 /*
  * OLED 题目菜单 UI 任务：轮询 4 键驱动菜单/运行状态机。

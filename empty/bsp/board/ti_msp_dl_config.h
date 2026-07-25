@@ -293,6 +293,44 @@ extern volatile bool g_sysClockUsingHFXT;
 #define IMU_INT_PIN                                               (DL_GPIO_PIN_16)
 #define IMU_INT_IOMUX                                             (IOMUX_PINCM38)
 
+/*
+ * 7 路灰度循迹（v1.1，接口 H6）：LINE1~LINE7 = PB17~PB23，全为数字输入。
+ * LINE1=最左(小车左) … LINE7=最右(小车右)；识别到线=高电平（模块实测极性）。
+ * PINCM 已按 SDK mspm0g350x.h 核实（注意 PB20=PINCM48，非连续）。
+ * ⚠️ PB17~PB23 非 5V 容忍：模块信号须 3.3V 电平，否则需分压/电平转换（接线文档风险 R2）。
+ */
+#define LINE1_PORT                                                       (GPIOB)
+#define LINE1_PIN                                               (DL_GPIO_PIN_17)
+#define LINE1_IOMUX                                              (IOMUX_PINCM43)
+#define LINE2_PORT                                                       (GPIOB)
+#define LINE2_PIN                                               (DL_GPIO_PIN_18)
+#define LINE2_IOMUX                                              (IOMUX_PINCM44)
+#define LINE3_PORT                                                       (GPIOB)
+#define LINE3_PIN                                               (DL_GPIO_PIN_19)
+#define LINE3_IOMUX                                              (IOMUX_PINCM45)
+#define LINE4_PORT                                                       (GPIOB)
+#define LINE4_PIN                                               (DL_GPIO_PIN_20)
+#define LINE4_IOMUX                                              (IOMUX_PINCM48)
+#define LINE5_PORT                                                       (GPIOB)
+#define LINE5_PIN                                               (DL_GPIO_PIN_21)
+#define LINE5_IOMUX                                              (IOMUX_PINCM49)
+#define LINE6_PORT                                                       (GPIOB)
+#define LINE6_PIN                                               (DL_GPIO_PIN_22)
+#define LINE6_IOMUX                                              (IOMUX_PINCM50)
+#define LINE7_PORT                                                       (GPIOB)
+#define LINE7_PIN                                               (DL_GPIO_PIN_23)
+#define LINE7_IOMUX                                              (IOMUX_PINCM51)
+
+/*
+ * 继电器 RELAY（v1.1，接口 P1-3）：PA24，普通 GPIO 推挽输出。
+ * 驱动大电流电磁铁负载；默认约定高电平=吸合(通)、低电平=断开(停)，上电默认断开。
+ * ⚠️ 接线文档风险 R7：上电前高阻可能误吸合，硬件已建议加 10kΩ 下拉 + 100Ω 串联限流；
+ * 代码侧亦用内部下拉 + 上电清零，把误吸合概率再压一层。PA24 不在核心板慎用引脚列表内。
+ */
+#define RELAY_PORT                                                       (GPIOA)
+#define RELAY_PIN                                               (DL_GPIO_PIN_24)
+#define RELAY_IOMUX                                              (IOMUX_PINCM54)
+
 /* clang-format on */
 
 void SYSCFG_DL_init(void);

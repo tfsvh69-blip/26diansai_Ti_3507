@@ -8,6 +8,7 @@
 #include "app_led_task.h"
 #include "app_motor_test_task.h"
 #include "app_periph_test_task.h"
+#include "app_relay_test_task.h"
 #include "app_robot_core.h"
 #include "app_servo_test_task.h"
 #include "app_uart_test_task.h"
@@ -86,6 +87,11 @@ void App_Init(void)
 #if (APP_FEATURE_MOTOR != 0U)
     /* 电机测试：KEY1/KEY2 让 4 个电机一起正/反转 2 圈，验证四路步进电机是否都正常。 */
     AppMotorTestTask_Init();
+#endif
+
+#if (APP_FEATURE_RELAY != 0U)
+    /* 继电器测试：每 2 秒切换一次继电器(PA24)吸合/断开，验证继电器及其电磁铁负载。 */
+    AppRelayTestTask_Init();
 #endif
 
 #if (APP_FEATURE_LASER != 0U)

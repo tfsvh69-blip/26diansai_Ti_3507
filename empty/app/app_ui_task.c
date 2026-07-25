@@ -12,6 +12,8 @@
 #include "app_robot_core.h"
 #include "ball_parser.h"
 #include "bsp_key.h"
+#include "bsp_line.h"
+#include "bsp_relay.h"
 #include "laser_ld14.h"
 
 #include "OLED.h"
@@ -51,19 +53,33 @@
 #define UI_MENU_STATUS_Y  (56)    /* 菜单态：底行传感器状态栏（Yaw + 激光距离） */
 
 /*
- * 右侧小球检测面板（利用菜单空出的右半屏）。启用 APP_FEATURE_BALL_VISION 时：
+ * 右半面板（利用菜单空出的右半屏）。小球检测面板 / 循迹面板 任一启用时：
  *   - 菜单文字与选中项高亮收窄到左半（宽 UI_MENU_LEFT_W），不侵入右侧面板；
- *   - 右半自 x=UI_BALL_X 起显示 "BALL" 头 + F/n/x/y 四行文字，字段区低频局部刷。
- * 关闭该功能时菜单恢复整行(128)高亮与整宽标题，右半留空。
+ *   - 右半画一条竖分隔线（UI_RIGHT_DIV_X），面板自 x=UI_RIGHT_X 起。
+ * 两块面板在右半分行错开：BALL 占第1~5行(y=0..39)，循迹占第6/7行(y=40/48)，互不重叠。
+ * 两者都关闭时菜单恢复整行(128)高亮与整宽标题，右半留空。
  */
+#if (APP_FEATURE_BALL_VISION != 0U) || (APP_FEATURE_LINE_TRACK != 0U)
+#define UI_MENU_LEFT_W    (60)     /* 菜单占左半宽度（右半让给面板） */
+#define UI_RIGHT_X        (66)     /* 右半面板左边界 x */
+#define UI_RIGHT_DIV_X    (63)     /* 左右分隔竖线 x */
+#else
+#define UI_MENU_LEFT_W    (128)    /* 无右半面板：菜单高亮整行 */
+#endif
+
 #if (APP_FEATURE_BALL_VISION != 0U)
-#define UI_MENU_LEFT_W    (60)     /* 菜单占左半宽度（右半让给球面板） */
-#define UI_BALL_X         (66)     /* 右侧球面板左边界 x */
+#define UI_BALL_X         (UI_RIGHT_X) /* 右侧球面板左边界 x */
 #define UI_BALL_W         (62)     /* 右侧球面板宽度（128-66） */
 #define UI_BALL_FIELD_Y   (8)      /* 字段区起始 y（F/n/x/y 四行） */
 #define UI_BALL_FIELD_H   (32)     /* 字段区高度：y=8..39，四行 */
-#else
-#define UI_MENU_LEFT_W    (128)    /* 未启用球面板：菜单高亮整行 */
+#endif
+
+#if (APP_FEATURE_LINE_TRACK != 0U)
+#define UI_LINE_X         (UI_RIGHT_X) /* 右侧循迹面板左边界 x */
+#define UI_LINE_W         (62)     /* 循迹面板宽度（128-66） */
+#define UI_LINE_CH_Y      (40)     /* 第6行：通道号 "1234567" */
+#define UI_LINE_ST_Y      (48)     /* 第7行：状态   "0011100" */
+#define UI_LINE_H         (16)     /* 两行高度 y=40..55 */
 #endif
 
 /* 运行态布局：标题(0)、大字题号(16)、题名(40)、状态栏(48)、返回提示(56)。 */
@@ -108,17 +124,35 @@ static uint32_t Ui_U32ToStr(char *dst, uint32_t value)
 }
 
 /*
- * 组装传感器状态栏文本到 buf（需 >= 24 字节）："Y:<yaw> D:<dist>mm"，用于一眼判断
- * 陀螺仪与激光测距是否在工作：
+ * 组装传感器状态栏文本到 buf（需 >= 32 字节）："[R:ON/OFF ]Y:<yaw> D:<dist>mm"，
+ * 用于一眼判断继电器/陀螺仪/激光测距的当前状态：
+ *   R    继电器逻辑状态 ON/OFF（启用 APP_FEATURE_RELAY 时才有）——放最前，保证
+ *        一定完整显示，便于对照继电器实际动作核对触发极性；
  *   Yaw  IMU 就绪显示带 1 位小数的度数(如 -179.9)，未就绪显示 "---"；
  *   Dist 激光收到有效帧显示 mm 数，否则显示 "---"。
- * 数据都取线程安全快照（Yaw 走 IMU 任务 getter，距离走 laser 模块 GetLatest）。
+ * 数据都取线程安全快照（继电器走 BspRelay_IsOn，Yaw 走 IMU 任务 getter，距离走 laser GetLatest）。
  */
 static void Ui_FormatStatus(char *buf)
 {
     uint32_t        idx = 0U;
     int16_t         yawCd = 0;
     LaserLd14Data_t laser;
+
+#if (APP_FEATURE_RELAY != 0U)
+    /* 继电器逻辑状态放最前，确保不被后面 Yaw/距离长度挤出屏幕。 */
+    buf[idx++] = 'R';
+    buf[idx++] = ':';
+    if (BspRelay_IsOn()) {
+        buf[idx++] = 'O';
+        buf[idx++] = 'N';
+        buf[idx++] = ' ';   /* 补一空格与 "OFF" 等宽，固定后面字段位置、避免左右跳动 */
+    } else {
+        buf[idx++] = 'O';
+        buf[idx++] = 'F';
+        buf[idx++] = 'F';
+    }
+    buf[idx++] = ' ';
+#endif
 
     buf[idx++] = 'Y';
     buf[idx++] = ':';
@@ -160,7 +194,7 @@ static void Ui_FormatStatus(char *buf)
  */
 static void Ui_DrawStatusBar(int16_t y)
 {
-    char buf[24];
+    char buf[32];
 
     Ui_FormatStatus(buf);
     OLED_ClearArea(0, y, 128, UI_MENU_LINE_H);
@@ -230,6 +264,40 @@ static void Ui_DrawBallPanel(void)
 }
 #endif /* APP_FEATURE_BALL_VISION */
 
+#if (APP_FEATURE_LINE_TRACK != 0U)
+/*
+ * 绘制右半循迹两行（不做刷屏推送，交给调用方）：
+ *   第6行(y=40)：通道号 "1234567"（左=1号=小车左，右=7号=小车右）；
+ *   第7行(y=48)：对应状态 "0011100"，与上行逐位对齐，1=识别到线、0=未识别。
+ * 状态取 BspLine_ReadAll 位图：bit0=LINE1 放最左，bit6=LINE7 放最右，屏上左右即小车左右。
+ */
+static void Ui_DrawLineFields(void)
+{
+    uint8_t  bitmap = BspLine_ReadAll();
+    char     st[BSP_LINE_COUNT + 1U];
+    uint32_t i;
+
+    OLED_ShowString(UI_LINE_X, UI_LINE_CH_Y, "1234567", OLED_6X8);
+    for (i = 0U; i < (uint32_t)BSP_LINE_COUNT; i++) {
+        st[i] = (char)('0' + ((bitmap >> i) & 0x1U));
+    }
+    st[BSP_LINE_COUNT] = '\0';
+    OLED_ShowString(UI_LINE_X, UI_LINE_ST_Y, st, OLED_6X8);
+}
+
+/*
+ * 局部刷新右侧循迹两行：清区 → 重画通道号+状态 → 只推送该矩形。
+ * 与底部状态栏同频（APP_UI_STATUS_DIVIDER），面积小、频率低，几乎不占 CPU，
+ * 不打断按键响应，也不动菜单左半与右半的 BALL 区。仅菜单态调用。
+ */
+static void Ui_DrawLinePanel(void)
+{
+    OLED_ClearArea(UI_LINE_X, UI_LINE_CH_Y, UI_LINE_W, UI_LINE_H);
+    Ui_DrawLineFields();
+    OLED_UpdateArea(UI_LINE_X, UI_LINE_CH_Y, UI_LINE_W, UI_LINE_H);
+}
+#endif /* APP_FEATURE_LINE_TRACK */
+
 /* 根据当前选中项调整可见窗口首项，保证高亮项始终在屏内。 */
 static void Ui_MenuScroll(void)
 {
@@ -268,16 +336,23 @@ static void Ui_DrawMenu(void)
         }
     }
 
+#if (APP_FEATURE_BALL_VISION != 0U) || (APP_FEATURE_LINE_TRACK != 0U)
+    /* 右半竖分隔线（BALL 与循迹面板共用）。 */
+    OLED_DrawLine(UI_RIGHT_DIV_X, UI_MENU_FIRST_Y, UI_RIGHT_DIV_X, 54);
+#endif
 #if (APP_FEATURE_BALL_VISION != 0U)
-    /* 右侧球面板：竖分隔线 + "BALL" 头 + 字段（字段之后由主循环低频局部刷更新）。 */
-    OLED_DrawLine(UI_BALL_X - 3, UI_MENU_FIRST_Y, UI_BALL_X - 3, 54);
+    /* 右半上部球面板："BALL" 头 + 字段（字段之后由主循环低频局部刷更新）。 */
     OLED_ShowString(UI_BALL_X, UI_MENU_TITLE_Y, "BALL", OLED_6X8);
     Ui_DrawBallFields();
+#endif
+#if (APP_FEATURE_LINE_TRACK != 0U)
+    /* 右半下部(第6/7行)循迹面板：通道号 + 状态（之后由主循环低频局部刷更新）。 */
+    Ui_DrawLineFields();
 #endif
 
     /* 底行：传感器状态栏（Yaw + 激光距离）。整屏刷时写入当前值，之后由主循环低频局部刷更新。 */
     {
-        char buf[24];
+        char buf[32];
         Ui_FormatStatus(buf);
         OLED_ShowString(0, UI_MENU_STATUS_Y, buf, OLED_6X8);
     }
@@ -299,7 +374,7 @@ static void Ui_DrawRun(void)
 
     /* 传感器状态栏（写入当前值，之后由主循环低频局部刷更新）。 */
     {
-        char buf[24];
+        char buf[32];
         Ui_FormatStatus(buf);
         OLED_ShowString(0, UI_RUN_STATUS_Y, buf, OLED_6X8);
     }
@@ -397,6 +472,12 @@ static void AppUiTask_Entry(void *argument)
             /* 右侧球面板只在菜单态显示/刷新（运行态整屏归题目自身用）。 */
             if (state == UI_STATE_MENU) {
                 Ui_DrawBallPanel();
+            }
+#endif
+#if (APP_FEATURE_LINE_TRACK != 0U)
+            /* 右侧循迹面板同样只在菜单态刷新。 */
+            if (state == UI_STATE_MENU) {
+                Ui_DrawLinePanel();
             }
 #endif
         }

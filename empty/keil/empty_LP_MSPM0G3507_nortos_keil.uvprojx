@@ -564,6 +564,16 @@
               <FilePath>..\app\app_motor_test_task.h</FilePath>
             </File>
             <File>
+              <FileName>app_relay_test_task.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\app\app_relay_test_task.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_relay_test_task.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\app\app_relay_test_task.h</FilePath>
+            </File>
+            <File>
               <FileName>app_periph_test_task.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\app\app_periph_test_task.c</FilePath>
@@ -702,6 +712,16 @@
               <FileName>bsp_key.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\bsp\bsp_key.c</FilePath>
+            </File>
+            <File>
+              <FileName>bsp_line.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\bsp\bsp_line.c</FilePath>
+            </File>
+            <File>
+              <FileName>bsp_relay.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\bsp\bsp_relay.c</FilePath>
             </File>
             <File>
               <FileName>bsp_buzzer.c</FileName>
