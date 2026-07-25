@@ -16,9 +16,8 @@ extern "C" {
  * 三个字段有语义关联（running/方向/圈数应一致），写入和整帧读取都用
  * taskENTER_CRITICAL 包裹取快照，避免读到"running 已更新但方向/圈数还是旧值"的撕裂帧。
  *
- * 字段语义随控制模式变化：
- *   位置模式（MoveSteps）：running=运动中，dirForward=方向，param=本次圈数
- *   连续模式（RunContinuous）：running=运动中，dirForward=方向，param=当前速度档(1..5)
+ * 字段语义（v1.9 电机测试任务用四路独立接口，取电机1为代表发布）：
+ *   running=四路中电机1是否在动，dirForward=方向，param=本次圈数
  *   停止时：running=false，param 无意义
  */
 typedef struct {

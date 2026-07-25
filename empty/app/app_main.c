@@ -12,6 +12,7 @@
 #include "app_servo_test_task.h"
 #include "app_uart_test_task.h"
 #include "app_ui_task.h"
+#include "ball_parser.h"
 #include "bsp_uart.h"
 #include "laser_ld14.h"
 
@@ -95,6 +96,16 @@ void App_Init(void)
      */
     LaserLd14_Reset();
     BspUart2_Init(LaserLd14_FeedByte);
+#endif
+
+#if (APP_FEATURE_BALL_VISION != 0U)
+    /*
+     * 上位机小球检测报文（UART0/PA10/PA11，115200 8N1）：不是任务，走 UART0 RX 中断，
+     * 逐字节喂给 BallParser 解析 $BALL 帧；解析结果由 UIMENU 任务在 OLED 右侧文字面板显示。
+     * 先复位解析器，再注册回调并放开中断。与 UART_ECHO 轮询自检互斥（见 app_config.h 护栏）。
+     */
+    BallParser_Reset();
+    BspUart0_SetRxHandler(BallParser_FeedByte);
 #endif
 
 #if (APP_FEATURE_IMU != 0U)

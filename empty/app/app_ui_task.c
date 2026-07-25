@@ -10,6 +10,7 @@
 #include "app_config.h"
 #include "app_imu_uart_task.h"
 #include "app_robot_core.h"
+#include "ball_parser.h"
 #include "bsp_key.h"
 #include "laser_ld14.h"
 
@@ -48,6 +49,22 @@
 #define UI_MENU_LINE_H    (8)     /* 行高（6x8 字体） */
 #define UI_MENU_VISIBLE   (6U)    /* 一屏最多显示 6 项（Y=8..48），多于此自动滚动 */
 #define UI_MENU_STATUS_Y  (56)    /* 菜单态：底行传感器状态栏（Yaw + 激光距离） */
+
+/*
+ * 右侧小球检测面板（利用菜单空出的右半屏）。启用 APP_FEATURE_BALL_VISION 时：
+ *   - 菜单文字与选中项高亮收窄到左半（宽 UI_MENU_LEFT_W），不侵入右侧面板；
+ *   - 右半自 x=UI_BALL_X 起显示 "BALL" 头 + F/n/x/y 四行文字，字段区低频局部刷。
+ * 关闭该功能时菜单恢复整行(128)高亮与整宽标题，右半留空。
+ */
+#if (APP_FEATURE_BALL_VISION != 0U)
+#define UI_MENU_LEFT_W    (60)     /* 菜单占左半宽度（右半让给球面板） */
+#define UI_BALL_X         (66)     /* 右侧球面板左边界 x */
+#define UI_BALL_W         (62)     /* 右侧球面板宽度（128-66） */
+#define UI_BALL_FIELD_Y   (8)      /* 字段区起始 y（F/n/x/y 四行） */
+#define UI_BALL_FIELD_H   (32)     /* 字段区高度：y=8..39，四行 */
+#else
+#define UI_MENU_LEFT_W    (128)    /* 未启用球面板：菜单高亮整行 */
+#endif
 
 /* 运行态布局：标题(0)、大字题号(16)、题名(40)、状态栏(48)、返回提示(56)。 */
 #define UI_RUN_NAME_Y     (40)
@@ -151,6 +168,68 @@ static void Ui_DrawStatusBar(int16_t y)
     OLED_UpdateArea(0, y, 128, UI_MENU_LINE_H);
 }
 
+#if (APP_FEATURE_BALL_VISION != 0U)
+/*
+ * 绘制右侧球检测字段 F/n/x/y（不做刷屏推送，交给调用方）。
+ * 数据取 BallParser 线程安全快照：
+ *   valid=false（还没收到任何合法帧）时四行全显 "?/---"；
+ *   found=0（收到帧但没检测到球）时坐标显 "---"，n 仍显真实计数（可能为 0）。
+ */
+static void Ui_DrawBallFields(void)
+{
+    BallData_t ball;
+    char       buf[12];
+    uint32_t   n;
+    bool       valid = BallParser_GetLatest(&ball);
+
+    /* 行1：检测标志。 */
+    OLED_ShowString(UI_BALL_X, UI_BALL_FIELD_Y,
+        valid ? (ball.found ? "F:YES" : "F:no ") : "F: ? ", OLED_6X8);
+
+    /* 行2：球总数 n。 */
+    buf[0] = 'n'; buf[1] = ':';
+    if (valid) {
+        n = 2U + Ui_U32ToStr(&buf[2], (uint32_t)ball.count);
+    } else {
+        buf[2] = '-'; buf[3] = '-'; buf[4] = '-'; n = 5U;
+    }
+    buf[n] = '\0';
+    OLED_ShowString(UI_BALL_X, UI_BALL_FIELD_Y + 8, buf, OLED_6X8);
+
+    /* 行3：主目标 x 像素（未检测到球时坐标无意义，显 ---）。 */
+    buf[0] = 'x'; buf[1] = ':';
+    if (valid && ball.found) {
+        n = 2U + Ui_U32ToStr(&buf[2], (uint32_t)ball.x);
+    } else {
+        buf[2] = '-'; buf[3] = '-'; buf[4] = '-'; n = 5U;
+    }
+    buf[n] = '\0';
+    OLED_ShowString(UI_BALL_X, UI_BALL_FIELD_Y + 16, buf, OLED_6X8);
+
+    /* 行4：主目标 y 像素。 */
+    buf[0] = 'y'; buf[1] = ':';
+    if (valid && ball.found) {
+        n = 2U + Ui_U32ToStr(&buf[2], (uint32_t)ball.y);
+    } else {
+        buf[2] = '-'; buf[3] = '-'; buf[4] = '-'; n = 5U;
+    }
+    buf[n] = '\0';
+    OLED_ShowString(UI_BALL_X, UI_BALL_FIELD_Y + 24, buf, OLED_6X8);
+}
+
+/*
+ * 局部刷新右侧球字段区：清区 → 重画 F/n/x/y → 只推送该矩形。
+ * 与底部状态栏同频（APP_UI_STATUS_DIVIDER），面积小、频率低，几乎不占 CPU，
+ * 不打断按键响应，也不动菜单左半与 "BALL" 头。仅菜单态调用。
+ */
+static void Ui_DrawBallPanel(void)
+{
+    OLED_ClearArea(UI_BALL_X, UI_BALL_FIELD_Y, UI_BALL_W, UI_BALL_FIELD_H);
+    Ui_DrawBallFields();
+    OLED_UpdateArea(UI_BALL_X, UI_BALL_FIELD_Y, UI_BALL_W, UI_BALL_FIELD_H);
+}
+#endif /* APP_FEATURE_BALL_VISION */
+
 /* 根据当前选中项调整可见窗口首项，保证高亮项始终在屏内。 */
 static void Ui_MenuScroll(void)
 {
@@ -167,7 +246,12 @@ static void Ui_DrawMenu(void)
     uint32_t i;
 
     OLED_Clear();
+#if (APP_FEATURE_BALL_VISION != 0U)
+    /* 标题收窄到左半，给右侧球面板让位。 */
+    OLED_ShowString(0, UI_MENU_TITLE_Y, "TASKS", OLED_6X8);
+#else
     OLED_ShowString(13, UI_MENU_TITLE_Y, "== SELECT TASK ==", OLED_6X8);
+#endif
 
     for (i = 0U; i < UI_MENU_VISIBLE && (s_menuTop + i) < RobotCore_GetTaskCount(); i++) {
         uint32_t idx = s_menuTop + i;
@@ -178,11 +262,18 @@ static void Ui_DrawMenu(void)
         OLED_ShowString(6, y, ".", OLED_6X8);
         OLED_ShowString(12, y, (char *)RobotCore_GetTaskName(idx), OLED_6X8);
 
-        /* 当前选中项整行反色高亮。 */
+        /* 当前选中项高亮：启用球面板时只反色左半(UI_MENU_LEFT_W)，不侵入右侧面板。 */
         if (idx == s_sel) {
-            OLED_ReverseArea(0, y, 128, UI_MENU_LINE_H);
+            OLED_ReverseArea(0, y, UI_MENU_LEFT_W, UI_MENU_LINE_H);
         }
     }
+
+#if (APP_FEATURE_BALL_VISION != 0U)
+    /* 右侧球面板：竖分隔线 + "BALL" 头 + 字段（字段之后由主循环低频局部刷更新）。 */
+    OLED_DrawLine(UI_BALL_X - 3, UI_MENU_FIRST_Y, UI_BALL_X - 3, 54);
+    OLED_ShowString(UI_BALL_X, UI_MENU_TITLE_Y, "BALL", OLED_6X8);
+    Ui_DrawBallFields();
+#endif
 
     /* 底行：传感器状态栏（Yaw + 激光距离）。整屏刷时写入当前值，之后由主循环低频局部刷更新。 */
     {
@@ -302,6 +393,12 @@ static void AppUiTask_Entry(void *argument)
             statusTick = 0U;
             Ui_DrawStatusBar((state == UI_STATE_MENU) ? UI_MENU_STATUS_Y
                                                       : UI_RUN_STATUS_Y);
+#if (APP_FEATURE_BALL_VISION != 0U)
+            /* 右侧球面板只在菜单态显示/刷新（运行态整屏归题目自身用）。 */
+            if (state == UI_STATE_MENU) {
+                Ui_DrawBallPanel();
+            }
+#endif
         }
 
         vTaskDelayUntil(&lastWakeTime, APP_UI_POLL_TICKS);

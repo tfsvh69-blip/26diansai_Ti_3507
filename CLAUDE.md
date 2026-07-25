@@ -24,7 +24,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | 目录 | 职责 |
 |---|---|
-| `empty/app/` | FreeRTOS 任务创建、业务流程、控制状态机；`app_robot_core` 为 6 道题目 dispatch 模块 |
+| `empty/app/` | FreeRTOS 任务创建、业务流程、控制状态机；`app_robot_core` 为 6 道题目 dispatch 登记模块 |
+| `empty/app/tasks/` | **各赛题业务代码**：第 N 题 = `taskN.c`，每题一套状态机骨架（`OnEnter/OnLoop/OnExit`）；`app_tasks.h` 声明钩子并含开发说明 |
 | `empty/bsp/` | 板级外设初始化、GPIO、UART、延时硬件封装 |
 | `empty/bsp/board/` | `ti_msp_dl_config.c/h` 手写板级 DriverLib 初始化（不由 SysConfig 生成） |
 | `empty/module/` | 可复用模块（IMU、OLED） |
@@ -49,18 +50,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 |---|---|---|---|
 | `LED1` | `app/app_led_task.c` | 300 ms | LED1(PB25) 心跳灯，用于判断 FreeRTOS 是否正常调度 |
 | `UART0TX` | `app/app_uart_test_task.c` | 10 ms 轮询 | UART0 接收回显，收到非换行字符返回 `UART RX OK` |
-| `UIMENU` | `app/app_ui_task.c` | 30 ms 轮询 | **OLED 题目菜单 UI**：4 键(K1上/K2下/K3确认/K4返回)选题并进入运行界面，**独占 OLED 与 KEY1~4**；每题预留 `onEnter/onLoop/onExit` 钩子（当前 6 个占位题目，钩子留空待填） |
+| `UIMENU` | `app/app_ui_task.c` | 30 ms 轮询 | **OLED 题目菜单 UI**：4 键(K1上/K2下/K3确认/K4返回)选题并进入运行界面，**独占 OLED 与 KEY1~4**；题目业务委托 `app_robot_core` → `app/tasks/taskN.c` 的 `OnEnter/OnLoop/OnExit`（task1 示例、task2~6 骨架待填） |
 | `IMU100Hz` | `app/app_imu_uart_task.c` | 10 ms | 读取 ATK-MS6DSV 姿态 + 追加激光测距1(D1)，按 5Hz 整行输出 Roll/Pitch/Yaw/加减速度/D1 |
-| `MOTORTEST` | `app/app_motor_test_task.c` | 20 ms 轮询 | **【默认禁用】** KEY1/KEY2 让 **4 个电机一起**正/反转 2 圈测试（按键已让给 UIMENU） |
+| `MOTORTEST` | `app/app_motor_test_task.c` | 20 ms 轮询 | **【默认禁用】** KEY1/KEY2 让 4 个电机（各自独立接口同时下发）正/反转 2 圈测试（按键已让给 UIMENU） |
 | `SERVOSWEEP` | `app/app_servo_test_task.c` | 20 ms | **【默认禁用】4 个舵机各自独立错相摆动**（800~2200us，无按键）；单控用 `BspServo_SetPulseUs(id,us)` |
 | `PERIPH` | `app/app_periph_test_task.c` | 500 ms | **【默认禁用】** OLED 已交给 UIMENU（互斥防抢屏）；原为外设验证：OLED/LED2/LED3/蜂鸣器 |
 
 > 激光测距1（UART2）不是任务，而是 **UART2 RX 中断**逐字节喂 `module/laser` 的 LD14 解析器；距离由 `IMU100Hz` 任务读取并随整行输出。
-> 题目菜单 UI 见 [empty/docs/FREERTOS_TASKS.md](empty/docs/FREERTOS_TASKS.md) 的「OLED 题目菜单 UI」小节；题目业务逻辑逐题填 `app_ui_task.c` 的 `s_taskList[]` 钩子。OLED 当前只能显示 ASCII（无中文字库）。
+> 小球检测（UART0）同样不是任务，而是 **UART0 RX 中断**逐字节喂 `module/vision` 的 `$BALL` 解析器（上位机→下位机，NMEA+XOR）；结果由 `UIMENU` 读取显示在 OLED 右侧文字面板。见 [empty/docs/MESSAGE_LIST.md](empty/docs/MESSAGE_LIST.md) 的 `$BALL` 报文小节。
+> 题目菜单 UI 见 [empty/docs/FREERTOS_TASKS.md](empty/docs/FREERTOS_TASKS.md) 的「OLED 题目菜单 UI」小节；**题目业务逻辑逐题填 [empty/app/tasks/](empty/app/tasks/) 的 `taskN.c`**（第 N 题 = `taskN.c`），题名/题数登记在 `app_robot_core.c` 的 `s_robotTasks[]`。四路步进电机为**各自独立**驱动（`bsp_motor.h`，RPM 单位、带符号定方向）。OLED 当前只能显示 ASCII（无中文字库）。
 
 ### 功能总开关（按需启用外设）
 
-[empty/common/app_config.h](empty/common/app_config.h) 顶部有一组 `APP_FEATURE_*`（1=启用/0=禁用），`App_Init` 用它门控各任务创建。用开发板时把不需要的外设置 0 即可（不创建任务、不占 CPU、不刷串口；板级硬件初始化仍保留）：`APP_FEATURE_LED_HEARTBEAT / UART_ECHO / UI_MENU / PERIPH_OLED / SERVO / MOTOR / IMU / IMU_UART_LOG / LASER`。**当前默认**：`UI_MENU=1`（题目菜单）；因 UI 独占 OLED 与按键，`PERIPH_OLED / SERVO / MOTOR` 默认置 0。`UART_ECHO=0`（关接收自检）、`IMU_UART_LOG=0`（IMU 不打印串口遥测——串口彻底静默；但 IMU 读取 + Yaw 快照照常运行供 OLED 状态栏）。调试时把这两个改回 1 即可恢复串口输出。
+[empty/common/app_config.h](empty/common/app_config.h) 顶部有一组 `APP_FEATURE_*`（1=启用/0=禁用），`App_Init` 用它门控各任务创建。用开发板时把不需要的外设置 0 即可（不创建任务、不占 CPU、不刷串口；板级硬件初始化仍保留）：`APP_FEATURE_LED_HEARTBEAT / UART_ECHO / UI_MENU / PERIPH_OLED / SERVO / MOTOR / IMU / IMU_UART_LOG / LASER / BALL_VISION`。**当前默认**：`UI_MENU=1`（题目菜单）；因 UI 独占 OLED 与按键，`PERIPH_OLED / SERVO / MOTOR` 默认置 0。`UART_ECHO=0`（关接收自检）、`IMU_UART_LOG=0`（IMU 不打印串口遥测——串口彻底静默；但 IMU 读取 + Yaw 快照照常运行供 OLED 状态栏）。调试时把这两个改回 1 即可恢复串口输出。`BALL_VISION=1`（UART0 RX 中断解析上位机 `$BALL` 报文，OLED 右侧文字面板显示）——它与 `UART_ECHO` 争用 UART0 RX，二者互斥（同时置 1 编译期 `#error` 拦截）。
 
 修改或新增任务后必须同步更新 [empty/docs/FREERTOS_TASKS.md](empty/docs/FREERTOS_TASKS.md)。
 
@@ -75,10 +77,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | OLED SCL | PB9 | 板载 OLED GPIO 软件 I2C |
 | OLED SDA | PB8 | 板载 OLED GPIO 软件 I2C |
 | 舵机1~4 PWM | PA8/PA9/PB4/PA12 | TIMA0_CCP0~3，50Hz PWM |
-| 电机1 STEP/DIR | PB10/PB11 | TIMG0_CCP0 / GPIO，低=正向 |
-| 电机2 STEP/DIR | PB6/PB7 | TIMG8_CCP0 / GPIO（跟随电机1） |
-| 电机3 STEP/DIR | PB13/PB14 | TIMG12_CCP0 / GPIO（跟随电机1） |
-| 电机4 STEP/DIR | PB26/PB27 | TIMG6_CCP0 / GPIO（跟随电机1） |
+| 电机1 STEP/DIR | PB10/PB11 | TIMG0_CCP0 / GPIO，低=正向（各路独立） |
+| 电机2 STEP/DIR | PB6/PB7 | TIMG8_CCP0 / GPIO（独立调速调向） |
+| 电机3 STEP/DIR | PB13/PB14 | TIMG12_CCP0 / GPIO（独立调速调向） |
+| 电机4 STEP/DIR | PB26/PB27 | TIMG6_CCP0 / GPIO（独立调速调向） |
 | TMC 使能 ENN | PA13 | 低有效，四路共用 |
 | TMC 细分 MS1 | PB0 | 四路共用细分 |
 | TMC 细分 MS2 | PB1 | 四路共用细分 |

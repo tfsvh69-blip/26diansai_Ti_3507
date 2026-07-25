@@ -33,11 +33,11 @@
 | OLED | SDA | PB8 | `OLED_PIN_SDA_PIN` | `IOMUX_PINCM25` | 板载 OLED 软件 I2C SDA，推挽输出 | 约定 SCL=PB9/SDA=PB8，若显示异常可对调 |
 | 电机1 | M1_STEP | PB10 | `MOTOR1_STEP_PIN` | `IOMUX_PINCM27` / `IOMUX_PINCM27_PF_TIMG0_CCP0`，U2.49 | TIMG0_CCP0 硬件定时器输出，连续旋转+梯形加减速可变频方波（L1≈6.4kHz ~ L5≈32kHz）；TIMG0 ZERO 中断在线调速 | 运行期间 PB10 有连续方波；停止时减速到起步速度后定时器停止 |
 | 电机1 | M1_DIR | PB11 | `MOTOR1_DIR_PIN` | `IOMUX_PINCM28`，U2.47 | GPIO 输出，低=正向，高=反向 | 方向不对就翻转该电平或调线序 |
-| 电机2 | M2_STEP | PB6 | `MOTOR2_STEP_PIN` | `IOMUX_PINCM23` / `IOMUX_PINCM23_PF_TIMG8_CCP0` | TIMG8_CCP0 方波，跟随电机1同频 | 四电机测试时应与 M1 同步出脉冲 |
-| 电机2 | M2_DIR | PB7 | `MOTOR2_DIR_PIN` | `IOMUX_PINCM24` | GPIO 输出，低=正向 | 四路 DIR 由 `BspMotorAll_SetDir` 一起设 |
-| 电机3 | M3_STEP | PB13 | `MOTOR3_STEP_PIN` | `IOMUX_PINCM30` / `IOMUX_PINCM30_PF_TIMG12_CCP0` | TIMG12_CCP0(32位) 方波，跟随电机1 | — |
+| 电机2 | M2_STEP | PB6 | `MOTOR2_STEP_PIN` | `IOMUX_PINCM23` / `IOMUX_PINCM23_PF_TIMG8_CCP0` | TIMG8_CCP0 方波，独立调速调向（TIMG8 ZERO 中断） | 四路各自独立，可不同速/向/距离 |
+| 电机2 | M2_DIR | PB7 | `MOTOR2_DIR_PIN` | `IOMUX_PINCM24` | GPIO 输出，低=正向 | 由 `BspMotor_SetSpeedRpm/MoveSteps` 按符号自动设 |
+| 电机3 | M3_STEP | PB13 | `MOTOR3_STEP_PIN` | `IOMUX_PINCM30` / `IOMUX_PINCM30_PF_TIMG12_CCP0` | TIMG12_CCP0(32位) 方波，独立调速调向 | — |
 | 电机3 | M3_DIR | PB14 | `MOTOR3_DIR_PIN` | `IOMUX_PINCM31` | GPIO 输出，低=正向 | — |
-| 电机4 | M4_STEP | PB26 | `MOTOR4_STEP_PIN` | `IOMUX_PINCM57` / `IOMUX_PINCM57_PF_TIMG6_CCP0` | TIMG6_CCP0 方波，跟随电机1 | — |
+| 电机4 | M4_STEP | PB26 | `MOTOR4_STEP_PIN` | `IOMUX_PINCM57` / `IOMUX_PINCM57_PF_TIMG6_CCP0` | TIMG6_CCP0 方波，独立调速调向 | — |
 | 电机4 | M4_DIR | PB27 | `MOTOR4_DIR_PIN` | `IOMUX_PINCM58` | GPIO 输出，低=正向 | — |
 | 舵机1~4 | SERVO1~4 PWM | PA8/PA9/PB4/PA12 | `SERVO1..4_PIN` | TIMA0_CCP0~3，PINCM19/20/17/34 | 50Hz PWM，脉宽经 bsp_servo 极性补偿 | KEY3/KEY4 测试四路一起动 |
 | TMC2209 | TMC_ENN | PA13 | `TMC_ENN_PIN` | `IOMUX_PINCM35`，U2.30 | GPIO 输出，低有效，四路驱动共用使能 | 高电平电机失力；测试任务会拉低使能 |
@@ -48,7 +48,7 @@
 | 按键3 | KEY3 | PA30 | `KEY3_PIN` | `IOMUX_PINCM5`，U2.53 | GPIO 输入，内部上拉；一端接 GND，按下为低 | 电机1 **加速一档**（L1→L5） |
 | 按键4 | KEY4 | PA29 | `KEY4_PIN` | `IOMUX_PINCM4` | GPIO 输入，内部上拉；一端接 GND，按下为低 | 电机1 **减速一档**（L5→L1） |
 | UART0 | TX | PA10 | `GPIO_UART_0_TX_PIN` | `IOMUX_PINCM21` / `IOMUX_PINCM21_PF_UART0_TX` | UART0 发送，MFCLK/115200 8N1；PA10 属于核心板特殊功能风险引脚，已按用户确认使用 | 串口助手应收到启动提示、IMU 输出或 `UART RX OK` 回显 |
-| UART0 | RX | PA11 | `GPIO_UART_0_RX_PIN` | `IOMUX_PINCM22` / `IOMUX_PINCM22_PF_UART0_RX` | UART0 接收，用于接收串口助手发来的命令；PA11 属于核心板特殊功能风险引脚 | 发送任意非换行字符后回显 `UART RX OK` |
+| UART0 | RX | PA11 | `GPIO_UART_0_RX_PIN` | `IOMUX_PINCM22` / `IOMUX_PINCM22_PF_UART0_RX` | UART0 接收：**当前接上位机(视觉主机)TX，RX 中断解析 `$BALL` 小球检测报文**（`APP_FEATURE_BALL_VISION`）；PA11 属于核心板特殊功能风险引脚 | 收到 `$BALL` 帧后 OLED 右侧面板显示 found/n/x/y；调试回显需先关 BALL、开 `APP_FEATURE_UART_ECHO` |
 | 激光测距1 | UART2 TX(MCU) | PB15 | `GPIO_UART_2_TX_PIN` | `IOMUX_PINCM32` / `IOMUX_PINCM32_PF_UART2_TX`，v1.1 排针 H21 | UART2 发送，MFCLK/230400 8N1；接激光模块 RX（本模块只收不发，此脚一般不用） | — |
 | 激光测距1 | UART2 RX(MCU) | PB16 | `GPIO_UART_2_RX_PIN` | `IOMUX_PINCM33` / `IOMUX_PINCM33_PF_UART2_RX`，v1.1 排针 H21 | UART2 接收，接激光模块 TX；RX 中断逐字节喂 `LaserLd14` 解析器 | 串口每行 `D1=<mm>mm`；一直 `D1=---` 见下方排查 |
 | ATK-MS6DSV | IMU_SCL | PB2 | `IMU_I2C_SCL_PIN` | `IOMUX_PINCM15` / `IOMUX_PINCM15_PF_I2C1_SCL`，U2.15 | **GPIO 软件 I2C SCL**（开漏模拟）；扩展板已焊 4.7k 上拉到 3.3V | 串口应输出 `IMU INIT OK`，否则优先查 SCL 是否接到 B02 |
@@ -72,9 +72,9 @@
 
 - 步进驱动 TMC2209：四路 STEP 各占独立定时器（M1=TIMG0/PB10、M2=TIMG8/PB6、M3=TIMG12/PB13、M4=TIMG6/PB26），四路 DIR=PB11/PB7/PB14/PB27；ENN=PA13(低有效)、MS1=PB0/MS2=PB1 四路共用。
 - 上电默认安全状态：ENN 拉高禁用、四路 STEP 停止、四路 DIR 正向、MS1=0/MS2=0；运行前由任务设为 MS1=1/MS2=0(1/32 细分)。
-- **电机测试任务 `MOTORTEST`**（20ms 轮询 KEY1/KEY2，移动期间忽略按键）：
-  - **KEY1：4 电机一起正转 2 圈**；**KEY2：4 电机一起反转 2 圈**（1/32 细分，1 圈=6400 脉冲，巡航周期 500≈1.25 圈/秒）。
-  - 实现：`BspMotorAll_MoveSteps()` → 电机1(TIMG0)做梯形斜坡主控并计步，电机2/3/4 镜像同一周期跟随、同启同停，四电机同频同向"一起转"；走完自动一起减速停表。
+- **步进电机驱动 `bsp_motor.c`（v1.9 四路完全独立）**：每路各占独立定时器 + 各自 ZERO 中断做梯形斜坡与精确计步，可各自不同速度/方向/距离（小车差速/转弯前提）。对上 RPM 单位接口：`BspMotor_SetSpeedRpm(id,±rpm)` 连续转、`BspMotor_MoveSteps(id,±steps,rpm)` 定距，均非阻塞；`id`=`BSP_MOTOR_1..4`。1/32 细分下 1 圈=6400 脉冲、安全转速约 5~300 RPM。
+- **电机测试任务 `MOTORTEST`**（默认禁用，20ms 轮询 KEY1/KEY2，移动期间忽略按键）：
+  - **KEY1：四电机各自正转 2 圈**；**KEY2：各自反转 2 圈**（120 RPM）。用新独立接口对四路同时下发相同 `BspMotor_MoveSteps`，改成不同参数即可看出四路独立。
 - **舵机测试任务 `SERVOSWEEP`**（20ms，无按键）：
   - 4 舵机(PA8/PA9/PB4/PA12=TIMA0 CCP0/1/2/3)以**不同相位各自独立**在 **800~2200us** 间来回摆动，演示四路可完全独立控制；单独控制某路用 `BspServo_SetPulseUs(BSP_SERVO_x, us)`。
   - **两个坑（已修）**：① 脉宽只经 `BspServo_SetPulseUs()`（内部 `period-pulseUs` 极性补偿，勿绕过）；② 四路方向须**一次** `DL_Timer_setCCPDirection(TIMA0, CC0|CC1|CC2|CC3_OUTPUT)` 写全——该寄存器是整体覆盖，分 4 次调只有最后一次生效，会导致只有舵机4动、舵机1/2/3 信号线浮 0.3V。

@@ -20,6 +20,7 @@
 | `module/oled/` | OLED 显示驱动和字模数据 |
 | `module/imu/` | ATK-MS6DSV/LSM6DSV16X 初始化、SFLP 姿态读取和四元数转欧拉角 |
 | `module/laser/` | 激光测距1（LD14）串口协议解析器，纯软件、按字节喂入、可复用 |
+| `module/vision/` | 上位机小球检测报文 `$BALL`（NMEA+XOR）解析器，纯软件、按字节喂入、可复用 |
 | `docs/` | 项目上下文、任务表、接线表、AI 维护记录 |
 | `third_party/FreeRTOS/` | FreeRTOS 内核源码 |
 | `third_party/ti_driverlib/` | TI DriverLib 文件 |
@@ -39,9 +40,9 @@
 - LED：LED1=PB25(心跳灯，`LED1` 任务每 300ms 翻转)、LED2=PA7、LED3=PB12，均高电平点亮；LED2/LED3 由 `PERIPH` 外设测试任务翻转。
 - 蜂鸣器：PA15，有源蜂鸣器高电平响，普通 GPIO；由 `PERIPH` 任务做通断测试。
 - OLED：板载 0.96 寸 OLED，软件 I2C，SCL=PB9/SDA=PB8；`PERIPH` 任务刷屏显示调试测试数据。TMC 细分已改到 PB0/PB1，与 OLED 不再冲突。
-- 电机1~4（TMC2209 STEP/DIR）：STEP=PB10/PB6/PB13/PB26（TIMG0/TIMG8/TIMG12/TIMG6 各自 CCP0）、DIR=PB11/PB7/PB14/PB27，ENN=PA13(低有效,四路共用)、MS1=PB0/MS2=PB1(四路共用细分)。`MOTORTEST` 任务 KEY1/KEY2 让四电机一起正/反转测试；实现为"电机1 斜坡主控 + 电机2/3/4 镜像同频跟随"（只有 TIMG0 开中断）。
+- 电机1~4（TMC2209 STEP/DIR）：STEP=PB10/PB6/PB13/PB26（TIMG0/TIMG8/TIMG12/TIMG6 各自 CCP0）、DIR=PB11/PB7/PB14/PB27，ENN=PA13(低有效,四路共用)、MS1=PB0/MS2=PB1(四路共用细分)。**v1.9 起四路完全独立**：每路各开自己的 ZERO 中断做梯形斜坡+计步，可各自不同速度/方向/距离（小车差速/转弯前提）。对上 RPM 单位接口 `BspMotor_SetSpeedRpm(id,±rpm)` / `BspMotor_MoveSteps(id,±steps,rpm)`，见 `bsp_motor.h`。`MOTORTEST` 任务（默认禁用）用新接口对四路同时下发做验证。
 - 舵机1~4（TIMA0_CCP0~3 PWM）：SERVO=PA8/PA9/PB4/PA12，50Hz；`SERVOTEST` 任务 KEY3/KEY4 让四舵机一起在两位置切换测试。脉宽经 `bsp_servo` 极性补偿(period-pulseUs)，避开 EDGE_ALIGN 反相坑，勿绕过直接写定时器。
-- UART0：MFCLK 4MHz，115200 8N1，PA10=TX，PA11=RX。
+- UART0：MFCLK 4MHz，115200 8N1，PA10=TX，PA11=RX。当前 **PA11(RX) 接上位机(视觉主机)TX**，经 **UART0 RX 中断**逐字节喂 `module/vision` 解析上位机 `$BALL,found,x,y,n*CHK` 小球检测报文（约 17 帧/秒，已实测正常接收），结果由 `UIMENU` 显示在 OLED 右侧文字面板（开关 `APP_FEATURE_BALL_VISION`）。RX 中断与轮询自检 `APP_FEATURE_UART_ECHO` 互斥（编译期护栏）。
 - 激光测距1（UART2）：PB15=TX/PB16=RX，MFCLK 4MHz + 8x 过采样，230400 8N1；**RX 中断**逐字节喂 `module/laser` 的 LD14 解析器（无独立任务），距离由 `IMU100Hz` 任务在整行末尾追加 `D1=<mm>mm` 输出。波特率 230400 依参考工程推定，实物不符改 `UART_2_BAUD_RATE`。⚠️ 激光 TX 若 5V 而 PB16 非 5V 容忍，接前先量电平（风险 R2）。
 - PA10/PA11 属于核心板特殊功能风险引脚，本次已按用户确认用于 UART0。
 - 40MHz 晶振：PA5=HFXIN、PA6=HFXOUT，作 SYSPLL 参考锁定 80MHz 主频（详见接线表“系统时钟”节）。
@@ -61,7 +62,8 @@
 | 2 | **OLED 局部刷新**（`PERIPH`→`OLED_UpdateArea(0,0,128,24)` 只推前 3 页 ~384 字节） | 2Hz（每 500ms） | **~20ms/次（突发）** | ~4~5% | CPU 忙等（`Delay_us(2)`）；已从整屏 8 页(~50ms)改为只刷显示用的前 3 页 |
 | 3 | **激光测距 RX 中断**（UART2 230400，每字节 1 次中断喂解析器） | 跟随激光帧率，连续流最坏 ~23000 次/秒 | ~80 周期/字节 + 每帧 CRC~1500 周期 | ~2~3%（满速流时） | 中断，随实际字节率线性缩放 |
 | 4 | **IMU 原始加速度/角速度读取**（打印那拍 2×6 字节软件 I2C 读） | 5Hz | ~2ms/次 | ~1% | CPU 忙等（方案A 已从 100Hz 降到 5Hz） |
-| 5 | **电机 STEP 中断**（`TIMG0_IRQHandler` 梯形斜坡计算） | 仅电机转动时，巡航 ~8kHz | ~150 周期/次 | ~1.5%（仅转动时） | 中断；**四电机一起转也只有 TIMG0 一个 ISR**（2/3/4 镜像跟随、不产生中断），CPU 开销与单电机相同 |
+| 5 | **电机 STEP 中断**（`TIMG0/8/12/6_IRQHandler` 梯形斜坡+计步） | 仅电机转动时，每路 = 该路步频（巡航常 ~kHz 级） | ~150 周期/次 | ~1.5%/路（仅转动时） | 中断；**v1.9 四路各自独立 ISR**，同时转动时开销约为单路的 N 倍（N=转动路数），常规巡航速度下仍很小 |
+| 6 | **小球报文 RX 中断**（UART0 115200，$BALL 约 17 帧/秒×~25 字节） | ~425 次/秒 | ~80 周期/字节 + 每帧解析~数百周期 | <0.5% | 中断；字节率远低于激光，几乎可忽略 |
 | — | LED / 舵机 / 串口回显 / 电机按键轮询等 | 300ms~20ms | 微秒级 | <0.5% | 可忽略 |
 
 **空闲态**（电机不转、激光在收、OLED 在刷、IMU 在读）估算总占用约 **30~40% CPU**，其余为 FreeRTOS 空闲任务。
@@ -77,6 +79,7 @@
 
 - `common/app_config.h` 顶部有 `APP_FEATURE_*`（1/0），`App_Init` 据此门控各任务创建；用开发板时把不用的外设置 0（不建任务/不占 CPU/不刷串口，硬件初始化保留）。关掉的功能会被链接器移除，实测关 IMU+LASER 后代码从 ~30KB 降到 ~18KB。
 - 激光 D1 随 IMU 遥测整行输出，`APP_FEATURE_IMU=0` 时该行不打印（即使 LASER=1，激光仍后台接收但无打印出口）。
+- `APP_FEATURE_BALL_VISION`（默认 1）：UART0 RX 中断解析上位机 `$BALL` 报文，供 OLED 右侧面板显示；与 `APP_FEATURE_UART_ECHO` 争用 UART0 RX，二者互斥（同时置 1 编译期 `#error` 拦截，需串口收发自检时先关 BALL）。
 
 ## 稳健性配置（2026-07-16 加固）
 

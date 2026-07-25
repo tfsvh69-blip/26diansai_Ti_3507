@@ -21,6 +21,7 @@
 #define APP_FEATURE_MOTOR           (0U)  /* 4 路步进电机（MOTORTEST 任务，已取消：KEY1/KEY2 让给题目菜单） */
 #define APP_FEATURE_IMU             (1U)  /* 六轴 IMU 读取 + Yaw 快照发布（供 OLED 状态栏显示，不依赖串口） */
 #define APP_FEATURE_LASER           (1U)  /* UART2 激光测距1（RX 中断接收，供 OLED 状态栏显示，不依赖串口） */
+#define APP_FEATURE_BALL_VISION     (1U)  /* UART0 接收上位机 $BALL 小球检测报文（RX 中断解析，OLED 右侧文字面板显示） */
 /*
  * IMU 串口遥测日志独立开关：控制 IMU 任务是否向 UART0 打印启动信息、初始化诊断
  * 和 5Hz 姿态/激光遥测行。置 0 时 IMU 读取与 Yaw 快照发布照常运行（OLED 状态栏
@@ -34,6 +35,13 @@
  * BspBoard_Init 中初始化，题目业务(onEnter/onLoop)里可直接调 bsp_motor/bsp_servo。
  * UART_ECHO 与 IMU_UART_LOG 默认关闭：串口保持静默，减少对调试/通信的干扰。
  */
+/*
+ * 互斥护栏：$BALL 接收中断会取空 UART0 RX FIFO，与 UART_ECHO 的轮询自检抢字节，
+ * 二者不可同时启用。需要串口收发自检时先把 APP_FEATURE_BALL_VISION 置 0。
+ */
+#if (APP_FEATURE_BALL_VISION != 0U) && (APP_FEATURE_UART_ECHO != 0U)
+#error "APP_FEATURE_BALL_VISION 与 APP_FEATURE_UART_ECHO 争用 UART0 RX，不能同时为 1"
+#endif
 /* =================================================== */
 
 /* 任务栈单位为 word，不是 byte。 */

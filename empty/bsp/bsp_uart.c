@@ -115,10 +115,53 @@ bool BspUart0_ReadByte(uint8_t *byte)
     }
 
     /*
-     * 接收侧使用轮询方式读取 RX FIFO。
-     * 当前数据量很小，不启用中断或 DMA，避免引入额外同步复杂度。
+     * 接收侧默认轮询读取 RX FIFO（数据量小时够用）。
+     * 若已通过 BspUart0_SetRxHandler 注册中断回调，则 RX FIFO 会被中断取空，
+     * 此处将读不到字节（两种接收方式互斥，见头文件说明）。
      */
     return DL_UART_Main_receiveDataCheck(UART_0_INST, byte);
+}
+
+/* UART0 接收字节回调（上位机下行报文解析器由 app 层注册）。 */
+static BspUart0RxHandler_t s_uart0RxHandler = NULL;
+
+void BspUart0_SetRxHandler(BspUart0RxHandler_t handler)
+{
+    /* 先登记回调，再放开中断，避免中断先于回调就绪时丢字节（NULL 已在 ISR 内防护）。 */
+    s_uart0RxHandler = handler;
+
+    /* 同时使能 RX 与溢出错误中断：溢出时也能进 ISR 取空 FIFO 并清标志。 */
+    DL_UART_Main_enableInterrupt(UART_0_INST,
+        DL_UART_MAIN_INTERRUPT_RX | DL_UART_MAIN_INTERRUPT_OVERRUN_ERROR);
+    NVIC_EnableIRQ(UART_0_INST_IRQn);
+}
+
+/*
+ * UART0 中断服务函数（上位机下行报文，115200 8N1）。
+ * 每次中断把 RX FIFO 里的所有字节全部取空并逐个喂给解析回调，
+ * 兼顾按字节触发(阈值1)与突发到达，避免尾字节滞留。
+ * 符合 CLAUDE.md：ISR 内只做快速处理，不调用非 FromISR 的 FreeRTOS API。
+ */
+void UART0_IRQHandler(void)
+{
+    uint8_t byte;
+
+    switch (DL_UART_Main_getPendingInterrupt(UART_0_INST)) {
+        case DL_UART_MAIN_IIDX_RX:
+        case DL_UART_MAIN_IIDX_OVERRUN_ERROR:
+            /* RX 阈值到达或发生溢出都在此取空 FIFO；丢掉的字节由帧头 '$' 重同步自恢复。 */
+            while (DL_UART_Main_receiveDataCheck(UART_0_INST, &byte)) {
+                if (s_uart0RxHandler != NULL) {
+                    s_uart0RxHandler(byte);
+                }
+            }
+            DL_UART_Main_clearInterruptStatus(UART_0_INST,
+                DL_UART_MAIN_INTERRUPT_OVERRUN_ERROR);
+            break;
+
+        default:
+            break;
+    }
 }
 
 /* UART2 接收字节回调（激光测距解析器由 app 层注册）。 */

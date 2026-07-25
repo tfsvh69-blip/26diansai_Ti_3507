@@ -339,7 +339,7 @@
               <MiscControls></MiscControls>
               <Define>__MSPM0G3507__</Define>
               <Undefine></Undefine>
-              <IncludePath>..\..\source\third_party\CMSIS\Core\Include;..\..\source;..;..\app;..\bsp;..\bsp\board;..\bsp\delay;..\common;..\module;..\module\oled;..\module\imu;..\module\laser;..\algo;..\third_party\FreeRTOS\include;..\third_party\FreeRTOS\portable\ARM_CM0;..\third_party\ti_driverlib;..\third_party\st_lsm6dsv16x</IncludePath>
+              <IncludePath>..\..\source\third_party\CMSIS\Core\Include;..\..\source;..;..\app;..\app\tasks;..\bsp;..\bsp\board;..\bsp\delay;..\common;..\module;..\module\oled;..\module\imu;..\module\laser;..\module\vision;..\algo;..\third_party\FreeRTOS\include;..\third_party\FreeRTOS\portable\ARM_CM0;..\third_party\ti_driverlib;..\third_party\st_lsm6dsv16x</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -606,6 +606,46 @@
           </Files>
         </Group>
         <Group>
+          <GroupName>app_tasks</GroupName>
+          <Files>
+            <File>
+              <FileName>app_tasks.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\app\tasks\app_tasks.h</FilePath>
+            </File>
+            <File>
+              <FileName>task1.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\app\tasks\task1.c</FilePath>
+            </File>
+            <File>
+              <FileName>task2.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\app\tasks\task2.c</FilePath>
+            </File>
+            <File>
+              <FileName>task3.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\app\tasks\task3.c</FilePath>
+            </File>
+            <File>
+              <FileName>task4.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\app\tasks\task4.c</FilePath>
+            </File>
+            <File>
+              <FileName>task5.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\app\tasks\task5.c</FilePath>
+            </File>
+            <File>
+              <FileName>task6.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\app\tasks\task6.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
           <GroupName>bsp</GroupName>
           <Files>
             <File>
@@ -782,6 +822,21 @@
               <FileName>laser_ld14.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\module\laser\laser_ld14.h</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>module_vision</GroupName>
+          <Files>
+            <File>
+              <FileName>ball_parser.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\module\vision\ball_parser.c</FilePath>
+            </File>
+            <File>
+              <FileName>ball_parser.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\module\vision\ball_parser.h</FilePath>
             </File>
           </Files>
         </Group>

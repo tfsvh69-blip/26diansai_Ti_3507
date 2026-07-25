@@ -67,6 +67,7 @@ extern volatile bool g_sysClockUsingHFXT;
 
 /* UART0 手写 115200 8N1 配置：MFCLK=4MHz，16x 过采样，误差约 -0.08%。 */
 #define UART_0_INST                                                       UART0
+#define UART_0_INST_IRQn                                        (UART0_INT_IRQn)
 #define UART_0_INST_FREQUENCY                                          4000000
 #define UART_0_BAUD_RATE                                                (115200)
 #define UART_0_IBRD_115200_MFCLK                                            (2U)
@@ -169,6 +170,9 @@ extern volatile bool g_sysClockUsingHFXT;
 #define MOTOR1_DIR_PORT                                                  (GPIOB)
 #define MOTOR1_DIR_PIN                                           (DL_GPIO_PIN_11)
 #define MOTOR1_DIR_IOMUX                                         (IOMUX_PINCM28)
+/* 电机1 编号别名（指向历史无编号宏），使 bsp_motor 四路映射表四行同构。 */
+#define MOTOR1_STEP_TIMER_INST                              MOTOR_STEP_TIMER_INST
+#define MOTOR1_STEP_TIMER_IRQn                              MOTOR_STEP_TIMER_IRQn
 
 /*
  * 电机2/3/4（v1.1）：STEP 各占独立定时器 CCP0 输出，DIR 为普通 GPIO；
@@ -186,6 +190,8 @@ extern volatile bool g_sysClockUsingHFXT;
 #define MOTOR2_DIR_PORT                                                  (GPIOB)
 #define MOTOR2_DIR_PIN                                           (DL_GPIO_PIN_7)
 #define MOTOR2_DIR_IOMUX                                         (IOMUX_PINCM24)
+/* 电机2 TIMG8 中断号：四路独立驱动后每路各开自己的 ZERO 中断做梯形斜坡/计步。 */
+#define MOTOR2_STEP_TIMER_IRQn                                   (TIMG8_INT_IRQn)
 
 #define MOTOR3_STEP_PORT                                                 (GPIOB)
 #define MOTOR3_STEP_PIN                                         (DL_GPIO_PIN_13)
@@ -195,6 +201,8 @@ extern volatile bool g_sysClockUsingHFXT;
 #define MOTOR3_DIR_PORT                                                  (GPIOB)
 #define MOTOR3_DIR_PIN                                          (DL_GPIO_PIN_14)
 #define MOTOR3_DIR_IOMUX                                         (IOMUX_PINCM31)
+/* 电机3 TIMG12 中断号。 */
+#define MOTOR3_STEP_TIMER_IRQn                                  (TIMG12_INT_IRQn)
 
 #define MOTOR4_STEP_PORT                                                 (GPIOB)
 #define MOTOR4_STEP_PIN                                         (DL_GPIO_PIN_26)
@@ -204,6 +212,8 @@ extern volatile bool g_sysClockUsingHFXT;
 #define MOTOR4_DIR_PORT                                                  (GPIOB)
 #define MOTOR4_DIR_PIN                                          (DL_GPIO_PIN_27)
 #define MOTOR4_DIR_IOMUX                                         (IOMUX_PINCM58)
+/* 电机4 TIMG6 中断号。 */
+#define MOTOR4_STEP_TIMER_IRQn                                    (TIMG6_INT_IRQn)
 
 /* TMC 总使能 ENN：PA13（PINCM35），低有效，四路共用。 */
 #define TMC_ENN_PORT                                                     (GPIOA)

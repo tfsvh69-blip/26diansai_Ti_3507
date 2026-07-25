@@ -359,6 +359,13 @@ void SYSCFG_DL_UART_0_init(void)
     DL_UART_Main_setOversampling(UART_0_INST, DL_UART_MAIN_OVERSAMPLING_RATE_16X);
     DL_UART_Main_setBaudRateDivisor(UART_0_INST,
         UART_0_IBRD_115200_MFCLK, UART_0_FBRD_115200_MFCLK);
+    /*
+     * 接收 FIFO 阈值设为 1 字节：配合 BspUart0_SetRxHandler 注册的 RX 中断按字节及时取走，
+     * 避免上位机报文(约17帧/秒)在轮询节拍间隙把 4 字节 FIFO 溢出丢字节。
+     * 中断与 NVIC 由 bsp_uart.c 的 BspUart0_SetRxHandler 在注册回调后再放开；
+     * 若不注册回调，则仅是阈值配置、无中断触发，原轮询接口照常工作。
+     */
+    DL_UART_Main_setRXFIFOThreshold(UART_0_INST, DL_UART_MAIN_RX_FIFO_LEVEL_ONE_ENTRY);
     DL_UART_Main_enable(UART_0_INST);
 }
 
