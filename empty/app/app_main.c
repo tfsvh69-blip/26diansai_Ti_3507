@@ -89,8 +89,12 @@ void App_Init(void)
     AppMotorTestTask_Init();
 #endif
 
-#if (APP_FEATURE_RELAY != 0U)
-    /* 继电器测试：每 2 秒切换一次继电器(PA24)吸合/断开，验证继电器及其电磁铁负载。 */
+#if (APP_FEATURE_RELAY_SELFTEST != 0U)
+    /*
+     * 继电器自检任务(默认关，APP_FEATURE_RELAY_SELFTEST=0)：每 2 秒自动切换继电器(PA24)
+     * 吸合/断开，仅上电验证继电器及其电磁铁负载用。正常运行不需要自动切换，继电器由业务
+     * 代码经 bsp_relay 接口(BspRelay_On/Off/Set)按需控制；OLED 状态栏仍显示当前吸合/断开态。
+     */
     AppRelayTestTask_Init();
 #endif
 

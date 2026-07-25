@@ -42,6 +42,7 @@
 - OLED：板载 0.96 寸 OLED，软件 I2C，SCL=PB9/SDA=PB8；`PERIPH` 任务刷屏显示调试测试数据。TMC 细分已改到 PB0/PB1，与 OLED 不再冲突。
 - 电机1~4（TMC2209 STEP/DIR）：STEP=PB10/PB6/PB13/PB26（TIMG0/TIMG8/TIMG12/TIMG6 各自 CCP0）、DIR=PB11/PB7/PB14/PB27，ENN=PA13(低有效,四路共用)、MS1=PB0/MS2=PB1(四路共用细分)。**v1.9 起四路完全独立**：每路各开自己的 ZERO 中断做梯形斜坡+计步，可各自不同速度/方向/距离（小车差速/转弯前提）。对上 RPM 单位接口 `BspMotor_SetSpeedRpm(id,±rpm)` / `BspMotor_MoveSteps(id,±steps,rpm)`，见 `bsp_motor.h`。`MOTORTEST` 任务（默认禁用）用新接口对四路同时下发做验证。
 - 舵机1~4（TIMA0_CCP0~3 PWM）：SERVO=PA8/PA9/PB4/PA12，50Hz；`SERVOTEST` 任务 KEY3/KEY4 让四舵机一起在两位置切换测试。脉宽经 `bsp_servo` 极性补偿(period-pulseUs)，避开 EDGE_ALIGN 反相坑，勿绕过直接写定时器。
+- 继电器（RELAY）：**PA24**(PINCM54，接口 P1-3)，普通 GPIO 推挽输出驱动大电流电磁铁负载，无需 PWM/定时器。**极性已实测确认：高电平=吸合、低电平=断开**(`bsp_relay.c::BSP_RELAY_ACTIVE_LOW=0`；换低电平触发模块把该宏改 1 即整体反相)；上电默认断开(PA24 下拉+清零，`BspRelay_Init` 在 `BspBoard_Init` 里再收敛一次)。封装 `bsp/bsp_relay.h`：`BspRelay_On/Off/Set(bool)/Toggle/IsOn`，语义以「吸合/断开」为准，业务代码 `#include "bsp_relay.h"` 即可直接调。**正常运行由业务代码(`app/tasks/taskN.c`)按需调接口控制、不自动切换**；每 2s 自动切换的 `RELAYTEST` 自检任务默认禁用(见功能开关)。OLED 底部状态栏最前显示 `R:ON/OFF`(`APP_FEATURE_RELAY=1`)。接线风险 R7：PA24 上电前高阻可能误吸合，硬件建议加 10kΩ 下拉+100Ω 限流。
 - UART0：MFCLK 4MHz，115200 8N1，PA10=TX，PA11=RX。当前 **PA11(RX) 接上位机(视觉主机)TX**，经 **UART0 RX 中断**逐字节喂 `module/vision` 解析上位机 `$BALL,found,x,y,n*CHK` 小球检测报文（约 17 帧/秒，已实测正常接收），结果由 `UIMENU` 显示在 OLED 右侧文字面板（开关 `APP_FEATURE_BALL_VISION`）。RX 中断与轮询自检 `APP_FEATURE_UART_ECHO` 互斥（编译期护栏）。
 - 激光测距1（UART2）：PB15=TX/PB16=RX，MFCLK 4MHz + 8x 过采样，230400 8N1；**RX 中断**逐字节喂 `module/laser` 的 LD14 解析器（无独立任务），距离由 `IMU100Hz` 任务在整行末尾追加 `D1=<mm>mm` 输出。波特率 230400 依参考工程推定，实物不符改 `UART_2_BAUD_RATE`。⚠️ 激光 TX 若 5V 而 PB16 非 5V 容忍，接前先量电平（风险 R2）。
 - PA10/PA11 属于核心板特殊功能风险引脚，本次已按用户确认用于 UART0。
@@ -80,6 +81,7 @@
 - `common/app_config.h` 顶部有 `APP_FEATURE_*`（1/0），`App_Init` 据此门控各任务创建；用开发板时把不用的外设置 0（不建任务/不占 CPU/不刷串口，硬件初始化保留）。关掉的功能会被链接器移除，实测关 IMU+LASER 后代码从 ~30KB 降到 ~18KB。
 - 激光 D1 随 IMU 遥测整行输出，`APP_FEATURE_IMU=0` 时该行不打印（即使 LASER=1，激光仍后台接收但无打印出口）。
 - `APP_FEATURE_BALL_VISION`（默认 1）：UART0 RX 中断解析上位机 `$BALL` 报文，供 OLED 右侧面板显示；与 `APP_FEATURE_UART_ECHO` 争用 UART0 RX，二者互斥（同时置 1 编译期 `#error` 拦截，需串口收发自检时先关 BALL）。
+- 继电器开关 `APP_FEATURE_RELAY`（默认 1）与 `APP_FEATURE_RELAY_SELFTEST`（默认 0）**已解耦**（2026-07-25）：前者=继电器功能(板级初始化 + OLED 状态栏 `R:ON/OFF` 显示 + 对外接口 `BspRelay_*` 可调用)；后者=自检任务 `RELAYTEST`(每 2s 自动切换吸合/断开，仅上电验证用)。正常运行继电器由业务代码经 `bsp_relay` 接口按需控制、不自动切换；需上电自检时把 `APP_FEATURE_RELAY_SELFTEST` 置 1。
 
 ## 稳健性配置（2026-07-16 加固）
 

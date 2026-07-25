@@ -23,7 +23,8 @@
 #define APP_FEATURE_LASER           (1U)  /* UART2 激光测距1（RX 中断接收，供 OLED 状态栏显示，不依赖串口） */
 #define APP_FEATURE_BALL_VISION     (1U)  /* UART0 接收上位机 $BALL 小球检测报文（RX 中断解析，OLED 右侧文字面板显示） */
 #define APP_FEATURE_LINE_TRACK      (1U)  /* 7 路灰度循迹 PB17~PB23（直接读高低电平，OLED 菜单右半第6/7行显示状态） */
-#define APP_FEATURE_RELAY           (1U)  /* 继电器 PA24 通断测试任务（每 2 秒切换一次吸合/断开） */
+#define APP_FEATURE_RELAY           (1U)  /* 继电器 PA24 功能：板级初始化 + OLED 状态栏 R:ON/OFF 显示 + 对外接口 BspRelay_*(On/Off/Set/Toggle/IsOn) 可直接调用；不含自动切换 */
+#define APP_FEATURE_RELAY_SELFTEST  (0U)  /* 继电器自检任务(RELAYTEST)：每 2 秒自动切换吸合/断开，仅上电验证用；默认关，置 1 恢复自检 */
 /*
  * IMU 串口遥测日志独立开关：控制 IMU 任务是否向 UART0 打印启动信息、初始化诊断
  * 和 5Hz 姿态/激光遥测行。置 0 时 IMU 读取与 Yaw 快照发布照常运行（OLED 状态栏
