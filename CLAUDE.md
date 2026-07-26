@@ -1,6 +1,12 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+本文件为本仓库的 AI 协作者提供工作约定。
+
+## 最高优先级与文档同步
+
+- 每次阅读、分析、修改本仓库前，必须先阅读根目录的 `CLAUDE.md`，再阅读根目录的 `AGENTS.md`；两份文件共同定义协作规则。
+- `CLAUDE.md` 记录详细工程约定，`AGENTS.md` 记录简明的仓库协作指南。修改任一文件中涉及编码、构建、硬件、任务、测试或协作流程的规则时，必须在同一次改动中同步更新 `CLAUDE.md` 和 `AGENTS.md`，保持含义一致。
+- 新增或修改的代码注释、README、`docs/` 文档、协作指南及其他面向开发者的说明统一使用中文；命令、文件路径、代码标识符、协议字段和必要的专有名词除外。
 
 ## 编码约定
 

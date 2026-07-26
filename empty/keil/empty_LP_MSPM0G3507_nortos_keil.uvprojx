@@ -339,7 +339,7 @@
               <MiscControls></MiscControls>
               <Define>__MSPM0G3507__</Define>
               <Undefine></Undefine>
-              <IncludePath>..\..\source\third_party\CMSIS\Core\Include;..\..\source;..;..\app;..\app\tasks;..\bsp;..\bsp\board;..\bsp\delay;..\common;..\module;..\module\oled;..\module\imu;..\module\laser;..\module\vision;..\algo;..\third_party\FreeRTOS\include;..\third_party\FreeRTOS\portable\ARM_CM0;..\third_party\ti_driverlib;..\third_party\st_lsm6dsv16x</IncludePath>
+              <IncludePath>..\..\source\third_party\CMSIS\Core\Include;..\..\source;..;..\app;..\app\tasks;..\bsp;..\bsp\board;..\bsp\delay;..\common;..\module;..\module\oled;..\module\imu;..\module\laser;..\module\vision;..\module\nrf24l01;..\algo;..\third_party\FreeRTOS\include;..\third_party\FreeRTOS\portable\ARM_CM0;..\third_party\ti_driverlib;..\third_party\st_lsm6dsv16x</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -613,6 +613,16 @@
               <FileType>5</FileType>
               <FilePath>..\app\app_robot_core.h</FilePath>
             </File>
+            <File>
+              <FileName>app_nrf24_tx_test_task.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\app\app_nrf24_tx_test_task.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_nrf24_tx_test_task.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\app\app_nrf24_tx_test_task.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
@@ -743,6 +753,16 @@
               <FileType>5</FileType>
               <FilePath>..\bsp\bsp_servo.h</FilePath>
             </File>
+            <File>
+              <FileName>bsp_nrf24_port.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\bsp\bsp_nrf24_port.c</FilePath>
+            </File>
+            <File>
+              <FileName>bsp_nrf24_port.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\bsp\bsp_nrf24_port.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
@@ -857,6 +877,21 @@
               <FileName>ball_parser.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\module\vision\ball_parser.h</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>module_nrf24l01</GroupName>
+          <Files>
+            <File>
+              <FileName>nrf24l01.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\module\nrf24l01\nrf24l01.c</FilePath>
+            </File>
+            <File>
+              <FileName>nrf24l01.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\module\nrf24l01\nrf24l01.h</FilePath>
             </File>
           </Files>
         </Group>

@@ -3,6 +3,7 @@
 #include "bsp_buzzer.h"
 #include "bsp_led.h"
 #include "bsp_motor.h"
+#include "bsp_nrf24_port.h"
 #include "bsp_relay.h"
 #include "bsp_uart.h"
 #include "ti_msp_dl_config.h"
@@ -26,6 +27,7 @@ void BspBoard_Init(void)
     BspMotor_Init();
     BspBuzzer_Init();
     BspRelay_Init();
+    BspNrf24Port_Init();
 
     /* UART0 互斥量必须在任一任务打印、调度器启动之前创建。 */
     BspUart0_Init();

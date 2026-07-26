@@ -127,6 +127,26 @@ extern volatile bool g_sysClockUsingHFXT;
 #define LED_LED3_IOMUX                                           (IOMUX_PINCM29)
 
 /*
+ * NRF24L01+：GPIO 模拟 SPI，IRQ 不接并由任务轮询 STATUS。
+ * PA1/CSN 为开漏脚，外部 4.7kΩ 上拉至 3V3；PA0/MISO 为输入。
+ */
+#define NRF24_CE_PORT                                                    (GPIOA)
+#define NRF24_CE_PIN                                            (DL_GPIO_PIN_22)
+#define NRF24_CE_IOMUX                                           (IOMUX_PINCM47)
+#define NRF24_CSN_PORT                                                   (GPIOA)
+#define NRF24_CSN_PIN                                            (DL_GPIO_PIN_1)
+#define NRF24_CSN_IOMUX                                           (IOMUX_PINCM2)
+#define NRF24_SCK_PORT                                                   (GPIOA)
+#define NRF24_SCK_PIN                                           (DL_GPIO_PIN_27)
+#define NRF24_SCK_IOMUX                                          (IOMUX_PINCM60)
+#define NRF24_MOSI_PORT                                                  (GPIOA)
+#define NRF24_MOSI_PIN                                          (DL_GPIO_PIN_14)
+#define NRF24_MOSI_IOMUX                                         (IOMUX_PINCM36)
+#define NRF24_MISO_PORT                                                  (GPIOA)
+#define NRF24_MISO_PIN                                           (DL_GPIO_PIN_0)
+#define NRF24_MISO_IOMUX                                          (IOMUX_PINCM1)
+
+/*
  * OLED：板载 0.96 寸 OLED，GPIO 模拟 I2C（v1.1）。
  * v1.1 板 PB8/PB9 恢复为板载 OLED（软件 I2C），TMC 细分改用 PB0/PB1，两者不再冲突。
  * 约定：SCL=PB9、SDA=PB8（沿用江协驱动既有约定，若与实物相反在此对调即可）。

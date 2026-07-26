@@ -7,6 +7,7 @@
 #include "app_imu_uart_task.h"
 #include "app_led_task.h"
 #include "app_motor_test_task.h"
+#include "app_nrf24_tx_test_task.h"
 #include "app_periph_test_task.h"
 #include "app_relay_test_task.h"
 #include "app_robot_core.h"
@@ -31,6 +32,7 @@
  *   UIMENU    OLED 题目菜单：4 键选题/运行 + 底部传感器状态栏(Yaw/距离)，独占 OLED
  *             + 题目业务委托 app_robot_core 模块（6 道题 dispatch 表，钩子占位待填）
  *   IMU100Hz  100Hz 读六轴姿态 + 发布 Yaw 快照（OLED状态栏用），默认不打印串口
+ *   NRF24TX   每 500ms 向 USB 无线串口发送带递增序号的测试文本
  *   （默认关闭：UART0TX/PERIPH/SERVOSWEEP/MOTORTEST —— 串口静默、按键/OLED 让给 UIMENU）
  *
  * 【中断驱动（非任务）】
@@ -96,6 +98,11 @@ void App_Init(void)
      * 代码经 bsp_relay 接口(BspRelay_On/Off/Set)按需控制；OLED 状态栏仍显示当前吸合/断开态。
      */
     AppRelayTestTask_Init();
+#endif
+
+#if (APP_FEATURE_NRF24_TX_TEST != 0U)
+    /* NRF24L01+ 发射测试：2.402GHz/2Mbps/8位CRC，每 500ms 发送递增文本。 */
+    AppNrf24TxTestTask_Init();
 #endif
 
 #if (APP_FEATURE_LASER != 0U)

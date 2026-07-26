@@ -49,6 +49,11 @@
 | 按键4 | KEY4 | PA29 | `KEY4_PIN` | `IOMUX_PINCM4` | GPIO 输入，内部上拉；一端接 GND，按下为低 | 电机1 **减速一档**（L5→L1） |
 | UART0 | TX | PA10 | `GPIO_UART_0_TX_PIN` | `IOMUX_PINCM21` / `IOMUX_PINCM21_PF_UART0_TX` | UART0 发送，MFCLK/115200 8N1；PA10 属于核心板特殊功能风险引脚，已按用户确认使用 | 串口助手应收到启动提示、IMU 输出或 `UART RX OK` 回显 |
 | UART0 | RX | PA11 | `GPIO_UART_0_RX_PIN` | `IOMUX_PINCM22` / `IOMUX_PINCM22_PF_UART0_RX` | UART0 接收：**当前接上位机(视觉主机)TX，RX 中断解析 `$BALL` 小球检测报文**（`APP_FEATURE_BALL_VISION`）；PA11 属于核心板特殊功能风险引脚 | 收到 `$BALL` 帧后 OLED 右侧面板显示 found/n/x/y；调试回显需先关 BALL、开 `APP_FEATURE_UART_ECHO` |
+| NRF24L01+ | CE | PA22 | `NRF24_CE_PIN` | `IOMUX_PINCM47` | GPIO 推挽输出，上电默认低 | 发送时产生至少 10us 高脉冲 |
+| NRF24L01+ | CSN | PA1 | `NRF24_CSN_PIN` | `IOMUX_PINCM2` | 开漏输出，外接 4.7kΩ 上拉至 3V3；低有效 | 空闲应量到约 3.3V，SPI 事务期间拉低 |
+| NRF24L01+ | SCK | PA27 | `NRF24_SCK_PIN` | `IOMUX_PINCM60` | GPIO 模拟 SPI 模式0，推挽输出，上电默认低 | 发包时可见时钟脉冲 |
+| NRF24L01+ | MOSI | PA14 | `NRF24_MOSI_PIN` | `IOMUX_PINCM36` | GPIO 模拟 SPI，MCU→模块 | 发包时随 SCK 变化 |
+| NRF24L01+ | MISO | PA0 | `NRF24_MISO_PIN` | `IOMUX_PINCM1` | GPIO 输入，模块→MCU | 模块正常时寄存器可写回读 |
 | 激光测距1 | UART2 TX(MCU) | PB15 | `GPIO_UART_2_TX_PIN` | `IOMUX_PINCM32` / `IOMUX_PINCM32_PF_UART2_TX`，v1.1 排针 H21 | UART2 发送，MFCLK/230400 8N1；接激光模块 RX（本模块只收不发，此脚一般不用） | — |
 | 激光测距1 | UART2 RX(MCU) | PB16 | `GPIO_UART_2_RX_PIN` | `IOMUX_PINCM33` / `IOMUX_PINCM33_PF_UART2_RX`，v1.1 排针 H21 | UART2 接收，接激光模块 TX；RX 中断逐字节喂 `LaserLd14` 解析器 | 串口每行 `D1=<mm>mm`；一直 `D1=---` 见下方排查 |
 | ATK-MS6DSV | IMU_SCL | PB2 | `IMU_I2C_SCL_PIN` | `IOMUX_PINCM15` / `IOMUX_PINCM15_PF_I2C1_SCL`，U2.15 | **GPIO 软件 I2C SCL**（开漏模拟）；扩展板已焊 4.7k 上拉到 3.3V | 串口应输出 `IMU INIT OK`，否则优先查 SCL 是否接到 B02 |
@@ -64,6 +69,24 @@
 | 继电器 | RELAY | PA24 | `RELAY_PIN` | `IOMUX_PINCM54`，P1-3 | GPIO 推挽输出 + 内部下拉；高电平吸合(通)、低电平断开(停)，上电默认断开，驱动大电流电磁铁负载 | 测试任务每 2s 切换一次，可听咔哒声/看指示灯 |
 
 > 当前 UART0 TX 已从 PB0 改为 PA10。PA10/PA11 均属于核心板特殊功能风险引脚，本次按用户确认使用。
+
+## NRF24L01+ / USB 无线串口 V2.0 发射测试
+
+- 供电：模块 `VCC → H2 3V3`，`GND → H1/H5 GND`；**不得接 H4 5V**。模块电源脚附近建议并联 10µF~47µF 与 0.1µF 去耦，减少发射瞬间压降。
+- 信号：`CE=PA22`、`CSN=PA1`、`SCK=PA27`、`MOSI=PA14`、`MISO=PA0`，IRQ 不接。PA1/CSN 已外接 4.7kΩ 上拉至 3V3，软件通过开漏“拉低/释放”驱动。
+- 无线配置：五字节地址 `15 52 33 54 55`（上位机输入为十六进制）、频率 2.402GHz、空中速率 2Mbps、8位CRC、0dBm、通道0自动应答、32字节固定载荷。
+- 厂家透传包格式：第0字节是有效正文长度 `1~31`，第1字节起才是正文。当前每 500ms 发送 `TMX NRF24 TEST 000001` 形式文本，收到自动应答后序号递增。
+- 电脑端：USB 模块上位机按截图配置并点“应用”，再用串口助手以 9600 8N1 打开对应 COM 口，应持续看到递增文本。若完全无数据，先检查两端地址/频率/空中速率/CRC是否逐项一致，再量模块 3V3 和 CSN 空闲电平。
+- IRQ 未连接，板端软件轮询 `STATUS`；每次发包最多等待 12ms，达到最大重传次数或模块掉线都不会阻塞其它任务。
+- 无数据时先同时打开两个串口：USB 无线模块对应 COM 口保持 9600 8N1；天猛星 UART0/Type-C 调试口使用 115200 8N1。后者每秒输出一行 `NRF D ...`，复制连续两行即可判断计数是否变化。
+- 也可进入 Keil Debug，在 Watch 窗口添加并展开 `g_nrf24Diag`，全速运行 2~3 秒后暂停。`magic` 应为 `0x4E524632`，`taskHeartbeat` 应持续增加。
+- 诊断判断：
+  - `FAIL!=0` 或 `RDY=0`：初始化寄存器回读不一致，优先排查 SPI 接线、MISO、模块供电；寄存器全 `00` 常见于 MISO 一直低，接近全 `FF` 常见于 MISO 悬空或一直高。
+  - `FAIL=0` 且 `MAX` 持续增加：板端模块可读写并已尝试发射，但未收到 USB 模块自动应答；重点核对 USB 模块本地地址、频率、空中速率、CRC、模块供电和天线。
+  - `TO` 持续增加：CE 脉冲之后既无 `TX_DS` 也无 `MAX_RT`，重点检查 CE=PA22、模块供电以及模块本体。
+  - `OK` 持续增加但电脑端无文本：无线自动应答已经成功，问题转到 USB 模块串口端口、9600 8N1、上位机显示方式或透传协议。
+- `GPIO` 是五个物理引脚电平位图：bit0=CE、bit1=CSN、bit2=SCK、bit3=MOSI、bit4=MISO。空闲时 CE/SCK 应为低、CSN 应为高，因此 bit1 必须为 1；MOSI/MISO 的瞬时值不固定。
+- 当前兼容扫描开启时，观察 `P/LOCK/PA`：每组 8 个 `MAX_RT` 后自动改用下一组参数。若任一组变为 `LOCK=1` 且 `OK` 增长，即可从日志中的 `CFG/CH/RF/TXA` 读出 USB 模块实际匹配参数；若完整轮换后所有组仍只有 `MAX`，优先排查 USB 转接模块接收状态、模块供电和天猛星端发射瞬态 3V3。
 
 ## OLED / LED / 蜂鸣器 外设测试（v1.1）
 

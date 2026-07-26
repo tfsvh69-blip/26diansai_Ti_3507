@@ -25,6 +25,9 @@
 #define APP_FEATURE_LINE_TRACK      (1U)  /* 7 路灰度循迹 PB17~PB23（直接读高低电平，OLED 菜单右半第6/7行显示状态） */
 #define APP_FEATURE_RELAY           (1U)  /* 继电器 PA24 功能：板级初始化 + OLED 状态栏 R:ON/OFF 显示 + 对外接口 BspRelay_*(On/Off/Set/Toggle/IsOn) 可直接调用；不含自动切换 */
 #define APP_FEATURE_RELAY_SELFTEST  (0U)  /* 继电器自检任务(RELAYTEST)：每 2 秒自动切换吸合/断开，仅上电验证用；默认关，置 1 恢复自检 */
+#define APP_FEATURE_NRF24_TX_TEST   (1U)  /* NRF24L01+ 发射测试：每 500ms 向 USB 无线串口发送递增文本 */
+#define APP_NRF24_DIAG_UART_LOG     (1U)  /* NRF24 排查日志：UART0 115200 每秒输出寄存器和发包计数，定位后改回 0 */
+#define APP_NRF24_DIAG_COMPAT_SCAN  (1U)  /* NRF24 兼容扫描：轮换地址顺序与 CRC，命中 ACK 后自动锁定，定位后改回 0 */
 /*
  * IMU 串口遥测日志独立开关：控制 IMU 任务是否向 UART0 打印启动信息、初始化诊断
  * 和 5Hz 姿态/激光遥测行。置 0 时 IMU 读取与 Yaw 快照发布照常运行（OLED 状态栏
@@ -109,6 +112,17 @@
 #define APP_RELAY_TEST_TASK_STACK_WORDS (configMINIMAL_STACK_SIZE)
 #define APP_RELAY_TEST_TASK_PRIORITY    (1U)
 #define APP_RELAY_TEST_PERIOD_TICKS     pdMS_TO_TICKS(2000U)
+
+/*
+ * NRF24L01+ 发射测试：上电等待模块完成复位后，每 500ms 发送一包。
+ * 单次发送含自动重传和 12ms 软件超时，栈只需容纳 32 字节固定载荷。
+ */
+#define APP_NRF24_TX_TEST_TASK_STACK_WORDS (configMINIMAL_STACK_SIZE * 2U)
+#define APP_NRF24_TX_TEST_TASK_PRIORITY    (1U)
+#define APP_NRF24_TX_STARTUP_TICKS         pdMS_TO_TICKS(100U)
+#define APP_NRF24_TX_TEST_PERIOD_TICKS     pdMS_TO_TICKS(500U)
+#define APP_NRF24_DIAG_LOG_DIVIDER         (2U)
+#define APP_NRF24_DIAG_PROFILE_TRY_COUNT   (8U)
 
 /*
  * OLED 题目菜单 UI 任务：轮询 4 键驱动菜单/运行状态机。

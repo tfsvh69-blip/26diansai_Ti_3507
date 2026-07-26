@@ -12,6 +12,18 @@
 | `SERVOSWEEP` | `app/app_servo_test_task.c` | 20ms | `APP_SERVO_TEST_TASK_PRIORITY` | `APP_SERVO_TEST_TASK_STACK_WORDS` | 无（自动） | 四路 SERVO PWM(PA8/PA9/PB4/PA12)，TIMA0 50Hz | **【默认禁用，`APP_FEATURE_SERVO=0`】** 4 舵机各自独立错相摆动（800↔2200us，不用按键），演示四路可完全独立控制；每秒串口打印 `SERVO us S1=.. S2=.. S3=.. S4=..`。脉宽经 `BspServo_SetPulseUs` 极性补偿；四路方向须一次 `setCCPDirection` 写全(见下) |
 | `PERIPH` | `app/app_periph_test_task.c` | 500 ms | `APP_PERIPH_TEST_TASK_PRIORITY` | `APP_PERIPH_TEST_TASK_STACK_WORDS` | `g_motorDiag`（只读） | OLED(PB8/PB9 软件I2C) 刷屏、LED2(PA7)/LED3(PB12) 翻转、蜂鸣器(PA15) 通断 | **【默认禁用，`APP_FEATURE_PERIPH_OLED=0`】** OLED 已交给 UIMENU，两任务抢软件 I2C 会花屏故互斥。原功能：OLED 显示标题/运行秒+LED+BUZZ+电机状态；LED2/LED3 交替心跳；上电自检 |
 | `RELAYTEST` | `app/app_relay_test_task.c` | 2000 ms | `APP_RELAY_TEST_TASK_PRIORITY` | `APP_RELAY_TEST_TASK_STACK_WORDS` | 无（自动） | 继电器 RELAY(PA24) 吸合/断开 | **【默认禁用，`APP_FEATURE_RELAY_SELFTEST=0`】** 仅上电自检用：置 1 后每 2 秒自动切换吸合/断开验证继电器及电磁铁负载。⚠️ 每次切换都真实通断电磁铁。**正常运行不跑此任务**，继电器由业务代码经 `bsp_relay` 接口(`BspRelay_On/Off/Set/Toggle/IsOn`)按需控制；OLED 状态栏(`APP_FEATURE_RELAY=1`)照常显示当前吸合/断开态。高电平吸合(极性宏可反相)，上电默认断开 |
+| `NRF24TX` | `app/app_nrf24_tx_test_task.c` | 500 ms | `APP_NRF24_TX_TEST_TASK_PRIORITY` | `APP_NRF24_TX_TEST_TASK_STACK_WORDS` | NRF24L01+ 自动应答状态；固定对端地址 `15 52 33 54 55` | USB 无线串口收到 `TMX NRF24 TEST 000001` 形式的递增文本；UART0 每秒输出一行 `NRF D ...` 诊断 | **【默认启用，`APP_FEATURE_NRF24_TX_TEST=1`】** 上电等待 100ms 后初始化为 2.402GHz、2Mbps、0dBm、8位CRC、32字节固定载荷；IRQ 不接，软件轮询 STATUS 并带 12ms 超时；模块掉线后自动重试初始化 |
+
+## NRF24L01+ 连续发射测试（`NRF24TX` 任务）
+
+- 任务每 500ms 发送一次 ASCII 文本，成功收到自动应答后序号递增：`TMX NRF24 TEST 000001`、`...000002`。
+- USB 无线串口 V2.0 使用固定 32 字节无线载荷：`payload[0]` 为有效文本长度，`payload[1]` 起为正文，剩余字节清零；不能直接发送普通 C 字符串。
+- 无线参数与上位机截图一致：地址 `{0x15,0x52,0x33,0x54,0x55}`、2.402GHz、2Mbps、8位CRC。TX 地址与 RX 通道0地址保持相同，以接收自动应答。
+- 未接 IRQ；驱动用软件轮询 `STATUS.TX_DS/MAX_RT` 判断结果。轮询有 12ms 上限，模块拔掉不会永久卡死任务；SPI/超时异常会在下一个周期重新初始化。
+- 电脑端打开 USB 模块串口（截图为 9600 8N1）即可持续看到文本。上位机的“本地地址”必须与板端发送地址一致，射频频率、空中速率和 CRC 也必须一致。
+- `APP_NRF24_DIAG_UART_LOG=1` 时，板端 UART0（115200 8N1）每秒输出一行 `NRF D ...`；也可在 Keil Watch 中展开全局只读快照 `g_nrf24Diag`。`HB` 持续增加表示任务在运行，`FAIL` 是初始化回读失败项，`OK/MAX/TO/IO` 分别统计成功、达到最大重传、等待超时和软件接口错误。
+- 初始化健康时应看到 `FAIL=0 RDY=1 CFG=0A AA=01 ERX=01 AW=03 RETR=1A CH=02 RF=0E PW=20`，`TXA` 与 `RXA` 均为 `15-52-33-54-55`。常态 `STG=9` 表示发送成功；`STG=10` 表示已发射但未收到对端自动应答；`STG=11` 表示模块未返回发送完成状态。
+- 临时排查期间 `APP_NRF24_DIAG_COMPAT_SCAN=1`：每个参数组连续发 8 包未收到 ACK 就切换，UART 中 `P` 为参数组编号、`PA` 为该组已失败包数、`LOCK=1` 表示某组收到 ACK 后已锁定。P0=截图参数；P1=反序地址；P2/P3=16 位 CRC；P4/P5=十进制字节地址解释。定位完成后把该宏改回 0，仅保留已命中的参数组。
 
 ## LED1(PB25) 心跳灯行为
 
