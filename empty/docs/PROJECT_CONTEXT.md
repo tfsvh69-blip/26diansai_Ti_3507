@@ -21,7 +21,7 @@
 | `module/imu/` | ATK-MS6DSV/LSM6DSV16X 初始化、SFLP 姿态读取和四元数转欧拉角 |
 | `module/laser/` | 激光测距1（LD14）串口协议解析器，纯软件、按字节喂入、可复用 |
 | `module/vision/` | 上位机小球检测报文 `$BALL`（NMEA+XOR）解析器，纯软件、按字节喂入、可复用 |
-| `module/nrf24l01/` | NRF24L01+ 寄存器驱动，提供带自动重传、状态轮询和超时保护的固定载荷发送接口 |
+| `module/nrf24l01/` | NRF24L01+ 寄存器驱动，提供带自动重传、状态轮询和超时保护的固定载荷发送接口，以及 USB 无线串口文本发送接口 |
 | `docs/` | 项目上下文、任务表、接线表、AI 维护记录 |
 | `third_party/FreeRTOS/` | FreeRTOS 内核源码 |
 | `third_party/ti_driverlib/` | TI DriverLib 文件 |
@@ -46,7 +46,7 @@
 - 继电器（RELAY）：**PA24**(PINCM54，接口 P1-3)，普通 GPIO 推挽输出驱动大电流电磁铁负载，无需 PWM/定时器。**极性已实测确认：高电平=吸合、低电平=断开**(`bsp_relay.c::BSP_RELAY_ACTIVE_LOW=0`；换低电平触发模块把该宏改 1 即整体反相)；上电默认断开(PA24 下拉+清零，`BspRelay_Init` 在 `BspBoard_Init` 里再收敛一次)。封装 `bsp/bsp_relay.h`：`BspRelay_On/Off/Set(bool)/Toggle/IsOn`，语义以「吸合/断开」为准，业务代码 `#include "bsp_relay.h"` 即可直接调。**正常运行由业务代码(`app/tasks/taskN.c`)按需调接口控制、不自动切换**；每 2s 自动切换的 `RELAYTEST` 自检任务默认禁用(见功能开关)。OLED 底部状态栏最前显示 `R:ON/OFF`(`APP_FEATURE_RELAY=1`)。接线风险 R7：PA24 上电前高阻可能误吸合，硬件建议加 10kΩ 下拉+100Ω 限流。
 - UART0：MFCLK 4MHz，115200 8N1，PA10=TX，PA11=RX。当前 **PA11(RX) 接上位机(视觉主机)TX**，经 **UART0 RX 中断**逐字节喂 `module/vision` 解析上位机 `$BALL,found,x,y,n*CHK` 小球检测报文（约 17 帧/秒，已实测正常接收），结果由 `UIMENU` 显示在 OLED 右侧文字面板（开关 `APP_FEATURE_BALL_VISION`）。RX 中断与轮询自检 `APP_FEATURE_UART_ECHO` 互斥（编译期护栏）。
 - 激光测距1（UART2）：PB15=TX/PB16=RX，MFCLK 4MHz + 8x 过采样，230400 8N1；**RX 中断**逐字节喂 `module/laser` 的 LD14 解析器（无独立任务），距离由 `IMU100Hz` 任务在整行末尾追加 `D1=<mm>mm` 输出。波特率 230400 依参考工程推定，实物不符改 `UART_2_BAUD_RATE`。⚠️ 激光 TX 若 5V 而 PB16 非 5V 容忍，接前先量电平（风险 R2）。
-- NRF24L01+：GPIO 模拟 SPI 模式0，CE=PA22、CSN=PA1（开漏，外部4.7kΩ上拉3V3）、SCK=PA27、MOSI=PA14、MISO=PA0，IRQ不接。`NRF24TX` 任务默认启用，每500ms按 USB 无线串口 V2.0 的 32字节协议发送 `TMX NRF24 TEST nnnnnn`；无线参数为地址 `15 52 33 54 55`、2.402GHz、2Mbps、8位CRC、0dBm、自动应答。
+- NRF24L01+：GPIO 模拟 SPI 模式0，CE=PA22、CSN=PA1（开漏，外部4.7kΩ上拉3V3）、SCK=PA27、MOSI=PA14、MISO=PA0，IRQ不接。`NRF24TX` 任务默认启用，每500ms按 USB 无线串口 V2.0 的 32字节协议发送 `TMX NRF24 TEST nnnnnn`；已实机验证参数为地址 `15 52 33 54 55`、2.402GHz、2Mbps、16位CRC、0dBm、自动应答。`nrf24l01.h` 对外提供 `g_nrf24UsbUartV20Config`、`Nrf24_Init()`、`Nrf24_SendPayload()` 和 `Nrf24_SendUsbUartText()`，后续业务可直接复用。
 - PA10/PA11 属于核心板特殊功能风险引脚，本次已按用户确认用于 UART0。
 - 40MHz 晶振：PA5=HFXIN、PA6=HFXOUT，作 SYSPLL 参考锁定 80MHz 主频（详见接线表“系统时钟”节）。
 - ATK-MS6DSV：**GPIO 软件 I2C**（开漏模拟），SCL=PB2/B02，SDA=PB3/B03，INT=PA16/A16，SA0 接地后 7bit 地址 `0x6A`；扩展板已焊 4.7k 上拉到 3.3V，IMU 供电 3.3V。端口层 `bsp_imu_port.c` 首次访问时关闭 I2C1 硬件控制器并切 PB2/PB3 为 GPIO 模式。

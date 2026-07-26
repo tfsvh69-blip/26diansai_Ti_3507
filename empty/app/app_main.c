@@ -101,7 +101,7 @@ void App_Init(void)
 #endif
 
 #if (APP_FEATURE_NRF24_TX_TEST != 0U)
-    /* NRF24L01+ 发射测试：2.402GHz/2Mbps/8位CRC，每 500ms 发送递增文本。 */
+    /* NRF24L01+ 发射测试：2.402GHz/2Mbps/16位CRC，每 500ms 发送递增文本。 */
     AppNrf24TxTestTask_Init();
 #endif
 

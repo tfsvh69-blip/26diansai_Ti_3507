@@ -52,7 +52,8 @@ typedef enum {
     NRF24_TX_MAX_RETRY,
     NRF24_TX_TIMEOUT,
     NRF24_TX_NOT_READY,
-    NRF24_TX_IO_ERROR
+    NRF24_TX_IO_ERROR,
+    NRF24_TX_INVALID_PAYLOAD
 } Nrf24TxResult_t;
 
 /* 一组可完整复现的 NRF24L01+ 发射参数。 */
@@ -105,15 +106,14 @@ typedef struct {
     uint8_t regRxPwP0;
     uint8_t regDynpd;
     uint8_t regFeature;
-    uint8_t profileIndex;
-    uint8_t profileLocked;
-    uint8_t profileAttemptCount;
-    uint8_t reserved;
     uint8_t txAddress[NRF24L01_ADDRESS_WIDTH];
     uint8_t rxAddressP0[NRF24L01_ADDRESS_WIDTH];
 } Nrf24Diag_t;
 
 extern volatile Nrf24Diag_t g_nrf24Diag;
+
+/* 已实机验证可与 USB 无线串口 V2.0 通信的参数组。 */
+extern const Nrf24RadioConfig_t g_nrf24UsbUartV20Config;
 
 /*
  * 按指定参数初始化：通道 0 自动应答、32 字节固定载荷。
@@ -121,6 +121,13 @@ extern volatile Nrf24Diag_t g_nrf24Diag;
 bool Nrf24_Init(const Nrf24RadioConfig_t *radioConfig);
 Nrf24TxResult_t Nrf24_SendPayload(
     const uint8_t payload[NRF24L01_FIXED_PAYLOAD_WIDTH]);
+
+/*
+ * 按 USB 无线串口 V2.0 协议发送文本。
+ * textLength 范围为 1~31，函数内部组装为 32 字节固定载荷。
+ */
+Nrf24TxResult_t Nrf24_SendUsbUartText(
+    const uint8_t *text, uint8_t textLength);
 
 #ifdef __cplusplus
 }

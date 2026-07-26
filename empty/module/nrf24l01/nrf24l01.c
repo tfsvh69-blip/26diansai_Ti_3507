@@ -1,6 +1,7 @@
 #include "nrf24l01.h"
 
 #include <stddef.h>
+#include <string.h>
 
 #include "bsp_nrf24_port.h"
 
@@ -34,9 +35,17 @@
 #define NRF24_STATUS_TX_DS     (0x20U)
 #define NRF24_STATUS_IRQ_MASK  (0x70U)
 
-/* 当前 USB 无线串口配置对应的寄存器值。 */
 #define NRF24_TX_TIMEOUT_US              (12000U)
 #define NRF24_TX_POLL_INTERVAL_US        (50U)
+
+/* USB 无线串口 V2.0 实机联调成功的无线参数。 */
+const Nrf24RadioConfig_t g_nrf24UsbUartV20Config = {
+    {0x15U, 0x52U, 0x33U, 0x54U, 0x55U},
+    0x0EU, /* PWR_UP + 16 位 CRC + TX 模式。 */
+    0x1AU, /* 自动重传间隔 500us，最多重传 10 次。 */
+    0x02U, /* 2.402GHz。 */
+    0x0FU  /* 2Mbps、0dBm，保持与 USB 模块实测匹配。 */
+};
 
 volatile Nrf24Diag_t g_nrf24Diag = {
     NRF24_DIAG_MAGIC
@@ -294,11 +303,15 @@ Nrf24TxResult_t Nrf24_SendPayload(
 
     g_nrf24Diag.sendAttempts++;
 
-    if ((!s_initialized) || (payload == NULL)) {
+    if (!s_initialized) {
         g_nrf24Diag.radioReady = 0U;
         g_nrf24Diag.lastTxResult = NRF24_TX_NOT_READY;
         g_nrf24Diag.stage = NRF24_DIAG_STAGE_NOT_READY;
         return NRF24_TX_NOT_READY;
+    }
+    if (payload == NULL) {
+        g_nrf24Diag.lastTxResult = NRF24_TX_INVALID_PAYLOAD;
+        return NRF24_TX_INVALID_PAYLOAD;
     }
 
     g_nrf24Diag.lastPayloadLength = payload[0];
@@ -364,4 +377,23 @@ Nrf24TxResult_t Nrf24_SendPayload(
     g_nrf24Diag.stage = NRF24_DIAG_STAGE_TIMEOUT;
     g_nrf24Diag.txTimeout++;
     return NRF24_TX_TIMEOUT;
+}
+
+Nrf24TxResult_t Nrf24_SendUsbUartText(
+    const uint8_t *text, uint8_t textLength)
+{
+    uint8_t payload[NRF24L01_FIXED_PAYLOAD_WIDTH];
+
+    if ((text == NULL) || (textLength == 0U) ||
+        (textLength >= NRF24L01_FIXED_PAYLOAD_WIDTH)) {
+        g_nrf24Diag.lastTxResult = NRF24_TX_INVALID_PAYLOAD;
+        return NRF24_TX_INVALID_PAYLOAD;
+    }
+
+    /* USB 无线串口的第 0 字节是有效文本长度，后续字节才是透传正文。 */
+    memset(payload, 0, sizeof(payload));
+    payload[0] = textLength;
+    memcpy(&payload[1], text, textLength);
+
+    return Nrf24_SendPayload(payload);
 }
