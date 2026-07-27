@@ -35,7 +35,7 @@
 | `empty/bsp/` | 板级外设初始化、GPIO、UART、延时硬件封装 |
 | `empty/bsp/board/` | `ti_msp_dl_config.c/h` 手写板级 DriverLib 初始化（不由 SysConfig 生成） |
 | `empty/module/` | 可复用模块（IMU、OLED） |
-| `empty/algo/` | 纯算法（PID、滤波、数学解算，当前为空） |
+| `empty/algo/` | 纯算法（PID、角度工具、滤波、运动学），不依赖硬件；任务层只保留可调参数宏 |
 | `empty/common/` | 任务/FreeRTOS 配置宏（`app_config.h`）、消息定义 |
 | `empty/third_party/FreeRTOS/` | FreeRTOS 内核源码 |
 | `empty/third_party/ti_driverlib/` | TI DriverLib |
@@ -56,7 +56,7 @@
 |---|---|---|---|
 | `LED1` | `app/app_led_task.c` | 300 ms | LED1(PB25) 心跳灯，用于判断 FreeRTOS 是否正常调度 |
 | `UART0TX` | `app/app_uart_test_task.c` | 10 ms 轮询 | UART0 接收回显，收到非换行字符返回 `UART RX OK` |
-| `UIMENU` | `app/app_ui_task.c` | 30 ms 轮询 | **OLED 题目菜单 UI**：4 键(K1上/K2下/K3确认/K4返回)选题并进入运行界面，任一按键均短响 30ms，**独占 OLED 与 KEY1~4**；当前 task1、task2 仅为硬件/函数测试（前者 M1→M4 单轮正方向，后者固定半径差速圆弧），电机命令直接下发、不做加减速；M1/M2 已全局取反标定，task3~6 骨架待填 |
+| `UIMENU` | `app/app_ui_task.c` | 30 ms 轮询 | **OLED 题目菜单 UI**：4 键(K1上/K2下/K3确认/K4返回)选题并进入运行界面，任一按键均短促嘀声（~2ms 忙等后立即关断），**独占 OLED 与 KEY1~4**；题目业务委托 `app_robot_core` → `app/tasks/taskN.c` 的 `OnEnter/OnLoop/OnExit`（task1 为 M1→M4 单轮正方向测试；task2 为立即执行的固定半径差速圆弧测试；task3 为陀螺仪 PID 闭环左转 90°，✅ 冒烟测试已通过，参数 Kp=1.5/Ki=0.02/Kd=0.2，到位阈值 1.0°；M1/M2 已全局取反标定，task4~6 骨架待填） |
 | `IMU100Hz` | `app/app_imu_uart_task.c` | 10 ms | 读取 ATK-MS6DSV 姿态 + 追加激光测距1(D1)，按 5Hz 整行输出 Roll/Pitch/Yaw/加减速度/D1 |
 | `MOTORTEST` | `app/app_motor_test_task.c` | 20 ms 轮询 | **【默认禁用】** KEY1/KEY2 让 4 个电机（各自独立接口同时下发）正/反转 2 圈测试（按键已让给 UIMENU） |
 | `SERVOSWEEP` | `app/app_servo_test_task.c` | 20 ms | **【默认禁用】4 个舵机各自独立错相摆动**（800~2200us，无按键）；单控用 `BspServo_SetPulseUs(id,us)` |
@@ -142,6 +142,14 @@ A23、A21、A20、A19、A18、A11、A10、A5、A6、A4、A3、A2
 - LSM6DSV16X 无精确 100Hz 档位，当前 ODR 配为 120Hz；`FIFO=0/1/2` 小范围跳动正常。
 - `ATK_MS6DSV_USE_BOOT_RESET` 默认为 0，跳过 boot reset，原因是实测 `RESET_SET` 会导致 SDA 被拉低。
 - 软件 I2C 读最后一字节必须回 NACK 再发 STOP，否则 LSM6DSV16X 会持续占用 SDA。
+
+### IMU Yaw（偏航角）行为约定（已实测）
+
+- **范围**：−180.00° ~ +180.00°（内部厘度 0.01°，即 −18000 ~ +18000）。
+- **转向与 Yaw 变化方向**：小车**左转 → Yaw 递减**（如 180° → 150° → 0° → −179°）；右转 → Yaw 递增。
+- **复位初始值不确定**：每次 MCU 复位后，IMU SFLP 融合初始 Yaw 不同，**不影响相对角度闭环**——只需记录起始 Yaw 计算偏移量（如目标 = 起始 − 90°），不依赖绝对值。
+- **跨界跳变**：Yaw 在 ±180° 边界跳变（−179° ↔ +179°），计算角度差必须用最短路径差值算法（如 `task3.c::AngleDiffCd()`），不可直接减法。
+- **漂移**：无磁力计/外部参考时，Yaw 长期会漂移；短时间（几秒到几十秒）内相对精度足够用于 90°/180° 转弯闭环。
 
 ### 跨模块通信
 

@@ -8,7 +8,7 @@
 
 ## 项目结构
 
-工程主体在 `empty/`：`app/` 放任务、业务流程和题目状态机，题目 N 使用 `app/tasks/taskN.c`；当前题目一、题目二仅用于函数和硬件测试（分别为 M1→M4 单轮正方向、固定半径差速圆弧），菜单任一按键短响 30ms，M1/M2 已在 BSP 全局取反标定。步进电机命令统一直接下发、不做加减速。`bsp/` 放板级与外设驱动，手写 DriverLib 初始化位于 `bsp/board/ti_msp_dl_config.c`；`module/` 放可复用设备/协议模块；`algo/` 放纯算法；`common/` 放功能开关、FreeRTOS 配置和共享消息；`docs/` 放任务、接线、UART 和架构记录。
+工程主体在 `empty/`：`app/` 放任务、业务流程和题目状态机，题目 N 使用 `app/tasks/taskN.c`；题目一 `DIR TEST`（M1→M4 单轮正方向测试）、题目二 `ARC TEST`（固定半径差速圆弧测试）、题目三 `GYRO 90L`（陀螺仪 PID 闭环左转 90°，✅ 冒烟测试已通过），菜单任一按键短促嘀声（~2ms），M1/M2 已在 BSP 全局取反标定。步进电机命令统一直接下发、不做加减速。`algo/` 放可跨题复用的纯算法（PID 控制器、角度差值/归一化），任务层只保留可调参数宏。`bsp/` 放板级与外设驱动，手写 DriverLib 初始化位于 `bsp/board/ti_msp_dl_config.c`；`module/` 放可复用设备/协议模块；`common/` 放功能开关、FreeRTOS 配置和共享消息；`docs/` 放任务、接线、UART 和架构记录。
 
 `source/ti/` 与 `empty/third_party/` 属于 SDK 或第三方代码，除非任务明确涉及 SDK 或 FreeRTOS 移植，否则不要修改。
 

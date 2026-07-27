@@ -6,7 +6,7 @@
 |---|---|---:|---:|---:|---|---|---|
 | `LED1` | `app/app_led_task.c` | 300 ms | `APP_LED_TASK_PRIORITY` | `APP_LED_TASK_STACK_WORDS` | 无 | LED1(PB25) 翻转 | 当前已启动，用作 FreeRTOS 调度心跳 |
 | `UART0TX` | `app/app_uart_test_task.c` | 10 ms 接收轮询 | `APP_UART_TEST_TASK_PRIORITY` | `APP_UART_TEST_TASK_STACK_WORDS` | UART0 RX 任意非换行字符 | 返回 `UART RX OK` | **【默认禁用，`APP_FEATURE_UART_ECHO=0`】** 调试时需串口收发验证可改回 1 启用 |
-| `UIMENU` | `app/app_ui_task.c` | 30ms 按键轮询 | `APP_UI_TASK_PRIORITY` | `APP_UI_TASK_STACK_WORDS` | KEY1~4(PA28/PA31/PA30/PA29) 按下沿；**IMU Yaw 快照**(`AppImuUartTask_GetYaw`)、**激光距离**(`LaserLd14_GetLatest`)、**小球检测**(`BallParser_GetLatest`) | OLED(PB8/PB9 软件I2C) 题目菜单/运行界面 + 蜂鸣器(PA15)短响 30ms + 底部传感器状态栏 + 右侧小球面板 | **OLED 题目菜单 UI**：任一按键按下沿均短响 30ms；菜单态 K1上移/K2下移(循环)、K3确认进入运行界面、K4返回菜单。题目一 `DIR TEST` 和题目二 `ARC TEST` 当前仅用于函数和硬件测试。底部常驻**传感器/系统状态栏** `[R:ON/OFF ]Y:<yaw> D:<dist>mm`(局部低频刷；启用 `APP_FEATURE_RELAY` 时最前显示继电器逻辑状态，便于对照实际动作核对极性)；启用 `APP_FEATURE_BALL_VISION` 时菜单右半常驻**小球检测文字面板** `BALL`/`F/n/x/y`(局部低频刷)。**独占 OLED 与 4 按键**，界面整屏刷为事件驱动 |
+| `UIMENU` | `app/app_ui_task.c` | 30ms 按键轮询 | `APP_UI_TASK_PRIORITY` | `APP_UI_TASK_STACK_WORDS` | KEY1~4(PA28/PA31/PA30/PA29) 按下沿；**IMU Yaw 快照**(`AppImuUartTask_GetYaw`)、**激光距离**(`LaserLd14_GetLatest`)、**小球检测**(`BallParser_GetLatest`) | OLED(PB8/PB9 软件I2C) 题目菜单/运行界面 + 蜂鸣器(PA15)短促嘀声(~2ms) + 底部传感器状态栏 + 右侧小球面板 | **OLED 题目菜单 UI**：任一按键按下沿均短促嘀一声（同周期内忙等约 2ms 后立即关断）；菜单态 K1上移/K2下移(循环)、K3确认进入运行界面、K4返回菜单。题目一 `DIR TEST` 和题目二 `ARC TEST` 当前仅用于函数和硬件测试，题目三 `GYRO 90L` 为陀螺仪闭环左转 90°（✅ 冒烟测试已通过）。底部常驻**传感器/系统状态栏** `[R:ON/OFF ]Y:<yaw> D:<dist>mm`(局部低频刷；启用 `APP_FEATURE_RELAY` 时最前显示继电器逻辑状态，便于对照实际动作核对极性)；启用 `APP_FEATURE_BALL_VISION` 时菜单右半常驻**小球检测文字面板** `BALL`/`F/n/x/y`(局部低频刷)。**独占 OLED 与 4 按键**，界面整屏刷为事件驱动 |
 | `IMU100Hz` | `app/app_imu_uart_task.c` | 10 ms | `APP_IMU_UART_TASK_PRIORITY` | `APP_IMU_UART_TASK_STACK_WORDS` | ATK-MS6DSV/LSM6DSV16X FIFO 融合姿态 + 加速度/角速度输出寄存器、PA16 INT 电平、**激光测距1(`LaserLd14_GetLatest`)** | Yaw 快照(`AppImuUartTask_GetYaw`，供 OLED 状态栏)；串口遥测（由 `APP_FEATURE_IMU_UART_LOG` 独立控制，**默认 0=静默**，调试时改 1 恢复 5Hz 打印） | 欧拉角每 10ms 读 + 临界区发布 Yaw 快照；串口打印由 `APP_FEATURE_IMU_UART_LOG` 门控（默认关，不刷任何串口）；IR 读取 + Yaw 发布始终运行，OLED 状态栏不依赖串口 |
 | `MOTORTEST` | `app/app_motor_test_task.c` | 20ms 按键轮询 | `APP_MOTOR_TEST_TASK_PRIORITY` | `APP_MOTOR_TEST_TASK_STACK_WORDS` | KEY1/KEY2(PA28/PA31) 按下沿 | 四路 STEP(PB10/PB6/PB13/PB26)+四路 DIR(PB11/PB7/PB14/PB27)，PA13 ENN、MS1/MS2 共用；UART0 打印状态，更新 `g_motorDiag` 供 OLED 显示 | **【默认禁用，`APP_FEATURE_MOTOR=0`】** 按键让给 UIMENU。4 电机一起转测试：K1 全部正转2圈、K2 全部反转2圈；四路按目标速度直接开始，各自由 TIMG0/8/12/6 中断计步；1/32细分6400脉冲/圈 |
 | `SERVOSWEEP` | `app/app_servo_test_task.c` | 20ms | `APP_SERVO_TEST_TASK_PRIORITY` | `APP_SERVO_TEST_TASK_STACK_WORDS` | 无（自动） | 四路 SERVO PWM(PA8/PA9/PB4/PA12)，TIMA0 50Hz | **【默认禁用，`APP_FEATURE_SERVO=0`】** 4 舵机各自独立错相摆动（800↔2200us，不用按键），演示四路可完全独立控制；每秒串口打印 `SERVO us S1=.. S2=.. S3=.. S4=..`。脉宽经 `BspServo_SetPulseUs` 极性补偿；四路方向须一次 `setCCPDirection` 写全(见下) |
@@ -56,7 +56,7 @@ Nrf24TxResult_t Nrf24_SendUsbUartText(const uint8_t *text, uint8_t textLength);
   - `K1`(PA28) 上移（循环回绕）、`K2`(PA31) 下移（循环回绕）
   - `K3`(PA30) 确认：进入选中题目运行界面（先调 `onEnter`）
   - `K4`(PA29) 返回：从运行界面回菜单（先调 `onExit`）；菜单态无动作
-- **题目表**：题名/题数登记在 `app_robot_core.c` 的 `s_robotTasks[]`（题目一为 `DIR TEST`，题目二为 `ARC TEST`）；**各题业务钩子 `OnEnter/OnLoop/OnExit` 实现在 [`../app/tasks/`](../app/tasks/) 的 `taskN.c`**。两者当前仅用于函数和硬件测试，尚不是真正赛题：题目一按 M1→M2→M3→M4 单轮正向各转两圈，核对安装位置和方向；题目二调用 `DiffDrive_RunRadiusTurn(半径,中心RPM)`，测试固定半径差速圆弧。实车标定 M1/M2 已在 BSP 取反，故正 RPM/正 steps 对四路均代表小车前进。所有电机命令直接下发、不走梯形加速；当前圆弧参数在 `task2.c` 顶部，持续运行至 K4 立即停表退出；详见 [DIFF_DRIVE.md](DIFF_DRIVE.md)。UIMENU 只负责显示与按键，经 robot_core 分发调用。
+- **题目表**：题名/题数登记在 `app_robot_core.c` 的 `s_robotTasks[]`（题目一 `DIR TEST`、题目二 `ARC TEST`、题目三 `GYRO 90L`）；**各题业务钩子 `OnEnter/OnLoop/OnExit` 实现在 [`../app/tasks/`](../app/tasks/) 的 `taskN.c`**。题目一按 M1→M2→M3→M4 单轮正向各转两圈，核对安装位置和方向；题目二调用 `DiffDrive_RunRadiusTurn(半径,中心RPM)`，测试固定半径差速圆弧。题目三为陀螺仪闭环左转 90° 冒烟测试：进入后记录起始 Yaw，以 PID 原地转向使 Yaw 减小 90°，到位后停车保持。实车标定 M1/M2 已在 BSP 取反，故正 RPM/正 steps 对四路均代表小车前进。所有电机命令直接下发、不走梯形加速；当前圆弧参数在 `task2.c` 顶部，PID 参数在 `task3.c` 顶部。UIMENU 只负责显示与按键，经 robot_core 分发调用。
 - **刷屏策略**：软件 I2C 整屏刷约 50ms，故只在选中项/状态变化时才重绘（事件驱动），平时仅轻量轮询按键，CPU 友好。
 - **传感器状态栏**（`Y:<yaw> D:<dist>mm`）：常驻底部（菜单态 Y=56、运行态 Y=48），实时显示陀螺仪 Yaw（度，1 位小数）与激光测距（mm），方便一眼判断两个传感器是否在工作。
   - 数据来源：Yaw 取 `IMU100Hz` 任务发布的线程安全快照 `AppImuUartTask_GetYaw()`（IMU 未就绪显示 `---`）；距离取 `LaserLd14_GetLatest()`（无有效帧显示 `---`）。UI 任务**不直接访问软件 I2C/激光**，避免与 IMU 任务争用总线。
@@ -86,6 +86,28 @@ Nrf24TxResult_t Nrf24_SendUsbUartText(const uint8_t *text, uint8_t textLength);
 - 刷新：两行区(x66,y40,62×16)用 `OLED_UpdateArea` **只局部刷**，与底部状态栏、BALL 面板同频（`APP_UI_STATUS_DIVIDER`，默认 300ms），面积小、频率低，不打断按键响应；分隔线只在整屏刷时画。
 - 运行态(RUN)不显示该面板；关闭 `APP_FEATURE_LINE_TRACK`（且 BALL 也关）时菜单恢复整行高亮与整宽标题，右半留空。
 - ⚠️ PB17~PB23 **非 5V 容忍**：灰度模块信号须 3.3V 电平，否则需分压/电平转换（见 `HARDWARE_WIRING.md` 与接线文档风险 R2）。
+
+### 题目业务说明
+
+各题的具体实现在 `app/tasks/taskN.c`，通过 `app_robot_core.c` 的 dispatch 表登记后被 UIMENU 调用。
+
+**题目一 `DIR TEST`**（`task1.c`）：
+- 进入后按 M1→M2→M3→M4 顺序单轮正向各转 2 圈（60 RPM），每一路完全停稳后才切换。
+- 目的：核对四轮安装位置（M1=左前、M2=左后、M3=右前、M4=右后）和方向标定（M1/M2 已 BSP 取反）。
+- 四轮走完后停车保持，K4 退出急停失能。
+
+**题目二 `ARC TEST`**（`task2.c`）：
+- 进入后调用 `DiffDrive_RunRadiusTurn(半径, 中心RPM)` 立即执行固定半径差速圆弧。
+- 当前默认参数：半径 200mm（左转）、中心 100 RPM；改 `task2.c` 顶部 `T2_TURN_RADIUS_MM` / `T2_CENTER_RPM` 宏即可测试不同圆弧。
+- 持续圆弧行驶，K4 退出急停失能。
+
+**题目三 `GYRO 90L`**（`task3.c`，✅ 冒烟测试已通过）：
+- 进入后记录起始 Yaw，以 PID 闭环原地转向（左侧后退、右侧前进），使 Yaw 减小 90°（左转）。
+- 到位后（误差 < 1° 连续 450ms）停车保持，K4 退出急停失能。
+- 已验证 PID 参数（`task3.c` 顶部）：`T3_KP=1.5`、`T3_KI=0.02`、`T3_KD=0.2`；到位阈值 1.0°、最小 RPM=10、输出限幅 ±120 RPM、积分限幅 ±40 RPM。
+- Yaw 取自 `AppImuUartTask_GetYaw()`（厘度 0.01°，范围 −180°~+180°）。角度差使用最短路径算法（`AngleDiffCd()`）处理 ±180° 跨界跳变。
+- 复位初始 Yaw 不同不影响闭环——本题使用相对角度（目标 = 起始 − 90°）。
+- 当前为单环 PID 冒烟测试版本：dt 固定 30ms、无前馈、到位后被动保持（步进使能自带保持力矩）。后续可按需要加入前馈/死区 PID/主动漂移补偿。
 
 ## PERIPH 外设测试行为
 

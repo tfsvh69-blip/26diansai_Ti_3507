@@ -911,6 +911,31 @@
           </Files>
         </Group>
         <Group>
+          <GroupName>algo</GroupName>
+          <Files>
+            <File>
+              <FileName>pid.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\algo\pid.c</FilePath>
+            </File>
+            <File>
+              <FileName>pid.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\algo\pid.h</FilePath>
+            </File>
+            <File>
+              <FileName>angle_utils.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\algo\angle_utils.c</FilePath>
+            </File>
+            <File>
+              <FileName>angle_utils.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\algo\angle_utils.h</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
           <GroupName>third_party_st_lsm6dsv16x</GroupName>
           <Files>
             <File>
