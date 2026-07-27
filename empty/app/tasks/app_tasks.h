@@ -10,6 +10,7 @@ extern "C" {
  *
  * 【第 N 题的代码在哪？】就在本目录的 taskN.c 里。
  *   task1.c → 第 1 题   task2.c → 第 2 题   ...   task6.c → 第 6 题
+ *   当前 task1.c、task2.c 仅用于函数和硬件测试，尚不是真正赛题。
  *
  * 每道题只需实现三个钩子（下方声明），由题目菜单 UI 通过 app_robot_core 调用：
  *   TaskN_OnEnter()  进入本题时调用一次——初始化状态机、清零变量、使能电机等。
@@ -24,10 +25,12 @@ extern "C" {
  *   "寻迹到路口就转弯""走够距离就停"这类判断，直接在对应 case 里写即可（你比我更快）。
  *
  * 【能调用的底层接口】（题目里直接 include 对应头文件即可）
- *   电机 bsp_motor.h ：BspMotor_SetSpeedRpm(id, rpm) 连续转（±方向）、
+ *   电机 bsp_motor.h ：所有命令均直接下发；BspMotor_SetSpeedRpm(id, rpm) 连续转（±方向）、
  *                      BspMotor_MoveSteps(id, steps, rpm) 定距、
  *                      BspMotor_SetSpeedRpm4(...) / BspMotor_MoveSteps4(...) 四轮一起、
  *                      BspMotor_StopAll()、BspMotor_IsStopped(id)/AllStopped()/GetRemainingSteps(id) 判完成。
+ *   差速圆弧 diff_drive.h：DiffDrive_RunRadiusTurn(半径,中心RPM) 立即执行圆弧，
+ *                          自动下发 M1/M2 左侧、M3/M4 右侧。
  *   舵机 bsp_servo.h ：BspServo_SetPulseUs(id, us)。
  *   姿态 app_imu_uart_task.h：AppImuUartTask_GetYaw(&cd) 取 Yaw(0.01°)。
  *   激光 laser_ld14.h：LaserLd14_GetLatest(&d) 取距离(mm)。

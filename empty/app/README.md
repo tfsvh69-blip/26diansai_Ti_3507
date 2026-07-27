@@ -17,8 +17,8 @@
 | **2** | [`app_main.c`](app_main.c) | `App_Init()` 里用 `APP_FEATURE_*` 门控创建了哪些任务、注册了哪些 RX 中断 | 拿到"任务清单 + 功能开关"全貌 |
 | **3** | [`app_led_task.c`](app_led_task.c) | 最简单的任务：每 300ms 翻转 PB25 心跳灯 | 入门理解 FreeRTOS 任务的最简写法 |
 | **4** | [`app_ui_task.c`](app_ui_task.c) | **当前主界面 UIMENU**：4 键选题/运行状态机、底部传感器状态栏(Yaw/激光)、右侧小球检测文字面板；事件驱动整屏刷 + 局部低频刷 | 现在上电看到的就是它；理解 OLED 独占与分区刷新 |
-| **5** | [`app_robot_core.c`](app_robot_core.c) / [`.h`](app_robot_core.h) | 6 道题的 **dispatch 表**：登记每题 `OnEnter/OnLoop/OnExit` 钩子，被 UIMENU 在运行态调用；进入题目时统一蜂鸣器短响 | 题目业务与 UI 解耦；**只登记不写业务** |
-| **5.1** | [`tasks/app_tasks.h`](tasks/app_tasks.h) + [`tasks/task1.c`](tasks/task1.c) … [`task6.c`](tasks/task6.c) | **各题业务代码就在这里**：第 N 题 = `taskN.c`，每题一套 `state 枚举 + OnLoop 里的 switch 状态机骨架`；task1 是可直接改的示例（定距前进→停） | 写赛题状态机只改这里；`app_tasks.h` 顶部有"怎么填 + 能调哪些底层接口"说明 |
+| **5** | [`app_robot_core.c`](app_robot_core.c) / [`.h`](app_robot_core.h) | 6 道题的 **dispatch 表**：登记每题 `OnEnter/OnLoop/OnExit` 钩子，被 UIMENU 在运行态调用 | 题目业务与 UI 解耦；**只登记不写业务** |
+| **5.1** | [`tasks/app_tasks.h`](tasks/app_tasks.h) + [`tasks/task1.c`](tasks/task1.c) … [`task6.c`](tasks/task6.c) | **各题业务代码就在这里**：第 N 题 = `taskN.c`，每题一套 `state 枚举 + OnLoop 里的 switch 状态机骨架`；task1 测试 M1~M4 正方向，task2 测试固定半径差速圆弧，task3~6 为待填骨架 | 写赛题状态机只改这里；`app_tasks.h` 顶部有“怎么填 + 能调哪些底层接口”说明 |
 | **6** | [`app_imu_uart_task.c`](app_imu_uart_task.c) | IMU 姿态：GPIO 软件 I2C → LSM6DSV16X → SFLP 融合欧拉角；发布线程安全 **Yaw 快照** 供 OLED；串口遥测默认静默 | 最复杂的任务：I2C 超时/总线恢复、FIFO、打印节流、非阻塞重试 |
 | **7** | [`app_uart_test_task.c`](app_uart_test_task.c) | UART0 接收回显自检（**默认禁用**，`APP_FEATURE_UART_ECHO=0`） | 理解串口多任务共享的递归互斥量模式；注意它与小球接收互斥 |
 | **8** | [`app_motor_test_task.c`](app_motor_test_task.c) | 四电机定圈旋转（**默认禁用**，按键让给 UIMENU） | "任务发令→bsp+ISR 执行→自动停表"的分层模型 |
@@ -71,7 +71,7 @@ app 层（本目录）
 1. 打开 [`tasks/taskN.c`](tasks/)（第 N 题就在这个文件），在文件头注释写上本题要求。
 2. 按本题流程改 **状态枚举**（如 `直行→路口→转弯→…→完成`）。
 3. 在 `OnLoop()` 的 `switch(state)` 里，每个 `case` 写"**做什么动作** + **什么条件切到下一个状态**"。
-   `OnLoop` 每 30ms 被调一次，做机动级决策足够（电机加减速由底层 ISR 后台完成）。
+   `OnLoop` 每 30ms 被调一次，做机动级决策足够（电机命令会直接下发，定距计步由底层 ISR 后台完成）。
 4. `OnEnter` 里做一次性准备（使能电机、舵机归中、清零），`OnExit` 里急停+失能保证安全。
 5. 题名/题数在 [`app_robot_core.c`](app_robot_core.c) 的 `s_robotTasks[]` 里改。
 
@@ -81,8 +81,9 @@ app 层（本目录）
 
 | 需求 | 调用 | 说明 |
 |---|---|---|
-| 指定速度+方向（连续转） | `BspMotor_SetSpeedRpm(id, rpm)` | **rpm 正=正转/负=反转/0=平滑停**；单位 RPM |
+| 指定速度+方向（连续转） | `BspMotor_SetSpeedRpm(id, rpm)` | **rpm 正=小车前进方向/负=反转/0=立即停**；单位 RPM；命令直接下发；M1/M2 已在 BSP 完成取反标定 |
 | 四轮一起给速度（差速/整车） | `BspMotor_SetSpeedRpm4(r1,r2,r3,r4)` | 一次设四路，便于写差速 |
+| 兼容的立即速度接口 | `BspMotor_SetSpeedRpm4Immediate(r1,r2,r3,r4)` | 与常规速度接口相同，所有速度命令均立即以目标 RPM 运行，`0` 为立即停 |
 | 指定脉冲/走固定距离 | `BspMotor_MoveSteps(id, steps, rpm)` | **steps 符号=方向、\|steps\|=脉冲数**；走完自动停 |
 | 四轮一起定距（整车前进/原地转） | `BspMotor_MoveSteps4(s1,s2,s3,s4,rpm)` | 直行=四个 steps 相同；原地转=左右反号 |
 | 判断动作是否走完 | `BspMotor_IsStopped(id)` / `BspMotor_AllStopped()` / `GetRemainingSteps(id)` | 状态机切状态的常用条件 |
@@ -90,5 +91,9 @@ app 层（本目录）
 | 圈↔脉冲换算 | `BspMotor_StepsPerRev()` | = 200×细分（1/32→6400） |
 | 左右镜像标定 | `BspMotor_SetDirInvert(id, true)` | 让"正 rpm=前进"对四轮统一成立 |
 
-`id` 取 `BSP_MOTOR_1..BSP_MOTOR_4`。四路各占独立定时器（TIMG0/8/12/6）与独立 ZERO 中断做梯形加减速，
-互不影响；全部接口**非阻塞**（调用即返回，运动在后台跑）。1/32 细分下安全转速约 5~300 RPM。
+`id` 取 `BSP_MOTOR_1..BSP_MOTOR_4`。四路各占独立定时器（TIMG0/8/12/6）与独立 ZERO 中断计步，
+互不影响；全部接口**非阻塞**、直接下发（调用即返回，运动在后台跑）。1/32 细分下安全转速约 5~300 RPM；直接高速起转可能失步，应先低速实测。
+
+### 固定半径差速圆弧接口（[`../module/diff_drive/diff_drive.h`](../module/diff_drive/diff_drive.h)）
+
+日常直接调用 `DiffDrive_RunRadiusTurn(半径, 中心RPM)`：正半径左转、负半径右转，内部立即映射为 M1/M2 左侧同速、M3/M4 右侧同速，不经过梯形加速，也不会私自缩放输入速度。默认几何为左右轮距 201 mm、前后轮距 201 mm、胎宽 27 mm。调用示例和侧滑校正方法见 [`../docs/DIFF_DRIVE.md`](../docs/DIFF_DRIVE.md)。

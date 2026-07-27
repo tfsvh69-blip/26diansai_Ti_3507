@@ -215,7 +215,7 @@ void SYSCFG_DL_GPIO_init(void)
         DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_DOWN,
         DL_GPIO_DRIVE_STRENGTH_LOW, DL_GPIO_HIZ_DISABLE);
 
-    /* 电机2/3/4 STEP 为各自定时器 CCP0 复用输出，DIR 为普通推挽 GPIO（低=正向）。 */
+    /* 电机2/3/4 STEP 为各自定时器 CCP0 复用输出，DIR 为普通推挽 GPIO；逻辑方向由 bsp_motor 标定。 */
     DL_GPIO_initPeripheralOutputFunction(MOTOR2_STEP_IOMUX, MOTOR2_STEP_IOMUX_FUNC);
     DL_GPIO_initPeripheralOutputFunction(MOTOR3_STEP_IOMUX, MOTOR3_STEP_IOMUX_FUNC);
     DL_GPIO_initPeripheralOutputFunction(MOTOR4_STEP_IOMUX, MOTOR4_STEP_IOMUX_FUNC);
@@ -331,7 +331,8 @@ void SYSCFG_DL_GPIO_init(void)
     /*
      * 上电安全默认状态（v1.1）：
      * GPIOA：ENN(PA13) 拉高禁用四路驱动；NRF24 CSN 释放为高，其余输出为低。
-     * GPIOB：LED1/LED3 灭；DIR 正向(低)；MS1=0/MS2=0；OLED SCL/SDA 空闲拉高。
+     * GPIOB：LED1/LED3 灭；DIR 原始低电平；MS1=0/MS2=0；OLED SCL/SDA 空闲拉高。
+     * BspMotor_Init 随后会写入实车标定后的逻辑方向与默认 1/32 细分。
      * STEP(PB10) 由定时器输出，这里只使能输出、不手动置位。
      */
     DL_GPIO_setPins(GPIOA, TMC_ENN_PIN);

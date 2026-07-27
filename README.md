@@ -69,19 +69,19 @@ BOOT: start scheduler
 
 ### 1. 四路独立步进电机驱动（[empty/bsp/bsp_motor.h](empty/bsp/bsp_motor.h)）
 
-四个电机各占一个独立定时器（TIMG0/8/12/6）+ 各自中断做梯形加减速与精确计步，**可各自不同速度/方向/距离**（小车差速/转弯前提）。接口用 **RPM 单位、正负号定方向**，全部非阻塞：
+四个电机各占一个独立定时器（TIMG0/8/12/6）+ 各自中断计步，**可各自不同速度/方向/距离**（小车差速/转弯前提）。接口用 **RPM 单位、正负号定方向**，全部非阻塞；命令直接以目标 RPM 下发、不做加减速。实车已将 M1(左前)、M2(左后)的方向取反，所以四路正 RPM/正 steps 均表示小车前进：
 
 ```c
 BspMotor_EnableAll();                          // 起转前先使能四路驱动
 
-BspMotor_SetSpeedRpm(BSP_MOTOR_1, 150);        // 连续转：正=正转/负=反转/0=平滑停
+BspMotor_SetSpeedRpm(BSP_MOTOR_1, 150);        // 连续转：正=正转/负=反转/0=立即停
 BspMotor_SetSpeedRpm4(150, -150, 150, -150);   // 四轮一次给速度（差速）
 BspMotor_MoveSteps(BSP_MOTOR_1, 6400, 120);    // 定距：走 6400 脉冲(=1圈@1/32) 后自动停
 BspMotor_MoveSteps4(s1, s2, s3, s4, 120);      // 四轮一起定距（直行/原地转）
 
 BspMotor_IsStopped(BSP_MOTOR_1);               // 判单路走完
 BspMotor_AllStopped();                         // 判四路都停（状态机切状态用）
-BspMotor_StopAll();                            // 平滑停全部
+BspMotor_StopAll();                            // 立即停全部
 ```
 `id` 取 `BSP_MOTOR_1..4`。1/32 细分下安全转速约 5~300 RPM。完整速查见 [empty/app/README.md](empty/app/README.md#小车开发速查电赛控制题)。
 
@@ -93,7 +93,7 @@ BspMotor_StopAll();                            // 平滑停全部
 - `TaskN_OnLoop()`   进入后每 30ms 调用一次——在 `switch(state)` 里写状态机主体；
 - `TaskN_OnExit()`   返回菜单时急停 + 失能，保证安全。
 
-每个 `taskN.c` 已给好 **状态枚举 + OnLoop 的 switch 骨架**：按本题流程增删状态（直行→路口→转弯→…→完成），在每个 `case` 里写"做什么动作 + 什么条件切下一个状态"。task1 是可直接改的示例，task2~6 为待填骨架。开发说明与底层接口速查见 [empty/app/tasks/app_tasks.h](empty/app/tasks/app_tasks.h) 顶部注释。
+每个 `taskN.c` 都按 **状态枚举 + OnLoop 的 switch** 组织：按本题流程增删状态（直行→路口→转弯→…→完成），在每个 `case` 里写“做什么动作 + 什么条件切下一个状态”。当前 task1、task2 仅用于函数和硬件测试：前者测试四轮方向，后者测试固定半径差速圆弧（当前为 200 mm 左转、中心 100 RPM，直接起转）；task3~6 为待填骨架。差速接口与实车侧滑校正见 [empty/docs/DIFF_DRIVE.md](empty/docs/DIFF_DRIVE.md)。
 
 ---
 

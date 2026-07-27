@@ -339,7 +339,7 @@
               <MiscControls></MiscControls>
               <Define>__MSPM0G3507__</Define>
               <Undefine></Undefine>
-              <IncludePath>..\..\source\third_party\CMSIS\Core\Include;..\..\source;..;..\app;..\app\tasks;..\bsp;..\bsp\board;..\bsp\delay;..\common;..\module;..\module\oled;..\module\imu;..\module\laser;..\module\vision;..\module\nrf24l01;..\algo;..\third_party\FreeRTOS\include;..\third_party\FreeRTOS\portable\ARM_CM0;..\third_party\ti_driverlib;..\third_party\st_lsm6dsv16x</IncludePath>
+              <IncludePath>..\..\source\third_party\CMSIS\Core\Include;..\..\source;..;..\app;..\app\tasks;..\bsp;..\bsp\board;..\bsp\delay;..\common;..\module;..\module\oled;..\module\imu;..\module\laser;..\module\vision;..\module\nrf24l01;..\module\diff_drive;..\algo;..\third_party\FreeRTOS\include;..\third_party\FreeRTOS\portable\ARM_CM0;..\third_party\ti_driverlib;..\third_party\st_lsm6dsv16x</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -892,6 +892,21 @@
               <FileName>nrf24l01.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\module\nrf24l01\nrf24l01.h</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>module_diff_drive</GroupName>
+          <Files>
+            <File>
+              <FileName>diff_drive.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\module\diff_drive\diff_drive.c</FilePath>
+            </File>
+            <File>
+              <FileName>diff_drive.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\module\diff_drive\diff_drive.h</FilePath>
             </File>
           </Files>
         </Group>

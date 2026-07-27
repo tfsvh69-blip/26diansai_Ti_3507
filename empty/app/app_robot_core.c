@@ -3,12 +3,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#include "FreeRTOS.h"
-#include "task.h"
-
 #include "app_config.h"
 #include "app_tasks.h"
-#include "bsp_buzzer.h"
 #include "bsp_uart.h"
 
 /* ==================================================================
@@ -18,7 +14,7 @@
  *   - 每道题 = 一张表项（题名 + OnEnter/OnLoop/OnExit 三个钩子）；
  *   - 各题的【具体业务代码在 app/tasks/taskN.c】里，本文件只做"登记 + 分发"；
  *   - UIMENU 进入某题调 EnterTask(→OnEnter)，运行态每 30ms 调 LoopTask(→OnLoop)，
- *     返回菜单调 ExitTask(→OnExit)；进入时本模块统一给一次蜂鸣器短响作反馈。
+ *     返回菜单调 ExitTask(→OnExit)；按键蜂鸣器反馈由 UIMENU 统一处理。
  *
  * 要加/改某题逻辑：改对应的 app/tasks/taskN.c；要改题名/题数：改本文件的 s_robotTasks[]。
  * ================================================================== */
@@ -39,8 +35,8 @@ typedef struct {
  * 钩子实现分别在 app/tasks/task1.c ~ task6.c。
  */
 static const RobotTask_t s_robotTasks[] = {
-    { "Task 1", Task1_OnEnter, Task1_OnLoop, Task1_OnExit },
-    { "Task 2", Task2_OnEnter, Task2_OnLoop, Task2_OnExit },
+    { "DIR TEST", Task1_OnEnter, Task1_OnLoop, Task1_OnExit },
+    { "ARC TEST", Task2_OnEnter, Task2_OnLoop, Task2_OnExit },
     { "Task 3", Task3_OnEnter, Task3_OnLoop, Task3_OnExit },
     { "Task 4", Task4_OnEnter, Task4_OnLoop, Task4_OnExit },
     { "Task 5", Task5_OnEnter, Task5_OnLoop, Task5_OnExit },
@@ -86,11 +82,6 @@ void RobotCore_EnterTask(uint32_t taskIdx)
     if (taskIdx >= ROBOT_TASK_COUNT) {
         return;
     }
-
-    /* 统一的"已进入"反馈：蜂鸣器短响一声（各题不必自己再写）。 */
-    BspBuzzer_On();
-    vTaskDelay(pdMS_TO_TICKS(30U));
-    BspBuzzer_Off();
 
     if (s_robotTasks[taskIdx].onEnter != NULL) {
         s_robotTasks[taskIdx].onEnter();

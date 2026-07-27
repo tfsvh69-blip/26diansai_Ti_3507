@@ -11,6 +11,7 @@
 #include "app_imu_uart_task.h"
 #include "app_robot_core.h"
 #include "ball_parser.h"
+#include "bsp_buzzer.h"
 #include "bsp_key.h"
 #include "bsp_line.h"
 #include "bsp_relay.h"
@@ -86,6 +87,11 @@
 #define UI_RUN_NAME_Y     (40)
 #define UI_RUN_STATUS_Y   (48)    /* 运行态：传感器状态栏 */
 #define UI_RUN_HINT_Y     (56)
+
+/* 任一按键按下沿触发一次 30ms 蜂鸣器反馈，时长按 UI 轮询节拍换算。 */
+#define UI_KEY_BEEP_DURATION_MS  (30U)
+#define UI_KEY_BEEP_TICKS        \
+    ((pdMS_TO_TICKS(UI_KEY_BEEP_DURATION_MS) + APP_UI_POLL_TICKS - 1U) / APP_UI_POLL_TICKS)
 
 /* 菜单当前选中项与可见窗口首项（题目多于一屏时滚动）。 */
 static uint32_t s_sel     = 0U;
@@ -396,6 +402,7 @@ static void AppUiTask_Entry(void *argument)
     bool       prev[BSP_KEY_COUNT];
     uint32_t   i;
     uint32_t   statusTick = 0U;
+    uint32_t   keyBeepTicks = 0U;
     TickType_t lastWakeTime;
 
     (void)argument;
@@ -417,12 +424,28 @@ static void AppUiTask_Entry(void *argument)
     lastWakeTime = xTaskGetTickCount();
     for (;;) {
         bool edge[BSP_KEY_COUNT];
+        bool anyKeyPressed = false;
+
+        /* 上一次按键触发的短响到时后关闭蜂鸣器，不阻塞 UI 按键轮询。 */
+        if (keyBeepTicks > 0U) {
+            keyBeepTicks--;
+            if (keyBeepTicks == 0U) {
+                BspBuzzer_Off();
+            }
+        }
 
         /* 每键做一次去抖后的按下沿检测（30ms 轮询本身即去抖窗口）。 */
         for (i = 0U; i < (uint32_t)BSP_KEY_COUNT; i++) {
             bool now = BspKey_IsPressed((BspKeyId_t)i);
             edge[i]  = (now && !prev[i]);
             prev[i]  = now;
+            anyKeyPressed = anyKeyPressed || edge[i];
+        }
+
+        /* 菜单态和运行态的任一按键都短响一次；K3 不再额外双响。 */
+        if (anyKeyPressed) {
+            BspBuzzer_On();
+            keyBeepTicks = UI_KEY_BEEP_TICKS;
         }
 
         if (state == UI_STATE_MENU) {

@@ -22,6 +22,7 @@
 | `module/laser/` | 激光测距1（LD14）串口协议解析器，纯软件、按字节喂入、可复用 |
 | `module/vision/` | 上位机小球检测报文 `$BALL`（NMEA+XOR）解析器，纯软件、按字节喂入、可复用 |
 | `module/nrf24l01/` | NRF24L01+ 寄存器驱动，提供带自动重传、状态轮询和超时保护的固定载荷发送接口，以及 USB 无线串口文本发送接口 |
+| `module/diff_drive/` | 四轮差速圆弧模块：根据带符号半径计算左右 RPM，并一次映射到 M1/M2、M3/M4；标称左右轮距 201 mm |
 | `docs/` | 项目上下文、任务表、接线表、AI 维护记录 |
 | `third_party/FreeRTOS/` | FreeRTOS 内核源码 |
 | `third_party/ti_driverlib/` | TI DriverLib 文件 |
@@ -39,9 +40,10 @@
 
 - 引脚以 `pcb引脚配置文档/v1.1/机器人控制板_接线说明.md`（v1.1 机器人主控板）为准，v1.0 扩展板配置已废弃。
 - LED：LED1=PB25(心跳灯，`LED1` 任务每 300ms 翻转)、LED2=PA7、LED3=PB12，均高电平点亮；LED2/LED3 由 `PERIPH` 外设测试任务翻转。
-- 蜂鸣器：PA15，有源蜂鸣器高电平响，普通 GPIO；由 `PERIPH` 任务做通断测试。
+- 蜂鸣器：PA15，有源蜂鸣器高电平响，普通 GPIO；`UIMENU` 对任一按键按下沿短响 30ms，`PERIPH` 任务可做通断测试。
 - OLED：板载 0.96 寸 OLED，软件 I2C，SCL=PB9/SDA=PB8；`PERIPH` 任务刷屏显示调试测试数据。TMC 细分已改到 PB0/PB1，与 OLED 不再冲突。
-- 电机1~4（TMC2209 STEP/DIR）：STEP=PB10/PB6/PB13/PB26（TIMG0/TIMG8/TIMG12/TIMG6 各自 CCP0）、DIR=PB11/PB7/PB14/PB27，ENN=PA13(低有效,四路共用)、MS1=PB0/MS2=PB1(四路共用细分)。**v1.9 起四路完全独立**：每路各开自己的 ZERO 中断做梯形斜坡+计步，可各自不同速度/方向/距离（小车差速/转弯前提）。对上 RPM 单位接口 `BspMotor_SetSpeedRpm(id,±rpm)` / `BspMotor_MoveSteps(id,±steps,rpm)`，见 `bsp_motor.h`。`MOTORTEST` 任务（默认禁用）用新接口对四路同时下发做验证。
+- 电机1~4（TMC2209 STEP/DIR）：STEP=PB10/PB6/PB13/PB26（TIMG0/TIMG8/TIMG12/TIMG6 各自 CCP0）、DIR=PB11/PB7/PB14/PB27，ENN=PA13(低有效,四路共用)、MS1=PB0/MS2=PB1(四路共用细分)。**v1.9 起四路完全独立**：每路各开自己的 ZERO 中断完成定距计步，可各自不同速度/方向/距离；所有速度、定距和停止命令直接下发，不做梯形加减速。实车安装位置为 M1=左前、M2=左后、M3=右前、M4=右后；M1/M2 与其余两路机械方向相反，已在 `BspMotor_Init()` 全局取反标定，之后正 RPM/正 steps 对四路均表示小车前进。对上接口为 `BspMotor_SetSpeedRpm(id,±rpm)` / `BspMotor_MoveSteps(id,±steps,rpm)`，见 `bsp_motor.h`。直接高速起转可能失步，应先低速实测。`MOTORTEST` 任务（默认禁用）用新接口对四路同时下发做验证。
+- 四轮差速圆弧：`module/diff_drive/diff_drive.h` 以标称左右轮中心距 201 mm 计算圆弧内外轮 RPM，并将左侧命令映射给 M1/M2、右侧映射给 M3/M4。`DiffDrive_RunRadiusTurn(半径,中心RPM)` 是任务可直接调用的立即执行接口，不缩放用户给定速度；超出安全 RPM 则拒绝命令。当前前后轮中心距也是 201 mm、轮胎宽度 27 mm；后二者不进入理想差速公式，但会造成固定四轮转弯侧滑，实车可通过调整 `trackWidthMm` 校正有效轮距。任务二 `ARC TEST` 当前仅用于该函数和硬件测试，详见 `docs/DIFF_DRIVE.md`。
 - 舵机1~4（TIMA0_CCP0~3 PWM）：SERVO=PA8/PA9/PB4/PA12，50Hz；`SERVOTEST` 任务 KEY3/KEY4 让四舵机一起在两位置切换测试。脉宽经 `bsp_servo` 极性补偿(period-pulseUs)，避开 EDGE_ALIGN 反相坑，勿绕过直接写定时器。
 - 继电器（RELAY）：**PA24**(PINCM54，接口 P1-3)，普通 GPIO 推挽输出驱动大电流电磁铁负载，无需 PWM/定时器。**极性已实测确认：高电平=吸合、低电平=断开**(`bsp_relay.c::BSP_RELAY_ACTIVE_LOW=0`；换低电平触发模块把该宏改 1 即整体反相)；上电默认断开(PA24 下拉+清零，`BspRelay_Init` 在 `BspBoard_Init` 里再收敛一次)。封装 `bsp/bsp_relay.h`：`BspRelay_On/Off/Set(bool)/Toggle/IsOn`，语义以「吸合/断开」为准，业务代码 `#include "bsp_relay.h"` 即可直接调。**正常运行由业务代码(`app/tasks/taskN.c`)按需调接口控制、不自动切换**；每 2s 自动切换的 `RELAYTEST` 自检任务默认禁用(见功能开关)。OLED 底部状态栏最前显示 `R:ON/OFF`(`APP_FEATURE_RELAY=1`)。接线风险 R7：PA24 上电前高阻可能误吸合，硬件建议加 10kΩ 下拉+100Ω 限流。
 - UART0：MFCLK 4MHz，115200 8N1，PA10=TX，PA11=RX。当前 **PA11(RX) 接上位机(视觉主机)TX**，经 **UART0 RX 中断**逐字节喂 `module/vision` 解析上位机 `$BALL,found,x,y,n*CHK` 小球检测报文（约 17 帧/秒，已实测正常接收），结果由 `UIMENU` 显示在 OLED 右侧文字面板（开关 `APP_FEATURE_BALL_VISION`）。RX 中断与轮询自检 `APP_FEATURE_UART_ECHO` 互斥（编译期护栏）。
@@ -65,7 +67,7 @@
 | 2 | **OLED 局部刷新**（`PERIPH`→`OLED_UpdateArea(0,0,128,24)` 只推前 3 页 ~384 字节） | 2Hz（每 500ms） | **~20ms/次（突发）** | ~4~5% | CPU 忙等（`Delay_us(2)`）；已从整屏 8 页(~50ms)改为只刷显示用的前 3 页 |
 | 3 | **激光测距 RX 中断**（UART2 230400，每字节 1 次中断喂解析器） | 跟随激光帧率，连续流最坏 ~23000 次/秒 | ~80 周期/字节 + 每帧 CRC~1500 周期 | ~2~3%（满速流时） | 中断，随实际字节率线性缩放 |
 | 4 | **IMU 原始加速度/角速度读取**（打印那拍 2×6 字节软件 I2C 读） | 5Hz | ~2ms/次 | ~1% | CPU 忙等（方案A 已从 100Hz 降到 5Hz） |
-| 5 | **电机 STEP 中断**（`TIMG0/8/12/6_IRQHandler` 梯形斜坡+计步） | 仅电机转动时，每路 = 该路步频（巡航常 ~kHz 级） | ~150 周期/次 | ~1.5%/路（仅转动时） | 中断；**v1.9 四路各自独立 ISR**，同时转动时开销约为单路的 N 倍（N=转动路数），常规巡航速度下仍很小 |
+| 5 | **电机 STEP 中断**（`TIMG0/8/12/6_IRQHandler` 定距计步） | 仅电机转动时，每路 = 该路步频（常 ~kHz 级） | ~150 周期/次 | ~1.5%/路（仅转动时） | 中断；**v1.9 四路各自独立 ISR**，同时转动时开销约为单路的 N 倍（N=转动路数），常规速度下仍很小 |
 | 6 | **小球报文 RX 中断**（UART0 115200，$BALL 约 17 帧/秒×~25 字节） | ~425 次/秒 | ~80 周期/字节 + 每帧解析~数百周期 | <0.5% | 中断；字节率远低于激光，几乎可忽略 |
 | — | LED / 舵机 / 串口回显 / 电机按键轮询等 | 300ms~20ms | 微秒级 | <0.5% | 可忽略 |
 

@@ -56,7 +56,7 @@
 |---|---|---|---|
 | `LED1` | `app/app_led_task.c` | 300 ms | LED1(PB25) 心跳灯，用于判断 FreeRTOS 是否正常调度 |
 | `UART0TX` | `app/app_uart_test_task.c` | 10 ms 轮询 | UART0 接收回显，收到非换行字符返回 `UART RX OK` |
-| `UIMENU` | `app/app_ui_task.c` | 30 ms 轮询 | **OLED 题目菜单 UI**：4 键(K1上/K2下/K3确认/K4返回)选题并进入运行界面，**独占 OLED 与 KEY1~4**；题目业务委托 `app_robot_core` → `app/tasks/taskN.c` 的 `OnEnter/OnLoop/OnExit`（task1 示例、task2~6 骨架待填） |
+| `UIMENU` | `app/app_ui_task.c` | 30 ms 轮询 | **OLED 题目菜单 UI**：4 键(K1上/K2下/K3确认/K4返回)选题并进入运行界面，任一按键均短响 30ms，**独占 OLED 与 KEY1~4**；当前 task1、task2 仅为硬件/函数测试（前者 M1→M4 单轮正方向，后者固定半径差速圆弧），电机命令直接下发、不做加减速；M1/M2 已全局取反标定，task3~6 骨架待填 |
 | `IMU100Hz` | `app/app_imu_uart_task.c` | 10 ms | 读取 ATK-MS6DSV 姿态 + 追加激光测距1(D1)，按 5Hz 整行输出 Roll/Pitch/Yaw/加减速度/D1 |
 | `MOTORTEST` | `app/app_motor_test_task.c` | 20 ms 轮询 | **【默认禁用】** KEY1/KEY2 让 4 个电机（各自独立接口同时下发）正/反转 2 圈测试（按键已让给 UIMENU） |
 | `SERVOSWEEP` | `app/app_servo_test_task.c` | 20 ms | **【默认禁用】4 个舵机各自独立错相摆动**（800~2200us，无按键）；单控用 `BspServo_SetPulseUs(id,us)` |
@@ -83,10 +83,10 @@
 | OLED SCL | PB9 | 板载 OLED GPIO 软件 I2C |
 | OLED SDA | PB8 | 板载 OLED GPIO 软件 I2C |
 | 舵机1~4 PWM | PA8/PA9/PB4/PA12 | TIMA0_CCP0~3，50Hz PWM |
-| 电机1 STEP/DIR | PB10/PB11 | TIMG0_CCP0 / GPIO，低=正向（各路独立） |
-| 电机2 STEP/DIR | PB6/PB7 | TIMG8_CCP0 / GPIO（独立调速调向） |
-| 电机3 STEP/DIR | PB13/PB14 | TIMG12_CCP0 / GPIO（独立调速调向） |
-| 电机4 STEP/DIR | PB26/PB27 | TIMG6_CCP0 / GPIO（独立调速调向） |
+| 电机1 STEP/DIR | PB10/PB11 | TIMG0_CCP0 / GPIO，左前轮；BSP 已取反，逻辑正向时 DIR 高（各路独立） |
+| 电机2 STEP/DIR | PB6/PB7 | TIMG8_CCP0 / GPIO，左后轮；BSP 已取反，逻辑正向时 DIR 高（独立调速调向） |
+| 电机3 STEP/DIR | PB13/PB14 | TIMG12_CCP0 / GPIO，右前轮；逻辑正向时 DIR 低（独立调速调向） |
+| 电机4 STEP/DIR | PB26/PB27 | TIMG6_CCP0 / GPIO，右后轮；逻辑正向时 DIR 低（独立调速调向） |
 | TMC 使能 ENN | PA13 | 低有效，四路共用 |
 | TMC 细分 MS1 | PB0 | 四路共用细分 |
 | TMC 细分 MS2 | PB1 | 四路共用细分 |

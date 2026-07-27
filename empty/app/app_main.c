@@ -37,7 +37,7 @@
  *
  * 【中断驱动（非任务）】
  *   激光测距1：UART2 RX 中断逐字节喂 module/laser 解析器，见下方注释。
- *   电机 STEP：TIMG0_IRQHandler 做梯形斜坡（bsp_motor.c）。
+ *   电机 STEP：TIMG0_IRQHandler 做定距计步（bsp_motor.c）。
  *
  * 【数据流】
  *   IMU(软件I2C) ──► IMU100Hz 任务每 100Hz 读融合角 ──► 临界区快照 s_yawCentideg
