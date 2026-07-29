@@ -6,7 +6,7 @@
 |---|---|---:|---:|---:|---|---|---|
 | `LED1` | `app/app_led_task.c` | 300 ms | `APP_LED_TASK_PRIORITY` | `APP_LED_TASK_STACK_WORDS` | 无 | LED1(PB25) 翻转 | 当前已启动，用作 FreeRTOS 调度心跳 |
 | `UART0TX` | `app/app_uart_test_task.c` | 10 ms 接收轮询 | `APP_UART_TEST_TASK_PRIORITY` | `APP_UART_TEST_TASK_STACK_WORDS` | UART0 RX 任意非换行字符 | 返回 `UART RX OK` | **【默认禁用，`APP_FEATURE_UART_ECHO=0`】** 调试时需串口收发验证可改回 1 启用 |
-| `UIMENU` | `app/app_ui_task.c` | 30ms 按键轮询 | `APP_UI_TASK_PRIORITY` | `APP_UI_TASK_STACK_WORDS` | KEY1~4(PA28/PA31/PA30/PA29) 按下沿；**IMU Yaw 快照**(`AppImuUartTask_GetYaw`，⚠️`APP_FEATURE_IMU=0` 时恒返回 false)、**激光距离**(`LaserLd14_GetLatest`，⚠️`APP_FEATURE_LASER=0` 时恒返回 false)、**小球检测**(`BallParser_GetLatest`) | OLED(PB8/PB9 软件I2C) 题目菜单/运行界面 + 蜂鸣器(PA15)短促嘀声(~2ms) + 底部传感器状态栏 + 右侧小球面板 | **OLED 题目菜单 UI**：任一按键按下沿均短促嘀一声（同周期内忙等约 2ms 后立即关断）；菜单态 K1上移/K2下移(循环)、K3确认进入运行界面、K4返回菜单。当前 5 道题均为硬件/函数测试（非正式赛题）：题目一 `DIR TEST` 四轮方向核对、题目二 `LINE PID` 正式循迹、题目三 `Task 3` 待填 demo 状态机框架、题目四 `LINE 6S` 复用题目二循迹并在累计前进 6.5 秒后缓停、题目五 `Five` 横向停止线后 3 秒循迹并线性缓停。底部常驻**传感器/系统状态栏** `[R:ON/OFF ]Y:<yaw> D:<dist>mm`(局部低频刷；启用 `APP_FEATURE_RELAY` 时最前显示继电器逻辑状态，便于对照实际动作核对极性；IMU/激光关闭时 Yaw/D 显示 `---`)；启用 `APP_FEATURE_BALL_VISION` 时菜单右半常驻**小球检测文字面板** `BALL`/`F/n/x/y`(局部低频刷)。**独占 OLED 与 4 按键**，界面整屏刷为事件驱动 |
+| `UIMENU` | `app/app_ui_task.c` | 30ms 按键轮询 | `APP_UI_TASK_PRIORITY` | `APP_UI_TASK_STACK_WORDS` | KEY1~4(PA28/PA31/PA30/PA29) 按下沿；**IMU Yaw 快照**(`AppImuUartTask_GetYaw`，⚠️`APP_FEATURE_IMU=0` 时恒返回 false)、**激光距离**(`LaserLd14_GetLatest`，⚠️`APP_FEATURE_LASER=0` 时恒返回 false)、**小球检测**(`BallParser_GetLatest`) | OLED(PB8/PB9 软件I2C) 题目菜单/运行界面 + 蜂鸣器(PA15)短促嘀声(~2~3ms) + 底部传感器状态栏 + 右侧小球面板 | **OLED 题目菜单 UI**：任一按键按下沿、题目二到达终点或题目五自动停车完成，均调用同一个短促提示音；菜单态 K1上移/K2下移(循环)、K3确认进入运行界面、K4返回菜单。当前 5 道题均为硬件/函数测试（非正式赛题）：题目一 `DIR TEST` 四轮方向核对、题目二 `LINE PID` 正式循迹、题目三 `Task 3` 经 UART1 仅控制 Emm42 ID1 正反各约 500ms 低速测试、题目四 `LINE 6S` 复用题目二循迹并在累计前进 6.5 秒后缓停、题目五 `Five` 横向停止线后 0.5 秒循迹并线性缓停。底部常驻**传感器/系统状态栏** `[R:ON/OFF ]Y:<yaw> D:<dist>mm`(局部低频刷；启用 `APP_FEATURE_RELAY` 时最前显示继电器逻辑状态，便于对照实际动作核对极性；IMU/激光关闭时 Yaw/D 显示 `---`)；启用 `APP_FEATURE_BALL_VISION` 时菜单右半常驻**小球检测文字面板** `BALL`/`F/n/x/y`(局部低频刷)。**独占 OLED 与 4 按键**，界面整屏刷为事件驱动 |
 | `IMU100Hz` | `app/app_imu_uart_task.c` | 10 ms | `APP_IMU_UART_TASK_PRIORITY` | `APP_IMU_UART_TASK_STACK_WORDS` | ATK-MS6DSV/LSM6DSV16X FIFO 融合姿态 + 加速度/角速度输出寄存器、PA16 INT 电平、**激光测距1(`LaserLd14_GetLatest`)** | Yaw 快照(`AppImuUartTask_GetYaw`，供 OLED 状态栏)；串口遥测（由 `APP_FEATURE_IMU_UART_LOG` 独立控制，**默认 0=静默**，调试时改 1 恢复 5Hz 打印） | **【2026-07-29 临时禁用，`APP_FEATURE_IMU=0`】** 减少 CPU 占用（软件 I2C 100Hz 读取开销最大），需要陀螺仪/Yaw 数据时改回 1 即可，代码逻辑未删改。启用时：欧拉角每 10ms 读 + 临界区发布 Yaw 快照；串口打印由 `APP_FEATURE_IMU_UART_LOG` 门控（默认关，不刷任何串口）；IR 读取 + Yaw 发布始终运行，OLED 状态栏不依赖串口 |
 | `MOTORTEST` | `app/app_motor_test_task.c` | 20ms 按键轮询 | `APP_MOTOR_TEST_TASK_PRIORITY` | `APP_MOTOR_TEST_TASK_STACK_WORDS` | KEY1/KEY2(PA28/PA31) 按下沿 | 四路 STEP(PB10/PB6/PB13/PB26)+四路 DIR(PB11/PB7/PB14/PB27)，PA13 ENN、MS1/MS2 共用；UART0 打印状态，更新 `g_motorDiag` 供 OLED 显示 | **【默认禁用，`APP_FEATURE_MOTOR=0`】** 按键让给 UIMENU。4 电机一起转测试：K1 全部正转2圈、K2 全部反转2圈；四路按目标速度直接开始，各自由 TIMG0/8/12/6 中断计步；1/32细分6400脉冲/圈 |
 | `SERVOSWEEP` | `app/app_servo_test_task.c` | 20ms | `APP_SERVO_TEST_TASK_PRIORITY` | `APP_SERVO_TEST_TASK_STACK_WORDS` | 无（自动） | 四路 SERVO PWM(PA8/PA9/PB4/PA12)，TIMA0 50Hz | **【默认禁用，`APP_FEATURE_SERVO=0`】** 4 舵机各自独立错相摆动（800↔2200us，不用按键），演示四路可完全独立控制；每秒串口打印 `SERVO us S1=.. S2=.. S3=.. S4=..`。脉宽经 `BspServo_SetPulseUs` 极性补偿；四路方向须一次 `setCCPDirection` 写全(见下) |
@@ -52,41 +52,41 @@ Nrf24TxResult_t Nrf24_SendUsbUartText(const uint8_t *text, uint8_t textLength);
 - 目的：上电即在 OLED 上做题目选择界面，用 4 个按键选题、确认、返回；取代旧的 KEY1/KEY2 电机测试与外设自检显示。
 - **独占资源**：本任务独占板载 OLED（PB8/PB9 软件 I2C）与 KEY1~4；启用它时 `PERIPH`（也刷 OLED）、`MOTORTEST`（占 KEY1/KEY2）默认关闭，避免抢屏/抢键（见 `common/app_config.h` 的 `APP_FEATURE_*`）。
 - **两态状态机**：
-  - `MENU` 菜单态：标题 `== SELECT TASK ==` + 题目列表（`n.名称`），当前项整行**反色高亮**；底部提示 `K1/K2 K3=OK K4=BK`。题目多于一屏（6 项）时按选中项自动滚动。启用 `APP_FEATURE_BALL_VISION` 时，标题收窄为 `TASKS`、高亮与题目文字收窄到左半屏(宽 60)，右半让给小球面板（见下「右侧小球检测面板」）。
+  - `MENU` 菜单态：标题 `== SELECT TASK ==` + 题目列表（`n.名称`），当前项整行**反色高亮**；底部提示 `K1/K2 K3=OK K4=BK`。题目多于一屏（6 项）时按选中项自动滚动。启用 `APP_FEATURE_VISION_LINK` 时，标题收窄为 `TASKS`、高亮与题目文字收窄到左半屏(宽 60)，右半让给视觉通信面板（见下）。
   - `RUN` 运行态：大字 `TASK n` + 题名 + `K4: back to menu`；周期调用该题 `onLoop` 钩子。题目五运行时题名行显示 `ARM`、`LINE`、`HOLD`、`GO:<剩余秒数>`、`DEC:<剩余秒数>` 或 `DONE`，便于观察横线后的停车流程。
 - **按键（30ms 轮询，去抖 + 按下沿）**：
   - `K1`(PA28) 上移（循环回绕）、`K2`(PA31) 下移（循环回绕）
   - `K3`(PA30) 确认：进入选中题目运行界面（先调 `onEnter`）
   - `K4`(PA29) 返回：从运行界面回菜单（先调 `onExit`）；菜单态无动作
-- **题目表**：题名/题数登记在 `app_robot_core.c` 的 `s_robotTasks[]`（题目一 `DIR TEST`、题目二 `LINE PID`、题目三 `Task 3`、题目四 `LINE 6S`）；**各题业务钩子 `OnEnter/OnLoop/OnExit` 实现在 [`../app/tasks/`](../app/tasks/) 的 `taskN.c`**。题目一按 M1→M2→M3→M4 单轮正向各转两圈，核对安装位置和方向；题目二、四均按 8 路灰度传感器计算偏差并 PID 调节 Emm42 的 ID2 左轮、ID3 右轮速度，ID1 摆杆不参与。题目四在正常循迹累计前进 6.5 秒后执行带加速度的速度模式 0 RPM 缓停；题目三保留待填 demo 状态机框架。UIMENU 只负责显示与按键，经 robot_core 分发调用。
+- **题目表**：题名/题数登记在 `app_robot_core.c` 的 `s_robotTasks[]`（题目一 `DIR TEST`、题目二 `LINE PID`、题目三 `Task 3`、题目四 `LINE 6S`）；**各题业务钩子 `OnEnter/OnLoop/OnExit` 实现在 [`../app/tasks/`](../app/tasks/) 的 `taskN.c`**。题目一按 M1→M2→M3→M4 单轮正向各转两圈，核对安装位置和方向；题目二、四均按 8 路灰度传感器计算偏差并 PID 调节 Emm42 的 ID2 左轮、ID3 右轮速度，ID1 摆杆不参与。题目三经 UART1 只控制 Emm42 的 ID1 摆杆升降电机，低速正转约 500ms、再反转约 500ms 后急停失能；题目四在正常循迹累计前进 6.5 秒后执行带加速度的速度模式 0 RPM 缓停。UIMENU 只负责显示与按键，经 robot_core 分发调用。
 - **刷屏策略**：软件 I2C 整屏刷约 50ms，故只在选中项/状态变化时才重绘（事件驱动），平时仅轻量轮询按键，CPU 友好。
 - **传感器状态栏**（`Y:<yaw> D:<dist>mm`）：常驻底部（菜单态 Y=56、运行态 Y=48），实时显示陀螺仪 Yaw（度，1 位小数）与激光测距（mm），方便一眼判断两个传感器是否在工作。
   - 数据来源：Yaw 取 `IMU100Hz` 任务发布的线程安全快照 `AppImuUartTask_GetYaw()`（IMU 未就绪显示 `---`）；距离取 `LaserLd14_GetLatest()`（无有效帧显示 `---`）。UI 任务**不直接访问软件 I2C/激光**，避免与 IMU 任务争用总线。
   - **不影响实时性的做法**：状态栏用 `OLED_UpdateArea` **只局部刷一行**(128×8≈整屏 1/8)，且每 `APP_UI_STATUS_DIVIDER`(默认 10 拍=300ms) 才刷一次；整屏刷仍只在菜单/运行切换时发生。故周期刷屏的软件 I2C 忙等极小，不拖累按键响应与其它任务。
 - **OLED 只能显示 ASCII**：`OLED_Data.h` 的中文字库 `OLED_CHARSET_GB2312` 处于注释禁用状态且无 `OLED_ShowChinese` 接口，故题名用英文/编号；要中文需另做字模并启用字库。
 
-### 右侧小球检测面板（`APP_FEATURE_BALL_VISION`）
+### 右侧视觉通信面板（`APP_FEATURE_VISION_LINK`）
 
-- 目的：利用菜单空出的右半屏，常驻显示上位机经 UART0 下发的 `$BALL` 小球检测结果（见 `MESSAGE_LIST.md`）。
-- 布局（128×64，6×8 字体；仅**菜单态**显示）：右半自 x=66 起，一条竖分隔线(x=63) + 顶部 `BALL` 头 + 四行字段：
-  - `F:YES`/`F:no`（found；还没收到合法帧显 `F: ?`）
-  - `n:<count>`（本帧球总数）
-  - `x:<x>` / `y:<y>`（主目标球心像素；未检测到球或无有效帧显 `---`）
-- 数据来源：`BallParser_GetLatest()`（线程安全快照），由 UART0 RX 中断解析（见下「小球检测 `$BALL`」小节）。
-- 刷新：字段区(x66,y8,62×32)用 `OLED_UpdateArea` **只局部刷**，与底部状态栏同频（`APP_UI_STATUS_DIVIDER`，默认 300ms），面积小、频率低，不打断按键响应；`BALL` 头与分隔线只在整屏刷（进入菜单/切换）时画。
-- 运行态(RUN)不显示该面板（整屏归题目自身）；关闭 `APP_FEATURE_BALL_VISION` 时菜单恢复整行高亮与整宽标题，右半留空。
+- 目的：利用菜单空出的右半屏，常驻反馈树莓派视觉端在线、相机发送的钢珠 X 位置及最近一次题目 ACK。
+- 布局（128×64，6×8 字体；仅**菜单态**显示）：右半自 x=66 起，一条竖分隔线(x=63) + 顶部 `VISION` 头 + 三行字段：
+  - `NET:ON`/`NET:OFF`：匹配 `PONG` 后的 3 秒在线判定；
+  - `X:<原始字段>` 或 `X:---`：只要接收到 `$X,` 帧就显示其原始字段（最多 8 个 ASCII 字符），不先因格式、范围或校验失败而隐藏；用于确认相机链路和实际发送格式。正式有效坐标仍按协议校验和 `0～640` 的无符号整数像素范围判定；
+  - `ACK:ST`/`ACK:SP`/`ACK:--`：当前或最近一次 `TASK START/STOP` 的匹配确认。
+- 数据来源：`AppVisionLink_GetStatus()`；UART0 RX 中断解析 `$PONG/$ACK/$X`，UIMENU 任务发送 PING 并做时效判断（见 `MESSAGE_LIST.md`）。
+- 刷新：字段区(x66,y8,62×24)用 `OLED_UpdateArea` **只局部刷**，与底部状态栏同频（`APP_UI_STATUS_DIVIDER`，默认 300ms），面积小、频率低，不打断按键响应；`VISION` 头与分隔线只在整屏刷（进入菜单/切换）时画。
+- 运行态(RUN)不显示该面板（整屏归题目自身）；关闭 `APP_FEATURE_VISION_LINK` 时菜单恢复整行高亮与整宽标题，右半留空。
 
 ### 右侧循迹面板（`APP_FEATURE_LINE_TRACK`）
 
 > ✅ 2026-07-25 已上板实测通过，功能正常。
 
-- 目的：利用菜单右半**下部第 6/7 行**（BALL 面板占第 1~5 行，两者错开不重叠），常驻显示 8 路灰度循迹（PB17~PB24=LINE1~LINE8）的实时高低电平状态。
+- 目的：利用菜单右半**下部第 6/7 行**（视觉通信面板占第 1~4 行，两者错开不重叠），常驻显示 8 路灰度循迹（PB17~PB24=LINE1~LINE8）的实时高低电平状态。
 - 布局（128×64，6×8 字体；仅**菜单态**显示）：右半自 x=66 起，共用同一条竖分隔线(x=63)：
   - 第 6 行(y=40)：通道号 `87654321`（左=8 号=小车左，右=1 号=小车右）
   - 第 7 行(y=48)：按 LINE8→LINE1 对应状态，如 `10011100`；与通道号逐位对齐——`1`=识别到线、`0`=未识别（屏上左右即小车物理左右）
 - 数据来源：`BspLine_ReadAll()`（`bsp/bsp_line.c`，一次读全 8 路打包成位图 bit0=LINE1…bit7=LINE8）。OLED 显示时按 bit7→bit0 倒序，使硬件最左的 LINE8 显示在最左。当前模块极性「识别到线=低电平」，`BSP_LINE_ACTIVE_LOW=1` 已将其归一化为 OLED 上 `1`=识别到线；如换模块极性相反，改该宏即可整体反相。
-- 刷新：两行区(x66,y40,62×16)用 `OLED_UpdateArea` **只局部刷**，与底部状态栏、BALL 面板同频（`APP_UI_STATUS_DIVIDER`，默认 300ms），面积小、频率低，不打断按键响应；分隔线只在整屏刷时画。
-- 运行态(RUN)不显示该面板；关闭 `APP_FEATURE_LINE_TRACK`（且 BALL 也关）时菜单恢复整行高亮与整宽标题，右半留空。
+- 刷新：两行区(x66,y40,62×16)用 `OLED_UpdateArea` **只局部刷**，与底部状态栏、视觉通信面板同频（`APP_UI_STATUS_DIVIDER`，默认 300ms），面积小、频率低，不打断按键响应；分隔线只在整屏刷时画。
+- 运行态(RUN)不显示该面板；关闭 `APP_FEATURE_LINE_TRACK`（且视觉通信也关）时菜单恢复整行高亮与整宽标题，右半留空。
 - ⚠️ PB17~PB24 **非 5V 容忍**：灰度模块信号须 3.3V 电平，否则需分压/电平转换（见 `HARDWARE_WIRING.md` 与接线文档风险 R2）。
 
 ### 题目业务说明
@@ -115,13 +115,14 @@ Nrf24TxResult_t Nrf24_SendUsbUartText(const uint8_t *text, uint8_t textLength);
 - 抗震荡：误差先做一阶低通滤波（`T2_ERROR_FILTER_ALPHA`，越小滤波越强）再喂给 PID，抑制离散传感器命中路数切换导致的台阶式误差跳变被微分项放大成尖峰转向；滤波后再过一道死区 `T2_ERROR_DEADBAND`，`|误差|` 小于此值直接当 0，专门抑制车身在赛道中心附近命中路数在相邻两档（如 2 路/3 路）来回跳变引起的小幅左右摆动。
 - 转弯减速：基础速度按 `dynBase = T2_BASE_RPM − T2_CORNER_SLOWDOWN_GAIN×|转向输出|` 动态下调（下限 `T2_MIN_BASE_RPM`），直道保持全速、弯道自动放慢。
 - 定时减速：秒表校准后时间（`Task2_GetElapsedMs()`，跟 OLED 显示同一套换算）达到 `T2_DECEL_START_MS`（固定 14500ms）后，基础速度按 `T2_BASE_RPM − T2_DECEL_GRADIENT_RPM_PER_SEC×(超过阈值的秒数)` 线性下降，下限 `T2_DECEL_MIN_RPM`；跟转弯减速算出的 `dynBase` 取更小值生效，两者不冲突。可调参数：`T2_DECEL_GRADIENT_RPM_PER_SEC`（梯度系数，越大降速越陡）、`T2_DECEL_MIN_RPM`（能降到的最低基础速度）。
-- 终点检测：先连续 `T2_FINISH_ARM_TICKS` 拍命中路数 `≤T2_FINISH_ARM_HIT_MAX` 才"武装"终点检测（避免出发瞬间仍压在宽线上被立即误判为跑完一圈）；武装后再连续 `T2_FINISH_HIT_TICKS` 拍命中路数 `≥T2_FINISH_HIT_MIN`（6/7/8 路均算），判定到达终点，立即硬停车（`Emm42Robot_Stop`）并锁定在 `T2_STATE_FINISHED`，之后不再重新进入循迹，等待 K4 手动退出。
+- 终点检测：先连续 `T2_FINISH_ARM_TICKS` 拍命中路数 `≤T2_FINISH_ARM_HIT_MAX` 才"武装"终点检测（避免出发瞬间仍压在宽线上被立即误判为跑完一圈）；武装后再连续 `T2_FINISH_HIT_TICKS` 拍命中路数 `≥T2_FINISH_HIT_MIN`（6/7/8 路均算），判定到达终点，立即硬停车（`Emm42Robot_Stop`）并锁定在 `T2_STATE_FINISHED`，之后不再重新进入循迹，等待 K4 手动退出；停车后调用 `BspBuzzer_BeepShort()`，响铃长度与按键反馈一致。
 - 秒表计时：`s_elapsedTicks` 从 `Task2_OnEnter()` 起每拍（30ms）累加，到 `T2_STATE_FINISHED` 后停止累加（定格）；`Task2_GetUiStatus()` 输出 `"T:12.3s"`（终点后追加 `" DONE"`），在 `app_ui_task.c` 里复用 task5 的 `UI_RUN_NAME_Y` 显示位（`UI_TASK2_INDEX`），每 `APP_UI_STATUS_DIVIDER`（约300ms）刷新一次，运行界面首次绘制也会立即显示 `T:0.0s`。显示毫秒数会乘一个 `T2_STOPWATCH_CAL_SCALE` 校准系数——实测计时比真实时间偏快（怀疑跟 FreeRTOS tick 依赖的主频跟工程假设的 80MHz 有偏差有关，根因未定位，见 `AI_MEMORY.md`），先用系数硬补偿；如果实测偏差比例继续变化，按"新系数 = 当前系数 × (最新实测秒数/最新显示秒数)"滚动修正即可，不用每次从 1.0 重新推导。
 - K4 退出时对 ID2/ID3 先急停再失能（轮子无重力负载，失能不会溜车，比保持力矩更省电安全）；ID1 摆杆不属于本题，不下发任何命令。K4 退出与终点急停这两处需要背靠背给两轮下发命令，帧间用 `vTaskDelay(T2_EMM_CMD_GAP_MS)` 隔开，避免共享 UART1 总线互相干扰丢帧（emm42_v5.h 协议层明确要求连续下发需自行留间隔）。
 
 **题目三 `Task 3`**（`task3.c`）：
-- 与题目六一致的待填 demo 状态机框架，提供 `IDLE`、`RUN`、`DONE` 三个状态和安全的进入/退出收尾。
-- 当前不实现业务动作；填写正式题目时，在 `Task3_OnLoop()` 的 `switch` 中补充动作与状态切换条件即可。
+- 通过 UART1 的 `Emm42Robot_*` 角色接口，只控制 `EMM42_ROBOT_LIFT`（地址 1）；不会向 ID2、ID3 或四路 STEP/DIR 电机发送命令。
+- 状态机先失能并等待约 60ms，再使能并等待约 180ms（沿用任务二实测稳定的使能等待），随后以 40 RPM 正方向转约 500ms、反方向转约 500ms；最后急停，下一拍失能。K4 退出同样只急停、失能 ID1。
+- ID1 已实机确认：正方向为连杆向下；后续改用位置模式时沿用此正负方向定义，使用 `Emm42Robot_MoveRelative(EMM42_ROBOT_LIFT, ±pulses, rpm, 0)` 下发相对位置命令。当前速度测试的 `T3_EMM_ACC=0`，命令下发后立即到达目标速度。
 
 **题目四 `LINE 6S`**（`task4.c`）：
 - 循迹 PID、入场状态机、丢线保护、终点保护、转弯减速、定时减速和所有同名参数均照搬题目二，仅使用独立的 `T4_*` 参数，便于单独调试。
@@ -129,12 +130,13 @@ Nrf24TxResult_t Nrf24_SendUsbUartText(const uint8_t *text, uint8_t textLength);
 - 缓停使用 `Emm42Robot_VelControl(..., 0, T4_STOP_EMM_ACC)`，它会保留速度模式帧并把 `T4_STOP_EMM_ACC` 交给控制器；与 `Emm42Robot_SetSpeedRpm(..., 0, ...)` 的急停语义不同。`T4_STOP_EMM_ACC` 是本题可调的停车加速度参数，数值越小越平缓、越大越接近立即停。
 - 6.5 秒只统计 `T4_STATE_RUN` 的正常循迹时间，丢线停车期间不计时；两轮收到 0 RPM 帧后，状态机仍持续读取灰度、滤波并更新 PID、丢线保护和终点保护，OLED 秒表追加 `DONE`。为保持驱动器正在执行的 0 RPM 曲线，此阶段不会再发送非零速度帧；K4 退出与终点保护继续急停并失能，属于安全收尾，不使用缓停。
 
-**题目五 `Five`**（`task5.c`，横向停止线后 3 秒循迹并线性缓停）：
+**题目五 `Five`**（`task5.c`，横向停止线后 0.5 秒循迹并线性缓停）：
 - 硬件：UART1（PA17=TX → 驱动器 RX，PB5=RX ← 驱动器 TX），仅控制 ID2 左轮与 ID3 右轮；ID1 摆杆不参与。
-- 入场、PID 滤波、死区、丢线保护、使能等待和左右轮交替下发均复用题目二。行驶 RPM 参数按 75% 缩放：`T5_BASE_RPM=97.5`、`T5_MAX_WHEEL_RPM=172.5`、`T5_MAX_STEER_RPM=75`、`T5_MIN_BASE_RPM=7.5`；PID 增益和驱动器加速度档位保持题目二当前值。
-- 连续 `T5_ARM_TICKS=15` 拍命中 ≤3 路细线后才武装。武装后的首次 ≥6 路黑线开始 `T5_AFTER_LINE_MS=3000ms` 计时；横带仍在传感器下方时，不更新 PID 或发送新轮速帧，保持触发前最后有效轮速。命中数回落到 <6 后恢复正常 PID，3 秒计时不中断。
-- 3 秒结束后用 `T5_DECEL_MS=2000ms` 软件线性降低基础速度到 0 RPM，同时保持 PID 差速；差速幅度随当前基础速度收窄，避免内侧轮倒转并保证最终归零。减速期再次命中 ≥6 路时，冻结轮速并暂停减速计时，离开横带后继续剩余减速。
-- 到 0 RPM 后，左右轮分两拍发送速度模式 0 RPM 并锁定等待 K4；K4 退出仍急停后失能。OLED 每 300ms 显示 `ARM`、`LINE`、`HOLD`、`GO`、`DEC` 或 `DONE`。
+- 入场、PID 滤波、死区、丢线保护、使能等待和左右轮交替下发均复用题目二。行驶 RPM 参数按 62% 缩放：`T5_BASE_RPM=80.6`、`T5_MAX_WHEEL_RPM=142.6`、`T5_MAX_STEER_RPM=62`、`T5_MIN_BASE_RPM=6.2`；`T5_MIN_WHEEL_RPM` 保持 5 RPM，避免低于驱动器的稳定低速范围。PID 增益和驱动器加速度档位保持题目二当前值。
+- 连续 `T5_ARM_TICKS=15` 拍命中 ≤3 路细线后才武装。武装后的首次 ≥6 路黑线开始 `T5_AFTER_LINE_MS=500ms` 计时；横带仍在传感器下方时，不更新 PID 或发送新轮速帧，保持触发前最后有效轮速。命中数回落到 <6 后恢复正常 PID，0.5 秒计时不中断。
+- 0.5 秒结束后用 `T5_DECEL_MS=2000ms` 软件线性降低基础速度到 0 RPM，同时保持 PID 差速；差速幅度随当前基础速度收窄，避免内侧轮倒转并保证最终归零。减速期再次命中 ≥6 路时，冻结轮速并暂停减速计时，离开横带后继续剩余减速。
+- 题目五秒表从 `Task5_OnEnter()` 起每 30ms 累加，停车完成后定格；`Task5_GetUiStatus()` 在 OLED 显示 `T:12.3s` 加当前阶段（如 `GO:0.5s`、`DEC:1.8s` 或 `DONE`）。显示时间乘 `T5_STOPWATCH_CAL_SCALE=0.897`，与任务二使用同一实测初值但可独立按“新系数 = 当前系数 × 实测时长 / 显示时长”继续校正。
+- 到 0 RPM 后，左右轮分两拍发送速度模式 0 RPM 并锁定等待 K4，随后调用 `BspBuzzer_BeepShort()`；K4 退出仍急停后失能。自动完成提示音与任一按键按下的提示音为同一接口、同一时长。
 
 ## PERIPH 外设测试行为
 
@@ -190,14 +192,12 @@ Nrf24TxResult_t Nrf24_SendUsbUartText(const uint8_t *text, uint8_t textLength);
 - **输出与陀螺仪合并**：距离由 `IMU100Hz` 任务在打印整行时追加 `D1=<mm>mm`，与欧拉角/加减速度同一行、5Hz 刷新，满足"跟陀螺仪一起发、频率不高、便于阅读"。
 - ISR 内不调用任何非 FromISR 的 FreeRTOS API（符合 CLAUDE.md FreeRTOS 规则）。
 
-## 小球检测 `$BALL`（UART0 RX 中断，无独立任务）
+## 视觉端通信（UART0 RX 中断 + UIMENU 状态机）
 
-- 不是 FreeRTOS 任务，而是 **UART0 接收中断**：`UART0_IRQHandler`（`bsp_uart.c`）把 RX FIFO 取空并逐字节喂给 `BallParser_FeedByte()`（`module/vision/ball_parser.c`）。
-- 选中断而非任务轮询的原因：上位机 `$BALL` 报文约 **17 帧/秒连续下发**，每帧约 25 字节（约 425 B/s），RX FIFO 仅 4 字节深，10~30ms 任务轮询节拍必然溢出丢字节；中断按字节及时取走才不丢。
-- `App_Init()` 中先 `BallParser_Reset()` 复位解析器，再 `BspUart0_SetRxHandler(BallParser_FeedByte)` 注册回调并使能 RX+溢出中断+NVIC（UART0 外设已在 `BspBoard_Init` 的 `SYSCFG_DL_UART_0_init` 里初始化，RX FIFO 阈值设为 1 字节）。
-- 解析器行缓冲：`$` 起始、`\r`/`\n` 结束；成行后校验 `$`..`*` 间字符逐字节 XOR 与两位十六进制一致，再解析前缀 `BALL,` 与 `found,x,y,n` 四字段，通过则更新快照，失步/校验失败自动等待下一个 `$` 重同步。
-- 输出：由 `UIMENU` 任务读取 `BallParser_GetLatest()` 在 OLED 右侧文字面板显示（见「右侧小球检测面板」）。
-- 由 `APP_FEATURE_BALL_VISION` 门控；与 `APP_FEATURE_UART_ECHO`（UART0 轮询自检）**互斥**——二者都占 UART0 RX，同时置 1 会被 `app_config.h` 的编译期 `#error` 拦截。
+- UART0 RX 中断把 FIFO 取空并逐字节喂给 `VisionParser_FeedByte()`（`module/vision/ball_parser.c`），解析 `$PONG`、`$ACK`、`$X` 三类协议帧；接收端没有独立 FreeRTOS 任务。
+- `App_Init()` 调用 `AppVisionLink_Init()` 复位解析器、注册 UART0 回调并使能 RX+溢出中断；`UIMENU` 每 30ms 调 `AppVisionLink_Service()`，负责 PING 周期、PONG 在线超时和 X 时效。
+- MCU 每次复位后只以 500ms 间隔发送 3 次 `PING`，第 3 次后停止发送直到下次复位；任一 PING 收到匹配 PONG 即在线，最后一次匹配 PONG 超过 3s 切为离线。X 的正式有效坐标超过 100ms 自动失效，`X,NA` 立即停止使用旧坐标；但 OLED 会保留并显示最近收到的原始 X 字段，包含格式或校验失败的帧，作为链路诊断信息。
+- 进入/退出题目时 `RobotCore` 分别发送 `TASK START/STOP`；OLED 菜单视觉面板显示 `NET`、`X` 和匹配的 `ACK`。由 `APP_FEATURE_VISION_LINK` 门控，并与 `APP_FEATURE_UART_ECHO` 互斥。
 - ISR 内不调用任何非 FromISR 的 FreeRTOS API（符合 CLAUDE.md FreeRTOS 规则）。
 
 ## UART0 多任务共享（递归互斥量）
@@ -240,8 +240,8 @@ Nrf24TxResult_t Nrf24_SendUsbUartText(const uint8_t *text, uint8_t textLength);
 ## 机器人题目核心模块（`app_robot_core.c/h`）
 
 - **不是独立 FreeRTOS 任务**——是一组同步钩子函数，被 `UIMENU` 任务在 RUN 态调用。
-- **只做登记 + 分发**：`app_robot_core.c` 里的 **dispatch 表 `s_robotTasks[]`** 登记 6 道题的 name + `OnEnter/OnLoop/OnExit` 函数指针；**各题业务代码在 [`../app/tasks/`](../app/tasks/) 的 `taskN.c`**（第 N 题 = `taskN.c`，每题一套状态机；当前 task1 为单轮方向测试，task2 为正式循迹，task3 与 task6 为待填 demo 框架，task4 为 6.5 秒循迹缓停，task5 按说明实现）。
-- **按键反馈**：`UIMENU` 对 KEY1~KEY4 的每一次按下沿统一短响 30ms；题目核心不再单独鸣叫，K3 不会双响。
+- **只做登记 + 分发**：`app_robot_core.c` 里的 **dispatch 表 `s_robotTasks[]`** 登记 6 道题的 name + `OnEnter/OnLoop/OnExit` 函数指针；**各题业务代码在 [`../app/tasks/`](../app/tasks/) 的 `taskN.c`**（第 N 题 = `taskN.c`，每题一套状态机；当前 task1 为单轮方向测试，task2 为正式循迹，task3 为 UART1 控制 ID1 正反各约 500ms 的低速测试，task4 为 6.5 秒循迹缓停，task5 按说明实现，task6 为待填 demo 框架）。
+- **按键反馈**：`UIMENU` 对 KEY1~KEY4 的每一次按下沿统一调用 `BspBuzzer_BeepShort()`，短响约 2~3ms；任务二到达终点、任务五自动停车完成复用同一接口，K3 不会双响。
 - **接口**：
   - `RobotCore_GetTaskCount()` — 题目总数（菜单滚动循环用）
   - `RobotCore_GetTaskName(idx)` — 题目显示名（OLED 菜单/运行界面显示）
@@ -253,7 +253,7 @@ Nrf24TxResult_t Nrf24_SendUsbUartText(const uint8_t *text, uint8_t textLength);
 
 ### 按键反馈
 
-`UIMENU` 对 KEY1~KEY4 的每个按下沿统一给一次**蜂鸣器短响 30ms**反馈；鸣叫不阻塞按键轮询。旧版按题错开的 LED2/LED3 组合已取消，改由各题 `taskN.c` 自行按需驱动 LED/OLED。
+`UIMENU` 对 KEY1~KEY4 的每个按下沿统一调用 `BspBuzzer_BeepShort()`，短响约 2~3ms；任务二到达终点、任务五自动停车完成也调用同一接口。鸣叫仅做短暂忙等，随后立即关断。旧版按题错开的 LED2/LED3 组合已取消，改由各题 `taskN.c` 自行按需驱动 LED/OLED。
 
 ### 题目开发指南（v1.9：每题一个文件）
 

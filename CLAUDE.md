@@ -56,7 +56,7 @@
 |---|---|---|---|
 | `LED1` | `app/app_led_task.c` | 300 ms | LED1(PB25) 心跳灯，用于判断 FreeRTOS 是否正常调度 |
 | `UART0TX` | `app/app_uart_test_task.c` | 10 ms 轮询 | UART0 接收回显，收到非换行字符返回 `UART RX OK` |
-| `UIMENU` | `app/app_ui_task.c` | 30 ms 轮询 | **OLED 题目菜单 UI**：4 键(K1上/K2下/K3确认/K4返回)选题并进入运行界面，任一按键均短促嘀声（~2ms 忙等后立即关断），**独占 OLED 与 KEY1~4**；题目业务委托 `app_robot_core` → `app/tasks/taskN.c` 的 `OnEnter/OnLoop/OnExit`。当前 5 道题均为硬件/函数测试（非正式赛题）：task1 `DIR TEST` 四轮方向核对、task2 `LINE PID` 8 路灰度 PID 循迹、task3 `Task 3` 待填 demo 状态机框架、task4 `LINE 6S` 完整复用题目二循迹并在累计前进 6.5 秒后以速度模式 0 RPM 缓停、task5 `Five` 低速横向停止线后 3 秒循迹并线性缓停（UART1 仅控制 ID2 左轮与 ID3 右轮）；task6 骨架待填。M1/M2 已全局取反标定 |
+| `UIMENU` | `app/app_ui_task.c` | 30 ms 轮询 | **OLED 题目菜单 UI**：4 键(K1上/K2下/K3确认/K4返回)选题并进入运行界面，任一按键均短促嘀声（约2~3ms），**独占 OLED 与 KEY1~4**；题目业务委托 `app_robot_core` → `app/tasks/taskN.c` 的 `OnEnter/OnLoop/OnExit`。当前 5 道题均为硬件/函数测试（非正式赛题）：task1 `DIR TEST` 四轮方向核对、task2 `LINE PID` 8 路灰度 PID 循迹、task3 `Task 3` 经 UART1 仅控制 Emm42 ID1 正反低速各约 500ms、task4 `LINE 6S` 完整复用题目二循迹并在累计前进 6.5 秒后以速度模式 0 RPM 缓停、task5 `Five` 低速横向停止线后 0.5 秒循迹并线性缓停（UART1 仅控制 ID2 左轮与 ID3 右轮）；task6 骨架待填。任务二、五自动完成时使用与按键完全相同的短促提示音。M1/M2 已全局取反标定 |
 | `IMU100Hz` | `app/app_imu_uart_task.c` | 10 ms | 读取 ATK-MS6DSV 姿态 + 追加激光测距1(D1)，按 5Hz 整行输出 Roll/Pitch/Yaw/加减速度/D1 |
 | `MOTORTEST` | `app/app_motor_test_task.c` | 20 ms 轮询 | **【默认禁用】** KEY1/KEY2 让 4 个电机（各自独立接口同时下发）正/反转 2 圈测试（按键已让给 UIMENU） |
 | `SERVOSWEEP` | `app/app_servo_test_task.c` | 20 ms | **【默认禁用】4 个舵机各自独立错相摆动**（800~2200us，无按键）；单控用 `BspServo_SetPulseUs(id,us)` |
@@ -74,8 +74,8 @@
 
 ### EMM42 方向标定状态
 
-- 角色层 `module/emm42/emm42_robot.c` 统一处理 Emm42 正方向：ID2（左轮）直通，ID3（右轮）取反，ID1（摆杆）尚待实机确认且暂按直通。
-- 题目五 `Five` 仅使能并控制 ID2 左轮、ID3 右轮；沿用题目二的节拍化使能时序，两轮各等待约 180ms 后进入交替速度控制。后续确认 ID1 方向时，只修改角色层标定表。
+- 角色层 `module/emm42/emm42_robot.c` 统一处理 Emm42 正方向：ID1（摆杆）正方向为连杆向下，ID2（左轮）直通，ID3（右轮）取反。
+- 题目五 `Five` 仅使能并控制 ID2 左轮、ID3 右轮；沿用题目二的节拍化使能时序，两轮各等待约 180ms 后进入交替速度控制。机械安装变化时，只修改 ID1 的角色层标定表。
 - 左右轮差速运动学尚未实现。
 
 ### 循迹通道状态

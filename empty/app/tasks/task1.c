@@ -1,4 +1,5 @@
 #include "app_tasks.h"
+#include "app_robot_core.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -69,6 +70,7 @@ void Task1_OnLoop(void)
     case T1_STATE_DONE:
         /* 完成后不重复测试，等待用户观察并通过 K4 退出。 */
         BspMotor_StopAll();
+        RobotCore_NotifyTaskFinished(0U);
         break;
 
     default:

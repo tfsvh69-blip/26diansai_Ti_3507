@@ -34,7 +34,7 @@ extern "C" {
  *   舵机 bsp_servo.h ：BspServo_SetPulseUs(id, us)。
  *   姿态 app_imu_uart_task.h：AppImuUartTask_GetYaw(&cd) 取 Yaw(0.01°)。
  *   激光 laser_ld14.h：LaserLd14_GetLatest(&d) 取距离(mm)。
- *   小球 ball_parser.h：BallParser_GetLatest(&b) 取上位机视觉结果。
+ *   视觉 app_vision_link.h：AppVisionLink_GetStatus(&s) 取在线、ACK 与 X 位置反馈。
  *   蜂鸣器/LED bsp_buzzer.h / bsp_led.h。
  *
  * 【要更高频的控制环?】30ms 够做机动级决策；若某题要更快的闭环(如高频寻迹PID)，
@@ -72,7 +72,7 @@ void Task5_OnEnter(void);
 void Task5_OnLoop(void);
 void Task5_OnExit(void);
 
-/* 取题目五当前循迹与停车流程的 ASCII 状态文本，供 OLED 运行界面显示。 */
+/* 取题目五当前秒表与循迹/停车流程的 ASCII 状态文本，停车后定格并追加 "DONE"。 */
 const char *Task5_GetUiStatus(void);
 
 /* 第 6 题 */

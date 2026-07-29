@@ -1,4 +1,5 @@
 #include "app_tasks.h"
+#include "app_robot_core.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -313,6 +314,7 @@ void Task4_OnLoop(void)
         s_leftRpm = 0.0F;
         s_rightRpm = 0.0F;
         s_state = T4_STATE_TIME_STOPPED;
+        RobotCore_NotifyTaskFinished(3U);
         return;
     }
     if (s_state == T4_STATE_FINISHED) {
@@ -386,6 +388,7 @@ void Task4_OnLoop(void)
         Emm42Robot_Stop(EMM42_ROBOT_WHEEL_R);
         s_leftRpm = 0.0F;
         s_rightRpm = 0.0F;
+        RobotCore_NotifyTaskFinished(3U);
         return;
     }
 

@@ -21,12 +21,19 @@
 #define APP_FEATURE_MOTOR           (0U)  /* 4 路步进电机（MOTORTEST 任务，已取消：KEY1/KEY2 让给题目菜单） */
 #define APP_FEATURE_IMU             (0U)  /* 六轴 IMU 读取 + Yaw 快照发布（供 OLED 状态栏显示，不依赖串口）【2026-07-29 临时关闭，减CPU占用，需要时改回 1】 */
 #define APP_FEATURE_LASER           (0U)  /* UART2 激光测距1（RX 中断接收，供 OLED 状态栏显示，不依赖串口）【2026-07-29 临时关闭，减CPU占用，需要时改回 1】 */
-#define APP_FEATURE_BALL_VISION     (1U)  /* UART0 接收上位机 $BALL 小球检测报文（RX 中断解析，OLED 右侧文字面板显示） */
+#define APP_FEATURE_VISION_LINK     (1U)  /* UART0 视觉通信：PING/PONG 在线检测、TASK/ACK 录像控制、X 位置反馈与 OLED 显示 */
 #define APP_FEATURE_LINE_TRACK      (1U)  /* 8 路灰度循迹 PB17~PB24（直接读高低电平，OLED 菜单右半第6/7行显示状态） */
 #define APP_FEATURE_RELAY           (1U)  /* 继电器 PA24 功能：板级初始化 + OLED 状态栏 R:ON/OFF 显示 + 对外接口 BspRelay_*(On/Off/Set/Toggle/IsOn) 可直接调用；不含自动切换 */
 #define APP_FEATURE_RELAY_SELFTEST  (0U)  /* 继电器自检任务(RELAYTEST)：每 2 秒自动切换吸合/断开，仅上电验证用；默认关，置 1 恢复自检 */
 #define APP_FEATURE_NRF24_TX_TEST   (0U)  /* NRF24L01+ 发射测试：每 500ms 向 USB 无线串口发送递增文本【2026-07-29 临时关闭，减CPU占用，需要时改回 1】 */
 #define APP_FEATURE_EMM42           (1U)  /* 张大头 Emm42_V5.0 闭环步进（UART1/PA17/PB5，115200）：注册回复接收中断，命令由第 5 题下发 */
+
+/*
+ * Emm42 上电安全失能：复位后对 ID1/ID2/ID3 各重复发送失能帧，帧间使用约 10ms
+ * 的裸机忙等，确保调度器尚未启动时也能让三台驱动器可靠处理命令。
+ */
+#define APP_EMM42_BOOT_DISABLE_RETRY_COUNT  (3U)
+#define APP_EMM42_BOOT_DISABLE_GAP_MS       (10U)
 /*
  * IMU 串口遥测日志独立开关：控制 IMU 任务是否向 UART0 打印启动信息、初始化诊断
  * 和 5Hz 姿态/激光遥测行。置 0 时 IMU 读取与 Yaw 快照发布照常运行（OLED 状态栏
@@ -41,11 +48,11 @@
  * UART_ECHO 与 IMU_UART_LOG 默认关闭：串口保持静默，减少对调试/通信的干扰。
  */
 /*
- * 互斥护栏：$BALL 接收中断会取空 UART0 RX FIFO，与 UART_ECHO 的轮询自检抢字节，
- * 二者不可同时启用。需要串口收发自检时先把 APP_FEATURE_BALL_VISION 置 0。
+ * 互斥护栏：视觉通信接收中断会取空 UART0 RX FIFO，与 UART_ECHO 的轮询自检抢字节，
+ * 二者不可同时启用。需要串口收发自检时先把 APP_FEATURE_VISION_LINK 置 0。
  */
-#if (APP_FEATURE_BALL_VISION != 0U) && (APP_FEATURE_UART_ECHO != 0U)
-#error "APP_FEATURE_BALL_VISION 与 APP_FEATURE_UART_ECHO 争用 UART0 RX，不能同时为 1"
+#if (APP_FEATURE_VISION_LINK != 0U) && (APP_FEATURE_UART_ECHO != 0U)
+#error "APP_FEATURE_VISION_LINK 与 APP_FEATURE_UART_ECHO 争用 UART0 RX，不能同时为 1"
 #endif
 /* =================================================== */
 

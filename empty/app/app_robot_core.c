@@ -5,6 +5,7 @@
 
 #include "app_config.h"
 #include "app_tasks.h"
+#include "app_vision_link.h"
 #include "bsp_uart.h"
 
 /* ==================================================================
@@ -83,6 +84,11 @@ void RobotCore_EnterTask(uint32_t taskIdx)
         return;
     }
 
+    /* 先通知视觉端题目开始；录像由视觉端按协议仅对题目 2～6 执行。 */
+#if (APP_FEATURE_VISION_LINK != 0U)
+    AppVisionLink_TaskStart((uint8_t)(taskIdx + 1U));
+#endif
+
     if (s_robotTasks[taskIdx].onEnter != NULL) {
         s_robotTasks[taskIdx].onEnter();
     }
@@ -111,8 +117,25 @@ void RobotCore_ExitTask(uint32_t taskIdx)
         s_robotTasks[taskIdx].onExit();
     }
 
+    /* 用户退出后的安全收尾完成后，通知视觉端题目结束；录像题目由视觉端保存。 */
+#if (APP_FEATURE_VISION_LINK != 0U)
+    AppVisionLink_TaskStop((uint8_t)(taskIdx + 1U));
+#endif
+
 #if (APP_FEATURE_IMU_UART_LOG != 0U)
     RobotCore_Log("exit", taskIdx);
+#endif
+}
+
+void RobotCore_NotifyTaskFinished(uint32_t taskIdx)
+{
+    if (taskIdx >= ROBOT_TASK_COUNT) {
+        return;
+    }
+
+    /* STOP 接口会过滤同一次运行的重复通知，因此完成态可安全持续调用。 */
+#if (APP_FEATURE_VISION_LINK != 0U)
+    AppVisionLink_TaskStop((uint8_t)(taskIdx + 1U));
 #endif
 }
 

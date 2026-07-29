@@ -11,7 +11,7 @@
 #include "app_imu_uart_task.h"
 #include "app_robot_core.h"
 #include "app_tasks.h"
-#include "ball_parser.h"
+#include "app_vision_link.h"
 #include "bsp_buzzer.h"
 #include "bsp_key.h"
 #include "bsp_line.h"
@@ -55,13 +55,13 @@
 #define UI_MENU_STATUS_Y  (56)    /* 菜单态：底行传感器状态栏（Yaw + 激光距离） */
 
 /*
- * 右半面板（利用菜单空出的右半屏）。小球检测面板 / 循迹面板 任一启用时：
+ * 右半面板（利用菜单空出的右半屏）。视觉通信面板 / 循迹面板 任一启用时：
  *   - 菜单文字与选中项高亮收窄到左半（宽 UI_MENU_LEFT_W），不侵入右侧面板；
  *   - 右半画一条竖分隔线（UI_RIGHT_DIV_X），面板自 x=UI_RIGHT_X 起。
- * 两块面板在右半分行错开：BALL 占第1~5行(y=0..39)，循迹占第6/7行(y=40/48)，互不重叠。
+ * 两块面板在右半分行错开：视觉通信占第1~4行(y=0..31)，循迹占第6/7行(y=40/48)，互不重叠。
  * 两者都关闭时菜单恢复整行(128)高亮与整宽标题，右半留空。
  */
-#if (APP_FEATURE_BALL_VISION != 0U) || (APP_FEATURE_LINE_TRACK != 0U)
+#if (APP_FEATURE_VISION_LINK != 0U) || (APP_FEATURE_LINE_TRACK != 0U)
 #define UI_MENU_LEFT_W    (60)     /* 菜单占左半宽度（右半让给面板） */
 #define UI_RIGHT_X        (66)     /* 右半面板左边界 x */
 #define UI_RIGHT_DIV_X    (63)     /* 左右分隔竖线 x */
@@ -69,11 +69,11 @@
 #define UI_MENU_LEFT_W    (128)    /* 无右半面板：菜单高亮整行 */
 #endif
 
-#if (APP_FEATURE_BALL_VISION != 0U)
-#define UI_BALL_X         (UI_RIGHT_X) /* 右侧球面板左边界 x */
-#define UI_BALL_W         (62)     /* 右侧球面板宽度（128-66） */
-#define UI_BALL_FIELD_Y   (8)      /* 字段区起始 y（F/n/x/y 四行） */
-#define UI_BALL_FIELD_H   (32)     /* 字段区高度：y=8..39，四行 */
+#if (APP_FEATURE_VISION_LINK != 0U)
+#define UI_VISION_X         (UI_RIGHT_X) /* 右侧视觉通信面板左边界 x */
+#define UI_VISION_W         (62)         /* 右侧视觉通信面板宽度（128-66） */
+#define UI_VISION_FIELD_Y   (8)          /* 字段区起始 y */
+#define UI_VISION_FIELD_H   (24)         /* 三行：网络、X、PING */
 #endif
 
 #if (APP_FEATURE_LINE_TRACK != 0U)
@@ -97,10 +97,6 @@
 
 /* task4 在题目表中的固定下标，用于显示其秒表计时。 */
 #define UI_TASK4_INDEX    (3U)
-
-/* 任一按键按下沿触发一次短促蜂鸣器反馈（约 2~3ms）。
- * 轮询周期 30ms 粒度太粗，不再走 tick 计数关断——改为同一周期内忙等后立即关。 */
-#define UI_KEY_BEEP_LOOPS  (50000U)  /* 80MHz 下约 2~3ms，实测按需微调 */
 
 /* 菜单当前选中项与可见窗口首项（题目多于一屏时滚动）。 */
 static uint32_t s_sel     = 0U;
@@ -217,67 +213,55 @@ static void Ui_DrawStatusBar(int16_t y)
     OLED_UpdateArea(0, y, 128, UI_MENU_LINE_H);
 }
 
-#if (APP_FEATURE_BALL_VISION != 0U)
+#if (APP_FEATURE_VISION_LINK != 0U)
 /*
- * 绘制右侧球检测字段 F/n/x/y（不做刷屏推送，交给调用方）。
- * 数据取 BallParser 线程安全快照：
- *   valid=false（还没收到任何合法帧）时四行全显 "?/---"；
- *   found=0（收到帧但没检测到球）时坐标显 "---"，n 仍显真实计数（可能为 0）。
+ * 绘制右侧视觉通信字段（不做刷屏推送，交给调用方）：
+ *   NET:ON/OFF 为匹配 PONG 后的 3 秒在线判定；
+ *   X 为相机发送的原始水平像素字段，便于直接确认 UART0 链路；
+ *   P 为最近发出的 PING 编号，便于串口联调时核对 PONG 是否回显相同 id。
  */
-static void Ui_DrawBallFields(void)
+static void Ui_DrawVisionFields(void)
 {
-    BallData_t ball;
-    char       buf[12];
+    AppVisionLinkStatus_t vision;
+    char       buf[APP_VISION_X_TEXT_MAX + 3U];
     uint32_t   n;
-    bool       valid = BallParser_GetLatest(&ball);
 
-    /* 行1：检测标志。 */
-    OLED_ShowString(UI_BALL_X, UI_BALL_FIELD_Y,
-        valid ? (ball.found ? "F:YES" : "F:no ") : "F: ? ", OLED_6X8);
+    AppVisionLink_GetStatus(&vision);
+    OLED_ShowString(UI_VISION_X, UI_VISION_FIELD_Y,
+        vision.online ? "NET:ON" : "NET:OFF", OLED_6X8);
 
-    /* 行2：球总数 n。 */
-    buf[0] = 'n'; buf[1] = ':';
-    if (valid) {
-        n = 2U + Ui_U32ToStr(&buf[2], (uint32_t)ball.count);
+    buf[0] = 'X'; buf[1] = ':';
+    if (vision.xReceived) {
+        n = 2U;
+        while ((n < (sizeof(buf) - 1U)) && vision.xText[n - 2U] != '\0') {
+            buf[n] = vision.xText[n - 2U];
+            n++;
+        }
+        if (n == 2U) {
+            buf[n++] = '?';
+        }
     } else {
         buf[2] = '-'; buf[3] = '-'; buf[4] = '-'; n = 5U;
     }
     buf[n] = '\0';
-    OLED_ShowString(UI_BALL_X, UI_BALL_FIELD_Y + 8, buf, OLED_6X8);
+    OLED_ShowString(UI_VISION_X, UI_VISION_FIELD_Y + 8, buf, OLED_6X8);
 
-    /* 行3：主目标 x 像素（未检测到球时坐标无意义，显 ---）。 */
-    buf[0] = 'x'; buf[1] = ':';
-    if (valid && ball.found) {
-        n = 2U + Ui_U32ToStr(&buf[2], (uint32_t)ball.x);
-    } else {
-        buf[2] = '-'; buf[3] = '-'; buf[4] = '-'; n = 5U;
-    }
-    buf[n] = '\0';
-    OLED_ShowString(UI_BALL_X, UI_BALL_FIELD_Y + 16, buf, OLED_6X8);
-
-    /* 行4：主目标 y 像素。 */
-    buf[0] = 'y'; buf[1] = ':';
-    if (valid && ball.found) {
-        n = 2U + Ui_U32ToStr(&buf[2], (uint32_t)ball.y);
-    } else {
-        buf[2] = '-'; buf[3] = '-'; buf[4] = '-'; n = 5U;
-    }
-    buf[n] = '\0';
-    OLED_ShowString(UI_BALL_X, UI_BALL_FIELD_Y + 24, buf, OLED_6X8);
+    OLED_ShowString(UI_VISION_X, UI_VISION_FIELD_Y + 16,
+        vision.ackMatched ? (vision.ackStart ? "ACK:ST" : "ACK:SP") : "ACK:--", OLED_6X8);
 }
 
 /*
- * 局部刷新右侧球字段区：清区 → 重画 F/n/x/y → 只推送该矩形。
+ * 局部刷新右侧视觉通信字段区：清区 → 重画网络、位置和 ACK → 只推送该矩形。
  * 与底部状态栏同频（APP_UI_STATUS_DIVIDER），面积小、频率低，几乎不占 CPU，
- * 不打断按键响应，也不动菜单左半与 "BALL" 头。仅菜单态调用。
+ * 不打断按键响应，也不动菜单左半与 "VISION" 头。仅菜单态调用。
  */
-static void Ui_DrawBallPanel(void)
+static void Ui_DrawVisionPanel(void)
 {
-    OLED_ClearArea(UI_BALL_X, UI_BALL_FIELD_Y, UI_BALL_W, UI_BALL_FIELD_H);
-    Ui_DrawBallFields();
-    OLED_UpdateArea(UI_BALL_X, UI_BALL_FIELD_Y, UI_BALL_W, UI_BALL_FIELD_H);
+    OLED_ClearArea(UI_VISION_X, UI_VISION_FIELD_Y, UI_VISION_W, UI_VISION_FIELD_H);
+    Ui_DrawVisionFields();
+    OLED_UpdateArea(UI_VISION_X, UI_VISION_FIELD_Y, UI_VISION_W, UI_VISION_FIELD_H);
 }
-#endif /* APP_FEATURE_BALL_VISION */
+#endif /* APP_FEATURE_VISION_LINK */
 
 #if (APP_FEATURE_LINE_TRACK != 0U)
 /*
@@ -304,7 +288,7 @@ static void Ui_DrawLineFields(void)
 /*
  * 局部刷新右侧循迹两行：清区 → 重画通道号+状态 → 只推送该矩形。
  * 与底部状态栏同频（APP_UI_STATUS_DIVIDER），面积小、频率低，几乎不占 CPU，
- * 不打断按键响应，也不动菜单左半与右半的 BALL 区。仅菜单态调用。
+ * 不打断按键响应，也不动菜单左半与右半的视觉通信区。仅菜单态调用。
  */
 static void Ui_DrawLinePanel(void)
 {
@@ -330,8 +314,8 @@ static void Ui_DrawMenu(void)
     uint32_t i;
 
     OLED_Clear();
-#if (APP_FEATURE_BALL_VISION != 0U)
-    /* 标题收窄到左半，给右侧球面板让位。 */
+#if (APP_FEATURE_VISION_LINK != 0U)
+    /* 标题收窄到左半，给右侧视觉通信面板让位。 */
     OLED_ShowString(0, UI_MENU_TITLE_Y, "TASKS", OLED_6X8);
 #else
     OLED_ShowString(13, UI_MENU_TITLE_Y, "== SELECT TASK ==", OLED_6X8);
@@ -352,14 +336,14 @@ static void Ui_DrawMenu(void)
         }
     }
 
-#if (APP_FEATURE_BALL_VISION != 0U) || (APP_FEATURE_LINE_TRACK != 0U)
-    /* 右半竖分隔线（BALL 与循迹面板共用）。 */
+#if (APP_FEATURE_VISION_LINK != 0U) || (APP_FEATURE_LINE_TRACK != 0U)
+    /* 右半竖分隔线（视觉通信与循迹面板共用）。 */
     OLED_DrawLine(UI_RIGHT_DIV_X, UI_MENU_FIRST_Y, UI_RIGHT_DIV_X, 54);
 #endif
-#if (APP_FEATURE_BALL_VISION != 0U)
-    /* 右半上部球面板："BALL" 头 + 字段（字段之后由主循环低频局部刷更新）。 */
-    OLED_ShowString(UI_BALL_X, UI_MENU_TITLE_Y, "BALL", OLED_6X8);
-    Ui_DrawBallFields();
+#if (APP_FEATURE_VISION_LINK != 0U)
+    /* 右半上部视觉通信面板，字段之后由主循环低频局部刷更新。 */
+    OLED_ShowString(UI_VISION_X, UI_MENU_TITLE_Y, "VISION", OLED_6X8);
+    Ui_DrawVisionFields();
 #endif
 #if (APP_FEATURE_LINE_TRACK != 0U)
     /* 右半下部(第6/7行)循迹面板：通道号 + 状态（之后由主循环低频局部刷更新）。 */
@@ -443,6 +427,11 @@ static void AppUiTask_Entry(void *argument)
         bool edge[BSP_KEY_COUNT];
         bool anyKeyPressed = false;
 
+        /* 每拍先推进视觉通信状态机，保证 PING、在线超时和 X 超时按协议执行。 */
+#if (APP_FEATURE_VISION_LINK != 0U)
+        AppVisionLink_Service();
+#endif
+
         /* 每键做一次去抖后的按下沿检测（30ms 轮询本身即去抖窗口）。 */
         for (i = 0U; i < (uint32_t)BSP_KEY_COUNT; i++) {
             bool now = BspKey_IsPressed((BspKeyId_t)i);
@@ -451,13 +440,9 @@ static void AppUiTask_Entry(void *argument)
             anyKeyPressed = anyKeyPressed || edge[i];
         }
 
-        /* 菜单态和运行态的任一按键都短促响一声；K3 不再额外双响。
-         * 不再走 tick 计数关断——同周期内忙等约 2~3ms 后立即关，实现短促嘀声。 */
+        /* 菜单态和运行态的任一按键都短促响一声；K3 不再额外双响。 */
         if (anyKeyPressed) {
-            volatile uint32_t _beep;
-            BspBuzzer_On();
-            for (_beep = 0U; _beep < UI_KEY_BEEP_LOOPS; _beep++) { }
-            BspBuzzer_Off();
+            BspBuzzer_BeepShort();
         }
 
         if (state == UI_STATE_MENU) {
@@ -521,10 +506,10 @@ static void AppUiTask_Entry(void *argument)
                 OLED_ShowString(0, UI_RUN_NAME_Y, (char *)Task4_GetUiStatus(), OLED_6X8);
                 OLED_UpdateArea(0, UI_RUN_NAME_Y, 128, UI_MENU_LINE_H);
             }
-#if (APP_FEATURE_BALL_VISION != 0U)
-            /* 右侧球面板只在菜单态显示/刷新（运行态整屏归题目自身用）。 */
+#if (APP_FEATURE_VISION_LINK != 0U)
+            /* 右侧视觉通信面板只在菜单态显示/刷新（运行态整屏归题目自身用）。 */
             if (state == UI_STATE_MENU) {
-                Ui_DrawBallPanel();
+                Ui_DrawVisionPanel();
             }
 #endif
 #if (APP_FEATURE_LINE_TRACK != 0U)

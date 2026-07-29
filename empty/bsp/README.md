@@ -8,7 +8,7 @@
 
 `bsp_uart.c` 负责三路串口：
 
-- **UART0**（PA10/PA11，115200 8N1）：发送侧用**递归互斥量**保证多任务整行日志原子（`BspUart0_Lock/Unlock/SendString`）；接收侧可用 `BspUart0_SetRxHandler` 注册 RX 中断回调，`UART0_IRQHandler` 逐字节喂上层解析器（当前接上位机 `$BALL` 小球报文 → `module/vision`）。RX 中断与旧的轮询自检 `BspUart0_ReadByte` 互斥。
+- **UART0**（PA10/PA11，115200 8N1）：发送侧用**递归互斥量**保证多任务整行日志原子（`BspUart0_Lock/Unlock/SendString`）；接收侧可用 `BspUart0_SetRxHandler` 注册 RX 中断回调，`UART0_IRQHandler` 逐字节喂上层解析器（当前接树莓派视觉端 `$PONG/$ACK/$X` → `module/vision`）。RX 中断与旧的轮询自检 `BspUart0_ReadByte` 互斥。
 - **UART1**（PA17/PB5，115200 8N1）：张大头 Emm42_V5.0 闭环步进驱动总线。`BspUart1_SendBytes` 整帧阻塞发送命令帧；`BspUart1_Init` 注册回调 + `UART1_IRQHandler` 逐字节喂 `module/emm42` 的回复诊断统计。当前只有题目状态机单任务下发，故未加互斥量——**若将来多任务并发下发命令，需照 UART0 补递归互斥量保证整帧原子**。
 - **UART2**（PB15/PB16，230400 8N1）：`BspUart2_Init` 注册回调 + `UART2_IRQHandler` 逐字节喂激光测距解析器（`module/laser`）。
 

@@ -6,29 +6,19 @@
 |---|---|---|---|---|
 | IMU Yaw | `AppImuUartTask_GetYaw(int16_t *centideg)` → bool | `IMU100Hz`（100Hz 更新，临界区发布） | `UIMENU`（状态栏显示） | 偏航角（厘度，0.01°），返回 false 表示 IMU 未就绪 |
 | 激光距离 | `LaserLd14_GetLatest(LaserLd14Data_t *)` → bool | UART2 RX 中断解析（`module/laser`） | `IMU100Hz`（并入遥测行）、`UIMENU`（状态栏显示） | 单点距离(mm)+置信度+统计，返回 false 表示未收到有效帧 |
-| 小球检测 | `BallParser_GetLatest(BallData_t *)` → bool | UART0 RX 中断解析（`module/vision`） | `UIMENU`（右侧文字面板显示） | 上位机 `$BALL` 报文解析结果：found/x/y/count+统计，返回 false 表示未收到校验通过的帧 |
+| 视觉通信 | `VisionParser_GetLatest(VisionData_t *)` → bool | UART0 RX 中断解析（`module/vision`） | `app_vision_link`、`UIMENU` | `$PONG/$ACK/$X` 的最新快照；应用层据此判定在线、ACK 和 X 时效 |
 | 电机诊断 | `g_motorDiag`（`app_motor_status.h`，临界区读写） | `MOTORTEST`（默认禁用时不更新） | `PERIPH`（默认禁用） | 电机运行/方向/圈数，仅当这两个任务启用时有效 |
 
 > 说明：以上都是「最新值快照」而非事件消息。若后续要做**有先后语义**的跨任务通信（命令、事件、数据流），仍应优先用 FreeRTOS queue / event group / stream buffer，并在本表追加记录。
 
-## 上位机 → 下位机报文：`$BALL`（UART0 下行，115200 8N1）
+## 视觉端与单片机通信（UART0，115200 8N1）
 
-上位机（视觉主机）经 UART0（PA10=TX/PA11=RX）向下位机下发小球检测结果，NMEA 风格带 XOR 校验的 ASCII，一帧一行，约 17 帧/秒：
+协议以 [`../../通信协议/单片机树莓派通信协议.md`](../../通信协议/单片机树莓派通信协议.md) 为准，所有帧均为 `$TYPE,DATA...*CHK\r\n`，`CHK` 是 `$` 与 `*` 之间 ASCII 字节的 XOR。
 
-```
-$BALL,<found>,<x>,<y>,<n>*<CHK>\r\n
-```
-
-| 字段 | 含义 |
-|---|---|
-| `found` | 1=检测到球，0=没检测到 |
-| `x` `y` | 主目标（面积最大）球心像素坐标（整数）；去畸变后 640×480，原点左上，x∈[0,639]、y∈[0,479]；`found=0` 时为 0,0 |
-| `n` | 本帧检测到的球总数 |
-| `CHK` | `$` 与 `*` 之间所有字符逐字节 XOR，两位大写十六进制 |
-
-样例（校验值实测）：`$BALL,1,321,240,3*07`、`$BALL,0,0,0,0*03`。
-
-接收路径：UART0 RX 中断（`bsp_uart.c` 的 `UART0_IRQHandler`）逐字节喂 `module/vision` 的 `BallParser_FeedByte` 行解析器 → 校验通过更新快照 → `UIMENU` 任务读取并在 OLED 右侧文字面板显示。由 `APP_FEATURE_BALL_VISION` 开关门控；与 `APP_FEATURE_UART_ECHO`（轮询自检）互斥（编译期护栏拦截）。
+- `UIMENU` 每 30ms 调用 `AppVisionLink_Service()`：每次 MCU 复位后仅以 500ms 间隔发送 3 次 `$PING,<id>`，随后停止发送直到下一次复位；收到**同 id** 的 `$PONG,<id>` 后判在线，最后一次匹配 PONG 超过 3s 即离线。
+- `RobotCore_EnterTask()` 为新的一次进入分配递增 `run_id` 并发送 `$TASK,<run_id>,<task_id>,START`；`RobotCore_ExitTask()` 完成安全收尾后发送对应 `STOP`。视觉端只对题目 2～6 创建/保存录像，题目 1 仍按协议回复 ACK 但不录像。接收的 `$ACK,<run_id>,<task_id>,START|STOP` 会在 OLED 右侧显示 `ACK:ST` 或 `ACK:SP`。
+- 视觉端每读取到一条有效 X 像素坐标就立即发送一帧，不设置固定频率、不积压历史帧；收到任意以 `$X,` 开头并以换行结束的帧，OLED 都会优先显示其原始数据字段（最多 8 个 ASCII 字符），包括小数、`+` 号、超范围值、缺失/错误校验和的帧，便于确认链路；只有校验正确且为 `0～640` 的无符号整数像素坐标才作为正式有效 X（有效期 100ms）。未收到过 X 才显示 `X:---`。
+- UART0 RX 中断逐字节喂 `VisionParser_FeedByte()`；解析器只做行缓冲、XOR 校验与快照发布，ISR 内不调用 FreeRTOS API。由 `APP_FEATURE_VISION_LINK` 门控，且与 `APP_FEATURE_UART_ECHO` 互斥。
 
 ## 下位机 → 张大头驱动器命令帧（UART1 下行，115200 8N1）
 

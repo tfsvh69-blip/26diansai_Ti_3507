@@ -15,10 +15,11 @@ static const uint8_t s_addrTable[EMM42_ROBOT_COUNT] = {
 
 /*
  * 角色正方向标定表：1 表示将上层 RPM 符号取反后再下发协议层。
- * ID2 已确认方向正确，ID3 已确认与期望正方向相反；ID1 尚待实机确认，暂不取反。
+ * ID1 已实测确认：正方向为连杆向下；ID2 已确认方向正确，ID3 已确认与期望
+ * 正方向相反。
  */
 static const bool s_dirInvertTable[EMM42_ROBOT_COUNT] = {
-    false,  /* EMM42_ROBOT_LIFT    ID1，方向待定 */
+    false,  /* EMM42_ROBOT_LIFT    ID1，正方向=连杆向下 */
     false,  /* EMM42_ROBOT_WHEEL_L ID2，方向正确 */
     true,   /* EMM42_ROBOT_WHEEL_R ID3，方向取反 */
 };
@@ -65,6 +66,27 @@ void Emm42Robot_VelControl(Emm42RobotId_t id, int16_t rpm, uint8_t acc)
     dir = (signedRpm < 0) ? EMM42_DIR_CCW : EMM42_DIR_CW;
     magnitude = (uint16_t)((signedRpm < 0) ? -signedRpm : signedRpm);
     Emm42_VelControl(s_addrTable[id], dir, magnitude, acc, false);
+}
+
+void Emm42Robot_MoveRelative(Emm42RobotId_t id, int32_t pulses, uint16_t rpm,
+                             uint8_t acc)
+{
+    int64_t     signedPulses;
+    Emm42Dir_t  dir;
+    uint32_t    magnitude;
+
+    if ((id >= EMM42_ROBOT_COUNT) || (pulses == 0) || (rpm == 0U)) {
+        return;
+    }
+
+    signedPulses = (int64_t)pulses;
+    if (s_dirInvertTable[id]) {
+        signedPulses = -signedPulses;
+    }
+
+    dir = (signedPulses < 0) ? EMM42_DIR_CCW : EMM42_DIR_CW;
+    magnitude = (uint32_t)((signedPulses < 0) ? -signedPulses : signedPulses);
+    Emm42_PosControl(s_addrTable[id], dir, rpm, acc, magnitude, false, false);
 }
 
 void Emm42Robot_Stop(Emm42RobotId_t id)

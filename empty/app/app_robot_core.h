@@ -38,6 +38,9 @@ void RobotCore_LoopTask(uint32_t taskIdx);
 /* 退出题目：调该题的 onExit 钩子。 */
 void RobotCore_ExitTask(uint32_t taskIdx);
 
+/* 题目状态机自动完成或进入故障安全态时调用，通知视觉端停止本次录像。 */
+void RobotCore_NotifyTaskFinished(uint32_t taskIdx);
+
 /* ========== 机器人总任务（后续扩展） ========== */
 
 /*

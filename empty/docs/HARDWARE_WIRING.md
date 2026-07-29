@@ -28,7 +28,7 @@
 | LED1 | LED1 控制 | PB25 | `LED_LED1_PIN` | `IOMUX_PINCM56` | GPIO 输出，v1.1 高电平点亮（IO→阳极） | FreeRTOS 启动后每 300ms 翻转一次，用作系统心跳 |
 | LED2 | LED2 控制 | PA7 | `LED_LED2_PIN` | `IOMUX_PINCM12` | GPIO 输出，v1.1 高电平点亮 | 外设测试任务每 500ms 翻转 |
 | LED3 | LED3 控制 | PB12 | `LED_LED3_PIN` | `IOMUX_PINCM29` | GPIO 输出，v1.1 高电平点亮 | 外设测试任务每 500ms 翻转（与 LED2 相位相反） |
-| 蜂鸣器 | BUZZER | PA15 | `BUZZER_PIN` | `IOMUX_PINCM37` | GPIO 输出，有源蜂鸣器高电平响（经 Q3 驱动），普通 GPIO 无需 PWM | `UIMENU` 任一按键按下沿短响 30ms；外设测试任务可做通断测试 |
+| 蜂鸣器 | BUZZER | PA15 | `BUZZER_PIN` | `IOMUX_PINCM37` | GPIO 输出，有源蜂鸣器高电平响（经 Q3 驱动），普通 GPIO 无需 PWM | `BspBuzzer_BeepShort()` 统一短响约 2~3ms，供 `UIMENU` 任一按键按下沿以及任务二、五自动完成共用；外设测试任务可做通断测试 |
 | OLED | SCL | PB9 | `OLED_PIN_SCL_PIN` | `IOMUX_PINCM26` | 板载 OLED 软件 I2C SCL，推挽输出 | 显示 `3507 v1.1 TEST` 及 tick/秒/蜂鸣器状态 |
 | OLED | SDA | PB8 | `OLED_PIN_SDA_PIN` | `IOMUX_PINCM25` | 板载 OLED 软件 I2C SDA，推挽输出 | 约定 SCL=PB9/SDA=PB8，若显示异常可对调 |
 | 电机1 | M1_STEP | PB10 | `MOTOR1_STEP_PIN` | `IOMUX_PINCM27` / `IOMUX_PINCM27_PF_TIMG0_CCP0`，U2.49 | TIMG0_CCP0 硬件定时器直接输出目标频率方波；TIMG0 ZERO 中断仅用于定距计步 | 运行期间 PB10 有连续方波；停止命令或定距完成时定时器立即停止 |
@@ -48,7 +48,7 @@
 | 按键3 | KEY3 | PA30 | `KEY3_PIN` | `IOMUX_PINCM5`，U2.53 | GPIO 输入，内部上拉；一端接 GND，按下为低 | 电机1 **加速一档**（L1→L5） |
 | 按键4 | KEY4 | PA29 | `KEY4_PIN` | `IOMUX_PINCM4` | GPIO 输入，内部上拉；一端接 GND，按下为低 | 电机1 **减速一档**（L5→L1） |
 | UART0 | TX | PA10 | `GPIO_UART_0_TX_PIN` | `IOMUX_PINCM21` / `IOMUX_PINCM21_PF_UART0_TX` | UART0 发送，MFCLK/115200 8N1；PA10 属于核心板特殊功能风险引脚，已按用户确认使用 | 串口助手应收到启动提示、IMU 输出或 `UART RX OK` 回显 |
-| UART0 | RX | PA11 | `GPIO_UART_0_RX_PIN` | `IOMUX_PINCM22` / `IOMUX_PINCM22_PF_UART0_RX` | UART0 接收：**当前接上位机(视觉主机)TX，RX 中断解析 `$BALL` 小球检测报文**（`APP_FEATURE_BALL_VISION`）；PA11 属于核心板特殊功能风险引脚 | 收到 `$BALL` 帧后 OLED 右侧面板显示 found/n/x/y；调试回显需先关 BALL、开 `APP_FEATURE_UART_ECHO` |
+| UART0 | RX | PA11 | `GPIO_UART_0_RX_PIN` | `IOMUX_PINCM22` / `IOMUX_PINCM22_PF_UART0_RX` | UART0 接收：**当前接树莓派视觉端 TX，RX 中断解析 `$PONG/$ACK/$X`**（`APP_FEATURE_VISION_LINK`）；PA11 属于核心板特殊功能风险引脚 | OLED 菜单右侧显示 NET/X/ACK；调试回显需先关视觉通信、开 `APP_FEATURE_UART_ECHO` |
 | NRF24L01+ | CE | PA22 | `NRF24_CE_PIN` | `IOMUX_PINCM47` | GPIO 推挽输出，上电默认低 | 发送时产生至少 10us 高脉冲 |
 | NRF24L01+ | CSN | PA1 | `NRF24_CSN_PIN` | `IOMUX_PINCM2` | 开漏输出，外接 4.7kΩ 上拉至 3V3；低有效 | 空闲应量到约 3.3V，SPI 事务期间拉低 |
 | NRF24L01+ | SCK | PA27 | `NRF24_SCK_PIN` | `IOMUX_PINCM60` | GPIO 模拟 SPI 模式0，推挽输出，上电默认低 | 发包时可见时钟脉冲 |

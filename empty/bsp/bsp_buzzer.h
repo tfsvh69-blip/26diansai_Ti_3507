@@ -20,6 +20,9 @@ void BspBuzzer_On(void);
 /* 蜂鸣器断（停）。 */
 void BspBuzzer_Off(void);
 
+/* 统一短促提示音（约 2~3ms），供按键与题目自动完成共用。仅限任务上下文调用。 */
+void BspBuzzer_BeepShort(void);
+
 /* 翻转通断状态，供简单通断测试使用。 */
 void BspBuzzer_Toggle(void);
 

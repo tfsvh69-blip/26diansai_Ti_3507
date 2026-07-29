@@ -13,7 +13,7 @@ void BspUart0_Init(void);
 void BspUart0_SendByte(uint8_t byte);
 
 /*
- * UART0 接收字节回调类型（上位机下行报文，如 $BALL 帧）。
+ * UART0 接收字节回调类型（视觉端下行报文，如 $PONG/$ACK/$X 帧）。
  * 上位机约 17 帧/秒连续下发，10~30ms 任务轮询节拍会让 4 字节 RX FIFO 溢出丢字节，
  * 故 RX 走中断逐字节回调；回调在 UART0 中断上下文中执行，内部不得调用非 FromISR 的 FreeRTOS API。
  */

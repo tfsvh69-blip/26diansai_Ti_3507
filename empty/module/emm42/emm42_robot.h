@@ -23,9 +23,9 @@ extern "C" {
  *
  * ⚠️ 方向标定状态（2026-07-29）：
  *   本层集中维护各角色的方向补偿，使上层业务代码不必感知协议层 CW/CCW。
- *   地址2（左轮）已确认正方向直通，地址3（右轮）已确认需取反；地址1（摆杆）
- *   尚待实机确认，当前暂按直通处理。确认地址1方向后，只需修改本层标定表，
- *   不用改任务代码。左右轮差速运动学仍未实现。
+ *   地址1（摆杆）已确认正方向为连杆向下；地址2（左轮）已确认正方向直通，
+ *   地址3（右轮）已确认需取反。机械安装变化时，只需修改本层标定表，不用改
+ *   任务代码。左右轮差速运动学仍未实现。
  *
  * 【重要】UART1 总线电气风险（继承自协议层 §emm42_v5.h，现在是 3 台并联）：
  *   3 台驱动器的 TX 都推挽输出并联在同一根 PB5 上，被寻址方拉低时未被寻址的
@@ -71,6 +71,13 @@ void Emm42Robot_SetSpeedRpm(Emm42RobotId_t id, int16_t rpm, uint8_t acc);
  * 模式帧，因此控制器会按 acc 指定的曲线减速到 0 RPM，而不是立即急停。
  */
 void Emm42Robot_VelControl(Emm42RobotId_t id, int16_t rpm, uint8_t acc);
+
+/*
+ * 单路相对位置模式：pulses 的正负遵从角色方向标定，绝对值为目标脉冲数；
+ * 以驱动器当前实际位置为起点执行，acc=0 时立即到达设定速度。
+ */
+void Emm42Robot_MoveRelative(Emm42RobotId_t id, int32_t pulses, uint16_t rpm,
+                             uint8_t acc);
 
 /* 单路立即停止（急停）。 */
 void Emm42Robot_Stop(Emm42RobotId_t id);

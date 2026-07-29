@@ -20,7 +20,7 @@
 | `module/oled/` | OLED 显示驱动和字模数据 |
 | `module/imu/` | ATK-MS6DSV/LSM6DSV16X 初始化、SFLP 姿态读取和四元数转欧拉角 |
 | `module/laser/` | 激光测距1（LD14）串口协议解析器，纯软件、按字节喂入、可复用 |
-| `module/vision/` | 上位机小球检测报文 `$BALL`（NMEA+XOR）解析器，纯软件、按字节喂入、可复用 |
+| `module/vision/` | 树莓派视觉协议 `$PONG/$ACK/$X`（NMEA+XOR）解析器，纯软件、按字节喂入、可复用 |
 | `module/emm42/` | 张大头 Emm42_V5.0 闭环步进驱动器：`emm42_v5.c`(UART 协议层，命令组帧+回复诊断统计，经 `bsp_uart` 的 UART1 收发) + `emm42_robot.c`(角色映射层，把协议地址包成"摆杆/左轮/右轮"，本车专用) |
 | `module/nrf24l01/` | NRF24L01+ 寄存器驱动，提供带自动重传、状态轮询和超时保护的固定载荷发送接口，以及 USB 无线串口文本发送接口 |
 | `module/diff_drive/` | 四轮差速圆弧模块：根据带符号半径计算左右 RPM，并一次映射到 M1/M2、M3/M4；标称左右轮距 201 mm |
@@ -48,7 +48,7 @@
 - 题目二 `LINE PID`（✅ 已上车测试通过）用于正式 8 路灰度循迹：按物理左→右的 LINE8→LINE1 加权计算误差，PID 生成左右轮差速，并经 UART1 的 Emm42 角色层控制 ID2 左轮和 ID3 右轮；ID1 摆杆不参与。入场走节拍化状态机（先失能复位再依次使能两路，`OnEnter` 不直接下发命令）；误差经低通滤波+死区再喂给 PID 抑制中心抖动；速度命令加速度档位用非 0 曲线档位平滑变速，PID 目标 RPM 每拍直接下发、不叠加任务层软件斜坡；左右轮差速限幅用"整体平移"保住转向权限（`Task2_ClampWheelPair`）；OLED 显示秒表计时（到终点自动定格），因主频/tick 精度疑点乘了实测校准系数；秒表时间达到固定阈值 `T2_DECEL_START_MS` 后基础速度开始线性下降（梯度、下限两个参数可调），跟转弯减速取更小值生效。基础速度、PID 和丢线保护参数集中在 `app/tasks/task2.c` 顶部，详见 `docs/FREERTOS_TASKS.md`。
 - 舵机1~4（TIMA0_CCP0~3 PWM）：SERVO=PA8/PA9/PB4/PA12，50Hz；`SERVOTEST` 任务 KEY3/KEY4 让四舵机一起在两位置切换测试。脉宽经 `bsp_servo` 极性补偿(period-pulseUs)，避开 EDGE_ALIGN 反相坑，勿绕过直接写定时器。
 - 继电器（RELAY）：**PA24**(PINCM54，接口 P1-3)，普通 GPIO 推挽输出驱动大电流电磁铁负载，无需 PWM/定时器。**极性已实测确认：高电平=吸合、低电平=断开**(`bsp_relay.c::BSP_RELAY_ACTIVE_LOW=0`；换低电平触发模块把该宏改 1 即整体反相)；上电默认断开(PA24 下拉+清零，`BspRelay_Init` 在 `BspBoard_Init` 里再收敛一次)。封装 `bsp/bsp_relay.h`：`BspRelay_On/Off/Set(bool)/Toggle/IsOn`，语义以「吸合/断开」为准，业务代码 `#include "bsp_relay.h"` 即可直接调。**正常运行由业务代码(`app/tasks/taskN.c`)按需调接口控制、不自动切换**；每 2s 自动切换的 `RELAYTEST` 自检任务默认禁用(见功能开关)。OLED 底部状态栏最前显示 `R:ON/OFF`(`APP_FEATURE_RELAY=1`)。接线风险 R7：PA24 上电前高阻可能误吸合，硬件建议加 10kΩ 下拉+100Ω 限流。
-- UART0：MFCLK 4MHz，115200 8N1，PA10=TX，PA11=RX。当前 **PA11(RX) 接上位机(视觉主机)TX**，经 **UART0 RX 中断**逐字节喂 `module/vision` 解析上位机 `$BALL,found,x,y,n*CHK` 小球检测报文（约 17 帧/秒，已实测正常接收），结果由 `UIMENU` 显示在 OLED 右侧文字面板（开关 `APP_FEATURE_BALL_VISION`）。RX 中断与轮询自检 `APP_FEATURE_UART_ECHO` 互斥（编译期护栏）。
+- UART0：MFCLK 4MHz，115200 8N1，PA10=TX，PA11=RX。当前 **PA11(RX) 接树莓派视觉端 TX**，经 **UART0 RX 中断**逐字节喂 `module/vision` 解析 `$PONG/$ACK/$X`；`app_vision_link` 发送 PING/TASK、判定在线和 X 时效，`UIMENU` 在 OLED 右侧显示 NET/X/ACK（开关 `APP_FEATURE_VISION_LINK`）。RX 中断与轮询自检 `APP_FEATURE_UART_ECHO` 互斥（编译期护栏）。
 - 张大头 Emm42_V5.0 闭环步进（UART1）：PA17=TX(→驱动器RX)/PB5=RX(←驱动器TX)，MFCLK 4MHz + 16x 过采样，115200 8N1，v1.1 排针 H7。**2026-07-29 起总线上挂 3 台设备**，靠设备地址(1/2/3)区分：地址1=摆杆高低调节(LIFT)、地址2=左轮(WHEEL_L)、地址3=右轮(WHEEL_R)。与 TMC2209 开环 STEP/DIR 完全不同：这是**串口命令式闭环驱动**，MCU 只发命令帧、不产生脉冲、不占定时器，速度/位置由驱动器内部执行。**题目二、题目四与题目五使用此系统；4 路 TMC2209 开环电机（bsp_motor）保留给题目一、题目三及独立测试。**
   - **两层 API**：`module/emm42/emm42_v5.h` 是纯协议层，提供 `Emm42_Enable/SetSpeedRpm/VelControl/PosControl/StopNow/SyncMotion/ReadSysParams` 及诊断计数（`Emm42_GetRxByteCount` 判断总线是否通），只认设备地址、不知道地址对应哪个部件；`module/emm42/emm42_robot.h` 在其上按本车实际用途包一层角色映射（`Emm42RobotId_t`: `EMM42_ROBOT_LIFT/WHEEL_L/WHEEL_R`），提供 `Emm42Robot_Init/Enable/SetSpeedRpm/Stop/StopAll/GetAddr`，业务代码（`app/tasks/task5.c`）应优先用这层，不直接碰地址数字。
   - ⚠️ 方向/差速运动学**尚未标定**：正负 RPM 与"抬升/下降"、"前进/后退"的实际对应关系待确认，目前 `emm42_robot` 只做"按角色转发到对应地址"的基础驱动，不做方向补偿也不做左右轮差速运动学（后续会补类似 `bsp_motor.h::SetDirInvert` 的标定接口和类似 `module/diff_drive` 的差速运动学）。
@@ -84,7 +84,7 @@
 | 3 | **激光测距 RX 中断**（UART2 230400，每字节 1 次中断喂解析器） | 跟随激光帧率，连续流最坏 ~23000 次/秒 | ~80 周期/字节 + 每帧 CRC~1500 周期 | ~2~3%（满速流时） | 中断，随实际字节率线性缩放 |
 | 4 | **IMU 原始加速度/角速度读取**（打印那拍 2×6 字节软件 I2C 读） | 5Hz | ~2ms/次 | ~1% | CPU 忙等（方案A 已从 100Hz 降到 5Hz） |
 | 5 | **电机 STEP 中断**（`TIMG0/8/12/6_IRQHandler` 定距计步） | 仅电机转动时，每路 = 该路步频（常 ~kHz 级） | ~150 周期/次 | ~1.5%/路（仅转动时） | 中断；**v1.9 四路各自独立 ISR**，同时转动时开销约为单路的 N 倍（N=转动路数），常规速度下仍很小 |
-| 6 | **小球报文 RX 中断**（UART0 115200，$BALL 约 17 帧/秒×~25 字节） | ~425 次/秒 | ~80 周期/字节 + 每帧解析~数百周期 | <0.5% | 中断；字节率远低于激光，几乎可忽略 |
+| 6 | **视觉协议 RX 中断**（UART0 115200，PONG/ACK/X） | 随视觉端帧率变化 | ~80 周期/字节 + 每帧解析~数百周期 | <0.5% | 中断；字节率远低于激光，几乎可忽略 |
 | — | LED / 舵机 / 串口回显 / 电机按键轮询等 | 300ms~20ms | 微秒级 | <0.5% | 可忽略 |
 
 **空闲态**（电机不转、激光在收、OLED 在刷、IMU 在读）估算总占用约 **30~40% CPU**，其余为 FreeRTOS 空闲任务。
@@ -101,10 +101,10 @@
 - `common/app_config.h` 顶部有 `APP_FEATURE_*`（1/0），`App_Init` 据此门控各任务创建；用开发板时把不用的外设置 0（不建任务/不占 CPU/不刷串口，硬件初始化保留）。关掉的功能会被链接器移除，实测关 IMU+LASER 后代码从 ~30KB 降到 ~18KB。
 - 激光 D1 随 IMU 遥测整行输出，`APP_FEATURE_IMU=0` 时该行不打印（即使 LASER=1，激光仍后台接收但无打印出口）。
 - **【2026-07-29】** `APP_FEATURE_IMU`、`APP_FEATURE_LASER`、`APP_FEATURE_NRF24_TX_TEST` 三个当前临时改为 `0`（默认值曾是 `1`），目的是给张大头 Emm42 步进测试腾 CPU/中断资源；只是关闭，代码逻辑未删改，需要陀螺仪/激光/无线串口时随时改回 `1`。详见下方各条目及 `FREERTOS_TASKS.md` 对应任务/中断小节的禁用说明。
-- `APP_FEATURE_BALL_VISION`（默认 1）：UART0 RX 中断解析上位机 `$BALL` 报文，供 OLED 右侧面板显示；与 `APP_FEATURE_UART_ECHO` 争用 UART0 RX，二者互斥（同时置 1 编译期 `#error` 拦截，需串口收发自检时先关 BALL）。
+- `APP_FEATURE_VISION_LINK`（默认 1）：UART0 RX 中断解析树莓派 `$PONG/$ACK/$X`，UIMENU 发送 PING/TASK 并在 OLED 右侧显示 NET/X/ACK；与 `APP_FEATURE_UART_ECHO` 争用 UART0 RX，二者互斥（同时置 1 编译期 `#error` 拦截，需串口收发自检时先关视觉通信）。
 - 继电器开关 `APP_FEATURE_RELAY`（默认 1）与 `APP_FEATURE_RELAY_SELFTEST`（默认 0）**已解耦**（2026-07-25）：前者=继电器功能(板级初始化 + OLED 状态栏 `R:ON/OFF` 显示 + 对外接口 `BspRelay_*` 可调用)；后者=自检任务 `RELAYTEST`(每 2s 自动切换吸合/断开，仅上电验证用)。正常运行继电器由业务代码经 `bsp_relay` 接口按需控制、不自动切换；需上电自检时把 `APP_FEATURE_RELAY_SELFTEST` 置 1。
 
-- `APP_FEATURE_EMM42`（默认 1）：张大头 Emm42_V5.0 闭环步进。它**不创建任务**，只在 `App_Init` 里调 `Emm42Robot_Init()`（内部转调 `Emm42_Init()`）注册 UART1 回复接收中断并清诊断计数；命令由第 5 题 `task5.c` 经 `Emm42Robot_*` 角色化接口按需下发。UART1 的板级初始化在 `BspBoard_Init` 中始终执行，置 0 只是不收回复。
+- `APP_FEATURE_EMM42`（默认 1）：张大头 Emm42_V5.0 闭环步进。它**不创建任务**，`App_Init` 先调 `Emm42Robot_Init()` 注册 UART1 回复接收中断，再按 `APP_EMM42_BOOT_DISABLE_RETRY_COUNT=3` 对 ID1/ID2/ID3 循环下发失能帧；每帧后用 `APP_EMM42_BOOT_DISABLE_GAP_MS=10ms` 裸机延时，确保 MCU 复位后全部失能。命令由题目经 `Emm42Robot_*` 角色化接口按需下发。UART1 的板级初始化在 `BspBoard_Init` 中始终执行，置 0 时不注册回复中断，也不发送上电失能帧。
 
 ## 稳健性配置（2026-07-16 加固）
 

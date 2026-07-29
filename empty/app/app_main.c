@@ -14,7 +14,8 @@
 #include "app_servo_test_task.h"
 #include "app_uart_test_task.h"
 #include "app_ui_task.h"
-#include "ball_parser.h"
+#include "app_vision_link.h"
+#include "Delay.h"
 #include "bsp_uart.h"
 #include "emm42_robot.h"
 #include "laser_ld14.h"
@@ -54,6 +55,26 @@
  * 硬件备注：v1.1 板 OLED 在板载 PB8/PB9（软件 I2C），TMC 细分改用 PB0/PB1，两者不再冲突。
  * ======================================================================
  */
+
+#if (APP_FEATURE_EMM42 != 0U)
+/*
+ * 调度器启动前的 Emm42 安全收尾：此时不能调用 vTaskDelay，故使用 Delay_ms。
+ * 每一帧后都留约 10ms，让共用 UART1 总线上的三台驱动器依次处理失能命令；
+ * 重复多轮用于覆盖刚上电、首帧尚未被驱动器接收的情况。
+ */
+static void App_Emm42BootDisableAll(void)
+{
+    uint32_t attempt;
+    uint32_t id;
+
+    for (attempt = 0U; attempt < APP_EMM42_BOOT_DISABLE_RETRY_COUNT; attempt++) {
+        for (id = 0U; id < (uint32_t)EMM42_ROBOT_COUNT; id++) {
+            Emm42Robot_Enable((Emm42RobotId_t)id, false);
+            Delay_ms(APP_EMM42_BOOT_DISABLE_GAP_MS);
+        }
+    }
+}
+#endif
 
 void App_Init(void)
 {
@@ -116,14 +137,13 @@ void App_Init(void)
     BspUart2_Init(LaserLd14_FeedByte);
 #endif
 
-#if (APP_FEATURE_BALL_VISION != 0U)
+#if (APP_FEATURE_VISION_LINK != 0U)
     /*
-     * 上位机小球检测报文（UART0/PA10/PA11，115200 8N1）：不是任务，走 UART0 RX 中断，
-     * 逐字节喂给 BallParser 解析 $BALL 帧；解析结果由 UIMENU 任务在 OLED 右侧文字面板显示。
-     * 先复位解析器，再注册回调并放开中断。与 UART_ECHO 轮询自检互斥（见 app_config.h 护栏）。
+     * 视觉端通信（UART0/PA10/PA11，115200 8N1）：UART0 RX 中断逐字节解析
+     * $PONG/$ACK/$X；UIMENU 的通信状态机定时发送 PING，并在 OLED 菜单显示在线和 X 反馈。
+     * 与 UART_ECHO 轮询自检互斥（见 app_config.h 护栏）。
      */
-    BallParser_Reset();
-    BspUart0_SetRxHandler(BallParser_FeedByte);
+    AppVisionLink_Init();
 #endif
 
 #if (APP_FEATURE_EMM42 != 0U)
@@ -134,6 +154,7 @@ void App_Init(void)
      * UART1 RX 中断逐字节喂给 module/emm42 的诊断统计。此处只注册回调 + 放开中断。
      */
     Emm42Robot_Init();
+    App_Emm42BootDisableAll();
 #endif
 
 #if (APP_FEATURE_IMU != 0U)

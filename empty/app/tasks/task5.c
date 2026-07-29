@@ -1,4 +1,5 @@
 #include "app_tasks.h"
+#include "app_robot_core.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -7,15 +8,16 @@
 #include "task.h"
 
 #include "pid.h"
+#include "bsp_buzzer.h"
 #include "bsp_line.h"
 #include "emm42_robot.h"
 
 /* ==================================================================
- * 第 5 题：横向停止线后 3 秒循迹并线性缓停
+ * 第 5 题：横向停止线后 0.5 秒循迹并线性缓停
  *
- * 以题目二的 8 路灰度 PID 为基础，所有行驶 RPM 参数按 75% 缩放。完成细线
+ * 以题目二的 8 路灰度 PID 为基础，行驶 RPM 参数按 62% 缩放。完成细线
  * 武装后首次命中 >=6 路黑线时，横向黑胶带期间保持触发前的轮速，离开横带后
- * 继续循迹，累计 3 秒后用 2 秒软件线性减速到 0 RPM。
+ * 继续循迹，累计 0.5 秒后用 2 秒软件线性减速到 0 RPM。
  * ================================================================== */
 
 /* PID 参数沿用题目二；位置误差仍为 -7、-5、...、+7。 */
@@ -23,13 +25,13 @@
 #define T5_KI                              (0.15F)
 #define T5_KD                              (0.2F)
 #define T5_INTEGRAL_LIMIT                  (20.0F)
-#define T5_MAX_STEER_RPM                   (75.0F)
+#define T5_MAX_STEER_RPM                   (62.0F)
 
-/* 题目二行驶 RPM 参数按 75% 缩放。 */
-#define T5_BASE_RPM                        (97.5F)
+/* 题目二行驶 RPM 参数按 62% 缩放。 */
+#define T5_BASE_RPM                        (80.6F)
 #define T5_MIN_WHEEL_RPM                   (5.0F)
-#define T5_MAX_WHEEL_RPM                   (172.5F)
-#define T5_MIN_BASE_RPM                    (7.5F)
+#define T5_MAX_WHEEL_RPM                   (142.6F)
+#define T5_MIN_BASE_RPM                    (6.2F)
 
 /* 保持题目二的驱动器加速度档位与控制节拍。 */
 #define T5_EMM_ACC                         (150U)
@@ -53,8 +55,11 @@
 #define T5_STOP_LINE_HIT_MIN               (6U)
 
 /* 首次压到横线后的正常循迹时间与软件线性减速时长。 */
-#define T5_AFTER_LINE_MS                   (3000U)
+#define T5_AFTER_LINE_MS                   (500U)
 #define T5_DECEL_MS                        (2000U)
+
+/* 与任务二采用同一实测初值；任务五可独立按实测比例继续修正。 */
+#define T5_STOPWATCH_CAL_SCALE             (0.897F)
 
 typedef enum {
     T5_STATE_RESET_DISABLE = 0,
@@ -88,7 +93,9 @@ static bool         s_lineStopped;
 static bool         s_holdingStopLine;
 static uint32_t     s_afterLineElapsedMs;
 static uint32_t     s_decelElapsedMs;
-static char         s_uiStatusBuf[16];
+static uint32_t     s_elapsedTicks;
+static char         s_uiStatusBuf[24];
+static char         s_phaseStatusBuf[12];
 
 static float Task5_Clamp(float value, float minValue, float maxValue)
 {
@@ -277,16 +284,22 @@ static void Task5_FormatRemaining(const char *prefix, uint32_t elapsedMs)
     tenths = (remainingMs + 99U) / 100U;
 
     while (*prefix != '\0') {
-        s_uiStatusBuf[idx++] = *prefix++;
+        s_phaseStatusBuf[idx++] = *prefix++;
     }
-    s_uiStatusBuf[idx++] = (char)('0' + ((tenths / 10U) % 10U));
-    s_uiStatusBuf[idx++] = '.';
-    s_uiStatusBuf[idx++] = (char)('0' + (tenths % 10U));
-    s_uiStatusBuf[idx++] = 's';
-    s_uiStatusBuf[idx] = '\0';
+    s_phaseStatusBuf[idx++] = (char)('0' + ((tenths / 10U) % 10U));
+    s_phaseStatusBuf[idx++] = '.';
+    s_phaseStatusBuf[idx++] = (char)('0' + (tenths % 10U));
+    s_phaseStatusBuf[idx++] = 's';
+    s_phaseStatusBuf[idx] = '\0';
 }
 
-const char *Task5_GetUiStatus(void)
+/* 秒表校准后的累计毫秒数；与 OLED 显示使用同一套换算。 */
+static uint32_t Task5_GetElapsedMs(void)
+{
+    return (uint32_t)((float)(s_elapsedTicks * T5_TICK_MS) * T5_STOPWATCH_CAL_SCALE);
+}
+
+static const char *Task5_GetPhaseStatus(void)
 {
     switch (s_state) {
     case T5_STATE_RUN:
@@ -303,14 +316,14 @@ const char *Task5_GetUiStatus(void)
             return "LOST";
         }
         Task5_FormatRemaining("GO:", s_afterLineElapsedMs);
-        return s_uiStatusBuf;
+        return s_phaseStatusBuf;
 
     case T5_STATE_DECEL:
         if (s_holdingStopLine) {
             return "HOLD";
         }
         Task5_FormatRemaining("DEC:", s_decelElapsedMs);
-        return s_uiStatusBuf;
+        return s_phaseStatusBuf;
 
     case T5_STATE_STOP_LEFT:
     case T5_STATE_STOP_RIGHT:
@@ -322,6 +335,43 @@ const char *Task5_GetUiStatus(void)
     default:
         return "INIT";
     }
+}
+
+/* 秒表文本："T:12.3s GO:0.5s"，到停车完成后定格并追加 "DONE"。 */
+const char *Task5_GetUiStatus(void)
+{
+    const char *phase = Task5_GetPhaseStatus();
+    uint32_t totalMs = Task5_GetElapsedMs();
+    uint32_t secWhole = totalMs / 1000U;
+    uint32_t tenths = (totalMs / 100U) % 10U;
+    uint32_t idx = 0U;
+    uint32_t n = 0U;
+    uint32_t value = secWhole;
+    char digits[10];
+
+    s_uiStatusBuf[idx++] = 'T';
+    s_uiStatusBuf[idx++] = ':';
+    if (value == 0U) {
+        s_uiStatusBuf[idx++] = '0';
+    } else {
+        while (value > 0U) {
+            digits[n++] = (char)('0' + (value % 10U));
+            value /= 10U;
+        }
+        while (n > 0U) {
+            s_uiStatusBuf[idx++] = digits[--n];
+        }
+    }
+    s_uiStatusBuf[idx++] = '.';
+    s_uiStatusBuf[idx++] = (char)('0' + tenths);
+    s_uiStatusBuf[idx++] = 's';
+    s_uiStatusBuf[idx++] = ' ';
+
+    while ((*phase != '\0') && (idx < (sizeof(s_uiStatusBuf) - 1U))) {
+        s_uiStatusBuf[idx++] = *phase++;
+    }
+    s_uiStatusBuf[idx] = '\0';
+    return s_uiStatusBuf;
 }
 
 void Task5_OnEnter(void)
@@ -344,6 +394,7 @@ void Task5_OnEnter(void)
     s_holdingStopLine = false;
     s_afterLineElapsedMs = 0U;
     s_decelElapsedMs = 0U;
+    s_elapsedTicks = 0U;
 }
 
 void Task5_OnLoop(void)
@@ -351,6 +402,11 @@ void Task5_OnLoop(void)
     float rawError;
     bool lineFound;
     uint32_t hitCount;
+
+    /* 从进入本题开始计时，停车完成后定格。 */
+    if (s_state != T5_STATE_FINISHED) {
+        s_elapsedTicks++;
+    }
 
     if (s_state == T5_STATE_RESET_DISABLE) {
         Emm42Robot_Enable(EMM42_ROBOT_WHEEL_L, false);
@@ -409,6 +465,9 @@ void Task5_OnLoop(void)
         s_leftRpm = 0.0F;
         s_rightRpm = 0.0F;
         s_state = T5_STATE_FINISHED;
+        /* 自动停车完成时与按键共用同一短促提示音。 */
+        BspBuzzer_BeepShort();
+        RobotCore_NotifyTaskFinished(4U);
         return;
     }
     if (s_state == T5_STATE_FINISHED) {
@@ -498,4 +557,5 @@ void Task5_OnExit(void)
     s_holdingStopLine = false;
     s_afterLineElapsedMs = 0U;
     s_decelElapsedMs = 0U;
+    s_elapsedTicks = 0U;
 }

@@ -1,4 +1,5 @@
 #include "app_tasks.h"
+#include "app_robot_core.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -7,6 +8,7 @@
 #include "task.h"
 
 #include "pid.h"
+#include "bsp_buzzer.h"
 #include "bsp_line.h"
 #include "emm42_robot.h"
 
@@ -489,6 +491,9 @@ void Task2_OnLoop(void)
         Emm42Robot_Stop(EMM42_ROBOT_WHEEL_R);
         s_leftRpm  = 0.0F;
         s_rightRpm = 0.0F;
+        /* 自动到达终点时与按键共用同一短促提示音。 */
+        BspBuzzer_BeepShort();
+        RobotCore_NotifyTaskFinished(1U);
         return;
     }
 

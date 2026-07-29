@@ -614,6 +614,16 @@
               <FilePath>..\app\app_robot_core.h</FilePath>
             </File>
             <File>
+              <FileName>app_vision_link.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\app\app_vision_link.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_vision_link.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\app\app_vision_link.h</FilePath>
+            </File>
+            <File>
               <FileName>app_nrf24_tx_test_task.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\app\app_nrf24_tx_test_task.c</FilePath>
