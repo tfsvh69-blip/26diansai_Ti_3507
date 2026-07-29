@@ -66,6 +66,12 @@ void Emm42Robot_Enable(Emm42RobotId_t id, bool enable);
  */
 void Emm42Robot_SetSpeedRpm(Emm42RobotId_t id, int16_t rpm, uint8_t acc);
 
+/*
+ * 单路速度模式原样下发：与 Emm42Robot_SetSpeedRpm 不同，rpm==0 仍发送速度
+ * 模式帧，因此控制器会按 acc 指定的曲线减速到 0 RPM，而不是立即急停。
+ */
+void Emm42Robot_VelControl(Emm42RobotId_t id, int16_t rpm, uint8_t acc);
+
 /* 单路立即停止（急停）。 */
 void Emm42Robot_Stop(Emm42RobotId_t id);
 

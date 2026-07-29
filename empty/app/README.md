@@ -18,7 +18,7 @@
 | **3** | [`app_led_task.c`](app_led_task.c) | 最简单的任务：每 300ms 翻转 PB25 心跳灯 | 入门理解 FreeRTOS 任务的最简写法 |
 | **4** | [`app_ui_task.c`](app_ui_task.c) | **当前主界面 UIMENU**：4 键选题/运行状态机、底部传感器状态栏(Yaw/激光)、右侧小球检测文字面板；事件驱动整屏刷 + 局部低频刷 | 现在上电看到的就是它；理解 OLED 独占与分区刷新 |
 | **5** | [`app_robot_core.c`](app_robot_core.c) / [`.h`](app_robot_core.h) | 6 道题的 **dispatch 表**：登记每题 `OnEnter/OnLoop/OnExit` 钩子，被 UIMENU 在运行态调用 | 题目业务与 UI 解耦；**只登记不写业务** |
-| **5.1** | [`tasks/app_tasks.h`](tasks/app_tasks.h) + [`tasks/task1.c`](tasks/task1.c) … [`task6.c`](tasks/task6.c) | **各题业务代码就在这里**：第 N 题 = `taskN.c`，每题一套 `state 枚举 + OnLoop 里的 switch 状态机骨架`；task1 测试 M1~M4 正方向，task2 测试固定半径差速圆弧，task3~6 为待填骨架 | 写赛题状态机只改这里；`app_tasks.h` 顶部有“怎么填 + 能调哪些底层接口”说明 |
+| **5.1** | [`tasks/app_tasks.h`](tasks/app_tasks.h) + [`tasks/task1.c`](tasks/task1.c) … [`task6.c`](tasks/task6.c) | **各题业务代码就在这里**：第 N 题 = `taskN.c`；task1 测试 M1~M4 正方向，task2 为 8 路灰度 PID 循迹，task3 为待填 demo 框架，task4 完整复用任务二并在前进 6.5 秒后缓停，task5 为横线后 3 秒循迹并线性缓停，task6 为 demo 框架 | 写赛题状态机只改这里；`app_tasks.h` 顶部有“怎么填 + 能调哪些底层接口”说明 |
 | **6** | [`app_imu_uart_task.c`](app_imu_uart_task.c) | IMU 姿态：GPIO 软件 I2C → LSM6DSV16X → SFLP 融合欧拉角；发布线程安全 **Yaw 快照** 供 OLED；串口遥测默认静默 | 最复杂的任务：I2C 超时/总线恢复、FIFO、打印节流、非阻塞重试 |
 | **7** | [`app_uart_test_task.c`](app_uart_test_task.c) | UART0 接收回显自检（**默认禁用**，`APP_FEATURE_UART_ECHO=0`） | 理解串口多任务共享的递归互斥量模式；注意它与小球接收互斥 |
 | **8** | [`app_motor_test_task.c`](app_motor_test_task.c) | 四电机定圈旋转（**默认禁用**，按键让给 UIMENU） | "任务发令→bsp+ISR 执行→自动停表"的分层模型 |
@@ -111,6 +111,7 @@ app 层（本目录）
 | 初始化 | `Emm42Robot_Init()` | 内部转调 `Emm42_Init()`，注册 UART1 回复中断；`App_Init` 已调用一次 |
 | 使能 / 失能 | `Emm42Robot_Enable(id, true/false)` | 起转前必须先使能 |
 | 指定速度+方向 | `Emm42Robot_SetSpeedRpm(id, ±rpm, acc)` | 正/负会按角色方向标定后转换为协议层 CW/CCW；`0`=转急停帧；`acc` 0=立即变速 |
+| 指定速度模式（含 0 RPM） | `Emm42Robot_VelControl(id, ±rpm, acc)` | 正/负会按角色方向标定；`0`仍是速度模式帧，控制器按 `acc` 曲线减速到零，适合平缓停车 |
 | 立即停止（单路） | `Emm42Robot_Stop(id)` | 急停 |
 | 立即停止（3 路） | `Emm42Robot_StopAll()` | 背靠背 3 帧，**仅限 OnExit 等一次性安全收尾场景**，不要放 OnLoop |
 | 取协议地址 | `Emm42Robot_GetAddr(id)` | 诊断打印用 |
@@ -120,7 +121,7 @@ app 层（本目录）
 底层协议接口（`module/emm42/emm42_v5.h`，只认地址，角色层内部转调这些）：`Emm42_Enable/SetSpeedRpm/VelControl/PosControl/StopNow/SyncMotion/ResetClogProtection/ResetCurPosToZero/ReadSysParams`，诊断用 `Emm42_GetTxFrameCount/GetRxByteCount/GetRxFrameCount/GetLastReply`（`GetRxByteCount()>0` 说明总线上至少有驱动器回话）。地址常量 `EMM42_ADDR_MOTOR1/2/3` + `EMM42_ADDR_BROADCAST(0)`。需要直接按地址操作或用位置模式/同步多机时才绕过角色层直接调这些。
 
 所有接口（两层都一样）**非阻塞、不等回复、不做延时**；
-⚠️ 驱动器处理一帧需要时间，**不要在同一个 `OnLoop` 里连发多帧**——参考 `tasks/task5.c` 的做法：每 30ms 轮询拍最多下发一帧（第 0 拍 LIFT、第 1 拍 WHEEL_L、第 2 拍 WHEEL_R）。
+⚠️ 驱动器处理一帧需要时间，**不要在同一个 `OnLoop` 里连发多帧**——题目二、四、五均采用每 30ms 轮询拍最多下发一帧，左右轮交替更新。
 
 ### 固定半径差速圆弧接口（[`../module/diff_drive/diff_drive.h`](../module/diff_drive/diff_drive.h)）
 

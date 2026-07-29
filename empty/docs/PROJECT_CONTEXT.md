@@ -49,18 +49,18 @@
 - 舵机1~4（TIMA0_CCP0~3 PWM）：SERVO=PA8/PA9/PB4/PA12，50Hz；`SERVOTEST` 任务 KEY3/KEY4 让四舵机一起在两位置切换测试。脉宽经 `bsp_servo` 极性补偿(period-pulseUs)，避开 EDGE_ALIGN 反相坑，勿绕过直接写定时器。
 - 继电器（RELAY）：**PA24**(PINCM54，接口 P1-3)，普通 GPIO 推挽输出驱动大电流电磁铁负载，无需 PWM/定时器。**极性已实测确认：高电平=吸合、低电平=断开**(`bsp_relay.c::BSP_RELAY_ACTIVE_LOW=0`；换低电平触发模块把该宏改 1 即整体反相)；上电默认断开(PA24 下拉+清零，`BspRelay_Init` 在 `BspBoard_Init` 里再收敛一次)。封装 `bsp/bsp_relay.h`：`BspRelay_On/Off/Set(bool)/Toggle/IsOn`，语义以「吸合/断开」为准，业务代码 `#include "bsp_relay.h"` 即可直接调。**正常运行由业务代码(`app/tasks/taskN.c`)按需调接口控制、不自动切换**；每 2s 自动切换的 `RELAYTEST` 自检任务默认禁用(见功能开关)。OLED 底部状态栏最前显示 `R:ON/OFF`(`APP_FEATURE_RELAY=1`)。接线风险 R7：PA24 上电前高阻可能误吸合，硬件建议加 10kΩ 下拉+100Ω 限流。
 - UART0：MFCLK 4MHz，115200 8N1，PA10=TX，PA11=RX。当前 **PA11(RX) 接上位机(视觉主机)TX**，经 **UART0 RX 中断**逐字节喂 `module/vision` 解析上位机 `$BALL,found,x,y,n*CHK` 小球检测报文（约 17 帧/秒，已实测正常接收），结果由 `UIMENU` 显示在 OLED 右侧文字面板（开关 `APP_FEATURE_BALL_VISION`）。RX 中断与轮询自检 `APP_FEATURE_UART_ECHO` 互斥（编译期护栏）。
-- 张大头 Emm42_V5.0 闭环步进（UART1）：PA17=TX(→驱动器RX)/PB5=RX(←驱动器TX)，MFCLK 4MHz + 16x 过采样，115200 8N1，v1.1 排针 H7。**2026-07-29 起总线上挂 3 台设备**，靠设备地址(1/2/3)区分：地址1=摆杆高低调节(LIFT)、地址2=左轮(WHEEL_L)、地址3=右轮(WHEEL_R)。与 TMC2209 开环 STEP/DIR 完全不同：这是**串口命令式闭环驱动**，MCU 只发命令帧、不产生脉冲、不占定时器，速度/位置由驱动器内部执行。**题目二与题目五使用此系统；4 路 TMC2209 开环电机（bsp_motor，保留给题目一、题目三及独立测试）本轮不参与巡线。**
+- 张大头 Emm42_V5.0 闭环步进（UART1）：PA17=TX(→驱动器RX)/PB5=RX(←驱动器TX)，MFCLK 4MHz + 16x 过采样，115200 8N1，v1.1 排针 H7。**2026-07-29 起总线上挂 3 台设备**，靠设备地址(1/2/3)区分：地址1=摆杆高低调节(LIFT)、地址2=左轮(WHEEL_L)、地址3=右轮(WHEEL_R)。与 TMC2209 开环 STEP/DIR 完全不同：这是**串口命令式闭环驱动**，MCU 只发命令帧、不产生脉冲、不占定时器，速度/位置由驱动器内部执行。**题目二、题目四与题目五使用此系统；4 路 TMC2209 开环电机（bsp_motor）保留给题目一、题目三及独立测试。**
   - **两层 API**：`module/emm42/emm42_v5.h` 是纯协议层，提供 `Emm42_Enable/SetSpeedRpm/VelControl/PosControl/StopNow/SyncMotion/ReadSysParams` 及诊断计数（`Emm42_GetRxByteCount` 判断总线是否通），只认设备地址、不知道地址对应哪个部件；`module/emm42/emm42_robot.h` 在其上按本车实际用途包一层角色映射（`Emm42RobotId_t`: `EMM42_ROBOT_LIFT/WHEEL_L/WHEEL_R`），提供 `Emm42Robot_Init/Enable/SetSpeedRpm/Stop/StopAll/GetAddr`，业务代码（`app/tasks/task5.c`）应优先用这层，不直接碰地址数字。
   - ⚠️ 方向/差速运动学**尚未标定**：正负 RPM 与"抬升/下降"、"前进/后退"的实际对应关系待确认，目前 `emm42_robot` 只做"按角色转发到对应地址"的基础驱动，不做方向补偿也不做左右轮差速运动学（后续会补类似 `bsp_motor.h::SetDirInvert` 的标定接口和类似 `module/diff_drive` 的差速运动学）。
-  - 所有接口非阻塞、不等回复、不做延时，调用方须自行留帧间隔——第 5 题 `task5.c` 的做法是**每 30ms 轮询拍最多发一帧**（3 路错拍：LIFT/WHEEL_L/WHEEL_R）。回复走 UART1 RX 中断（无独立任务），以校验字节 `0x6B` 分帧，仅用于诊断不解析字段。波特率取 Emm42 出厂默认 115200（与参考工程一致）；若驱动器被改为接线表建议的 38400，换 `ti_msp_dl_config.h` 中已算好的另一组 IBRD/FBRD 即可。
-  - ⚠️ 风险 R1：多台驱动器 TX 并联于 PB5（现为 3 台，原接线文档述两台，风险等比放大），需外部 BAT54S 肖特基线与 + 4.7kΩ 上拉后才可同时接；改造完成前可用 `task5.c` 的 `T5_ENABLE_LIFT/WHEEL_L/WHEEL_R` 跳过未接的角色。
+  - 所有接口非阻塞、不等回复、不做延时，调用方须自行留帧间隔——题目二、四、五的做法是**每 30ms 轮询拍最多发一帧**，左右轮交替更新。回复走 UART1 RX 中断（无独立任务），以校验字节 `0x6B` 分帧，仅用于诊断不解析字段。波特率取 Emm42 出厂默认 115200（与参考工程一致）；若驱动器被改为接线表建议的 38400，换 `ti_msp_dl_config.h` 中已算好的另一组 IBRD/FBRD 即可。
+  - ⚠️ 风险 R1：多台驱动器 TX 并联于 PB5（现为 3 台，原接线文档述两台，风险等比放大），需外部 BAT54S 肖特基线与 + 4.7kΩ 上拉后才可同时接；题目五循迹仅使用 ID2/ID3，ID1 摆杆不下发命令。
   - ⚠️ 第 3 台设备的物理接线点：v1.1 PCB 的 H7 排针按权威接线文档只设计了 Motor1/Motor2 两个物理连接头，第 3 台需从同一 UART1 总线额外引出，具体接法待确认后补充到 `pcb引脚配置文档/v1.1/机器人控制板_接线说明.md`（该文档是硬件权威来源，本仓库文档不代为修改，只在此处标注待办）。
 - 激光测距1（UART2）：PB15=TX/PB16=RX，MFCLK 4MHz + 8x 过采样，230400 8N1；**RX 中断**逐字节喂 `module/laser` 的 LD14 解析器（无独立任务），距离由 `IMU100Hz` 任务在整行末尾追加 `D1=<mm>mm` 输出。波特率 230400 依参考工程推定，实物不符改 `UART_2_BAUD_RATE`。⚠️ 激光 TX 若 5V 而 PB16 非 5V 容忍，接前先量电平（风险 R2）。**【2026-07-29 临时禁用，`APP_FEATURE_LASER=0`，减 CPU/中断占用，需要时改回 1】**：关闭后 `App_Init` 不注册 UART2 RX 回调，中断不使能，`LaserLd14_GetLatest()` 恒返回 false。
 - NRF24L01+：GPIO 模拟 SPI 模式0，CE=PA22、CSN=PA1（开漏，外部4.7kΩ上拉3V3）、SCK=PA27、MOSI=PA14、MISO=PA0，IRQ不接。`NRF24TX` 任务**【2026-07-29 临时禁用，`APP_FEATURE_NRF24_TX_TEST=0`，减 CPU 占用，需要时改回 1】**，启用时每500ms按 USB 无线串口 V2.0 的 32字节协议发送 `TMX NRF24 TEST nnnnnn`；已实机验证参数为地址 `15 52 33 54 55`、2.402GHz、2Mbps、16位CRC、0dBm、自动应答。`nrf24l01.h` 对外提供 `g_nrf24UsbUartV20Config`、`Nrf24_Init()`、`Nrf24_SendPayload()` 和 `Nrf24_SendUsbUartText()`，后续业务可直接复用。
 - PA10/PA11 属于核心板特殊功能风险引脚，本次已按用户确认用于 UART0。
 - 40MHz 晶振：PA5=HFXIN、PA6=HFXOUT，作 SYSPLL 参考锁定 80MHz 主频（详见接线表“系统时钟”节）。
 - ATK-MS6DSV：**GPIO 软件 I2C**（开漏模拟），SCL=PB2/B02，SDA=PB3/B03，INT=PA16/A16，SA0 接地后 7bit 地址 `0x6A`；扩展板已焊 4.7k 上拉到 3.3V，IMU 供电 3.3V。端口层 `bsp_imu_port.c` 首次访问时关闭 I2C1 硬件控制器并切 PB2/PB3 为 GPIO 模式。
-- IMU 姿态输出：**【2026-07-29 临时禁用，`APP_FEATURE_IMU=0`，减 CPU 占用（软件 I2C 100Hz 读取是当前开销最大的任务），需要时改回 1】**：关闭后 `IMU100Hz` 任务不创建，`AppImuUartTask_GetYaw()` 恒返回 false，OLED 状态栏 Yaw 显示 `---`，依赖 Yaw 的题目三 `GYRO 90L` 无法测试。启用时行为：`IMU100Hz` 任务每 10ms 读一次融合欧拉角(FIFO/SFLP)，通过 UART0 按 **5Hz**(打印节流 `APP_IMU_PRINT_DIVIDER=20`)输出 Roll/Pitch/Yaw + 三轴加速度(mg) + 三轴角速度(mdps) + 激光测距1(D1,mm)。加速度/角速度走输出寄存器直读，采用方案A：只在打印那拍(5Hz)才读，避免软件 I2C 忙等开销(一次 6 字节读≈1ms，两组≈2ms/周期)。整行同时追加激光测距1，实现"和陀螺仪数据一起发、频率不高、便于阅读"。LSM6DSV16X 内部加速度、陀螺仪和 SFLP 使用 120Hz ODR，因为芯片枚举无精确 100Hz 档位。加速度量程 ±2g、角速度量程 ±125dps。将来算法需要 100Hz 原始数据时，把读取移回每周期并优先恢复硬件 I2C 提速。
+- IMU 姿态输出：**【2026-07-29 临时禁用，`APP_FEATURE_IMU=0`，减 CPU 占用（软件 I2C 100Hz 读取是当前开销最大的任务），需要时改回 1】**：关闭后 `IMU100Hz` 任务不创建，`AppImuUartTask_GetYaw()` 恒返回 false，OLED 状态栏 Yaw 显示 `---`。启用时行为：`IMU100Hz` 任务每 10ms 读一次融合欧拉角(FIFO/SFLP)，通过 UART0 按 **5Hz**(打印节流 `APP_IMU_PRINT_DIVIDER=20`)输出 Roll/Pitch/Yaw + 三轴加速度(mg) + 三轴角速度(mdps) + 激光测距1(D1,mm)。加速度/角速度走输出寄存器直读，采用方案A：只在打印那拍(5Hz)才读，避免软件 I2C 忙等开销(一次 6 字节读≈1ms，两组≈2ms/周期)。整行同时追加激光测距1，实现"和陀螺仪数据一起发、频率不高、便于阅读"。LSM6DSV16X 内部加速度、陀螺仪和 SFLP 使用 120Hz ODR，因为芯片枚举无精确 100Hz 档位。加速度量程 ±2g、角速度量程 ±125dps。将来算法需要 100Hz 原始数据时，把读取移回每周期并优先恢复硬件 I2C 提速。
 - 当前 IMU 已实测可连续输出姿态数据；`FIFO=0/1/2` 小范围跳动属于 120Hz 产数与 100Hz 读取节拍不完全同步的正常现象，只要角度连续、FIFO 不持续累积即可。
 
 ### IMU Yaw（偏航角）行为约定（已实测）
@@ -68,7 +68,7 @@
 - **范围**：−180.00° ~ +180.00°（内部单位：厘度 0.01°，即 −18000 ~ +18000）。
 - **转向与 Yaw 变化方向**：小车左转时 Yaw 递减（例如 180° → 150° → 0° → −179°）；右转时 Yaw 递增。
 - **复位初始值不确定**：每次 MCU 复位后，IMU SFLP 融合输出的初始 Yaw 值不同（融合需要时间收敛，且无绝对航向参考——仅靠陀螺仪+加速度计无法提供绝对偏航）。**这不影响相对角度闭环**：任务只需记录起始 Yaw 计算偏移量（如目标 = 起始 − 90°），不依赖绝对 Yaw 值。
-- **跨界跳变处理**：Yaw 在 ±180° 边界会跳变（如 −179° → +179°），计算角度差时必须用最短路径差值算法（见 `task3.c::AngleDiffCd()`），不能直接做减法。
+- **跨界跳变处理**：Yaw 在 ±180° 边界会跳变（如 −179° → +179°），计算角度差时必须用最短路径差值算法（见 `angle_utils` 模块），不能直接做减法。
 - **漂移**：无磁力计/外部参考时，Yaw 长期会有陀螺仪积分漂移；短时间（几秒到几十秒）内相对精度足够用于 90°/180° 转弯闭环。
 
 ## CPU 占用预算（估算，80MHz）

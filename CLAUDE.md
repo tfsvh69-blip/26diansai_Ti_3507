@@ -56,7 +56,7 @@
 |---|---|---|---|
 | `LED1` | `app/app_led_task.c` | 300 ms | LED1(PB25) 心跳灯，用于判断 FreeRTOS 是否正常调度 |
 | `UART0TX` | `app/app_uart_test_task.c` | 10 ms 轮询 | UART0 接收回显，收到非换行字符返回 `UART RX OK` |
-| `UIMENU` | `app/app_ui_task.c` | 30 ms 轮询 | **OLED 题目菜单 UI**：4 键(K1上/K2下/K3确认/K4返回)选题并进入运行界面，任一按键均短促嘀声（~2ms 忙等后立即关断），**独占 OLED 与 KEY1~4**；题目业务委托 `app_robot_core` → `app/tasks/taskN.c` 的 `OnEnter/OnLoop/OnExit`。当前 5 道题均为硬件/函数测试（非正式赛题）：task1 `DIR TEST` 四轮方向核对、task2 `ARC TEST` 差速圆弧、task3 `GYRO 90L` 陀螺仪闭环左转 90°（✅ 已调通）、task4 `SERVO SWP` 四路舵机 2s 间隔 0°↔270° 翻转、task5 `EMM VEL` 张大头 Emm42_V5.0 闭环步进【方向标定测试】（UART1，3 路角色：摆杆高低调节/左轮/右轮，地址 1/2/3；依次单独让 ID1→ID2→ID3 以正 RPM 转 3s 再停 1s，不循环，供肉眼观察实际方向后反馈标定）；task6 骨架待填。M1/M2 已全局取反标定 |
+| `UIMENU` | `app/app_ui_task.c` | 30 ms 轮询 | **OLED 题目菜单 UI**：4 键(K1上/K2下/K3确认/K4返回)选题并进入运行界面，任一按键均短促嘀声（~2ms 忙等后立即关断），**独占 OLED 与 KEY1~4**；题目业务委托 `app_robot_core` → `app/tasks/taskN.c` 的 `OnEnter/OnLoop/OnExit`。当前 5 道题均为硬件/函数测试（非正式赛题）：task1 `DIR TEST` 四轮方向核对、task2 `LINE PID` 8 路灰度 PID 循迹、task3 `Task 3` 待填 demo 状态机框架、task4 `LINE 6S` 完整复用题目二循迹并在累计前进 6.5 秒后以速度模式 0 RPM 缓停、task5 `Five` 低速横向停止线后 3 秒循迹并线性缓停（UART1 仅控制 ID2 左轮与 ID3 右轮）；task6 骨架待填。M1/M2 已全局取反标定 |
 | `IMU100Hz` | `app/app_imu_uart_task.c` | 10 ms | 读取 ATK-MS6DSV 姿态 + 追加激光测距1(D1)，按 5Hz 整行输出 Roll/Pitch/Yaw/加减速度/D1 |
 | `MOTORTEST` | `app/app_motor_test_task.c` | 20 ms 轮询 | **【默认禁用】** KEY1/KEY2 让 4 个电机（各自独立接口同时下发）正/反转 2 圈测试（按键已让给 UIMENU） |
 | `SERVOSWEEP` | `app/app_servo_test_task.c` | 20 ms | **【默认禁用】4 个舵机各自独立错相摆动**（800~2200us，无按键）；单控用 `BspServo_SetPulseUs(id,us)` |
@@ -68,14 +68,14 @@
 
 ### 功能总开关（按需启用外设）
 
-[empty/common/app_config.h](empty/common/app_config.h) 顶部有一组 `APP_FEATURE_*`（1=启用/0=禁用），`App_Init` 用它门控各任务创建。用开发板时把不需要的外设置 0 即可（不创建任务、不占 CPU、不刷串口；板级硬件初始化仍保留）：`APP_FEATURE_LED_HEARTBEAT / UART_ECHO / UI_MENU / PERIPH_OLED / SERVO / MOTOR / IMU / IMU_UART_LOG / LASER / BALL_VISION / LINE_TRACK / RELAY / RELAY_SELFTEST / EMM42`。**当前默认**：`UI_MENU=1`（题目菜单）；因 UI 独占 OLED 与按键，`PERIPH_OLED / SERVO / MOTOR` 默认置 0。`UART_ECHO=0`（关接收自检）、`IMU_UART_LOG=0`（IMU 不打印串口遥测——串口彻底静默；但 IMU 读取 + Yaw 快照照常运行供 OLED 状态栏）。调试时把这两个改回 1 即可恢复串口输出。`BALL_VISION=1`（UART0 RX 中断解析上位机 `$BALL` 报文，OLED 右侧文字面板显示）——它与 `UART_ECHO` 争用 UART0 RX，二者互斥（同时置 1 编译期 `#error` 拦截）。`LINE_TRACK=1`（7 路灰度循迹 PB17~PB23，OLED 菜单右半显示状态）。`EMM42=1`（张大头 Emm42_V5.0 闭环步进：UART1 板级初始化 + 注册回复接收中断，当前总线上 3 台设备（地址 1/2/3 = 摆杆高低调节/左轮/右轮），命令由第 5 题 `task5.c` 经 `module/emm42/emm42_robot.h` 的角色化接口 `Emm42Robot_*` 下发（内部再转发到 `emm42_v5.h` 的按地址协议接口）；它不创建任务，仅注册中断。方向/差速运动学尚未标定，见 `emm42_robot.h` 文件头说明）。继电器开关**已解耦**：`RELAY=1`（继电器 PA24 功能——板级初始化 + OLED 状态栏 `R:ON/OFF` 显示 + 对外接口 `BspRelay_*` 可直接调用），`RELAY_SELFTEST=0`（每 2s 自动切换的自检任务 `RELAYTEST` 默认关；正常运行继电器由业务代码经 `bsp_relay` 接口按需控制、不自动切换，上电自检时才置 1）。**`IMU=0`、`LASER=0`、`NRF24_TX_TEST=0`（2026-07-29 临时关闭，减少 CPU/中断占用，需要时改回 1 即可，代码逻辑未删改）**：关闭后 `IMU100Hz`/`NRF24TX` 任务不创建、UART2 激光 RX 中断不使能，OLED 状态栏 Yaw/距离显示 `---`；题目三 `GYRO 90L` 依赖 IMU，此开关关闭期间无法测试。
+[empty/common/app_config.h](empty/common/app_config.h) 顶部有一组 `APP_FEATURE_*`（1=启用/0=禁用），`App_Init` 用它门控各任务创建。用开发板时把不需要的外设置 0 即可（不创建任务、不占 CPU、不刷串口；板级硬件初始化仍保留）：`APP_FEATURE_LED_HEARTBEAT / UART_ECHO / UI_MENU / PERIPH_OLED / SERVO / MOTOR / IMU / IMU_UART_LOG / LASER / BALL_VISION / LINE_TRACK / RELAY / RELAY_SELFTEST / EMM42`。**当前默认**：`UI_MENU=1`（题目菜单）；因 UI 独占 OLED 与按键，`PERIPH_OLED / SERVO / MOTOR` 默认置 0。`UART_ECHO=0`（关接收自检）、`IMU_UART_LOG=0`（IMU 不打印串口遥测——串口彻底静默；但 IMU 读取 + Yaw 快照照常运行供 OLED 状态栏）。调试时把这两个改回 1 即可恢复串口输出。`BALL_VISION=1`（UART0 RX 中断解析上位机 `$BALL` 报文，OLED 右侧文字面板显示）——它与 `UART_ECHO` 争用 UART0 RX，二者互斥（同时置 1 编译期 `#error` 拦截）。`LINE_TRACK=1`（7 路灰度循迹 PB17~PB23，OLED 菜单右半显示状态）。`EMM42=1`（张大头 Emm42_V5.0 闭环步进：UART1 板级初始化 + 注册回复接收中断，当前总线上 3 台设备（地址 1/2/3 = 摆杆高低调节/左轮/右轮），命令由题目二、题目四和题目五经 `module/emm42/emm42_robot.h` 的角色化接口 `Emm42Robot_*` 下发（内部再转发到 `emm42_v5.h` 的按地址协议接口）；它不创建任务，仅注册中断。方向/差速运动学尚未标定，见 `emm42_robot.h` 文件头说明）。继电器开关**已解耦**：`RELAY=1`（继电器 PA24 功能——板级初始化 + OLED 状态栏 `R:ON/OFF` 显示 + 对外接口 `BspRelay_*` 可直接调用），`RELAY_SELFTEST=0`（每 2s 自动切换的 `RELAYTEST` 自检任务默认关；正常运行继电器由业务代码经 `bsp_relay` 接口按需控制、不自动切换，上电自检时才置 1）。**`IMU=0`、`LASER=0`、`NRF24_TX_TEST=0`（2026-07-29 临时关闭，减少 CPU/中断占用，需要时改回 1 即可，代码逻辑未删改）**：关闭后 `IMU100Hz`/`NRF24TX` 任务不创建、UART2 激光 RX 中断不使能，OLED 状态栏 Yaw/距离显示 `---`；题目四 `LINE 6S` 不依赖 IMU，可照常测试。
 
 修改或新增任务后必须同步更新 [empty/docs/FREERTOS_TASKS.md](empty/docs/FREERTOS_TASKS.md)。
 
 ### EMM42 方向标定状态
 
 - 角色层 `module/emm42/emm42_robot.c` 统一处理 Emm42 正方向：ID2（左轮）直通，ID3（右轮）取反，ID1（摆杆）尚待实机确认且暂按直通。
-- 题目五 `EMM VEL` 仍按 ID1→ID2→ID3 依次以正 RPM 测试；每路使能后固定等待约 300ms 再下发速度帧，保证包括首路 ID1 在内的驱动器有处理使能命令的时间。后续确认 ID1 方向时，只修改角色层标定表，不修改 `task5.c`。
+- 题目五 `Five` 仅使能并控制 ID2 左轮、ID3 右轮；沿用题目二的节拍化使能时序，两轮各等待约 180ms 后进入交替速度控制。后续确认 ID1 方向时，只修改角色层标定表。
 - 左右轮差速运动学尚未实现。
 
 ### 循迹通道状态
@@ -172,7 +172,7 @@ A23、A21、A20、A19、A18、A11、A10、A5、A6、A4、A3、A2
 - **范围**：−180.00° ~ +180.00°（内部厘度 0.01°，即 −18000 ~ +18000）。
 - **转向与 Yaw 变化方向**：小车**左转 → Yaw 递减**（如 180° → 150° → 0° → −179°）；右转 → Yaw 递增。
 - **复位初始值不确定**：每次 MCU 复位后，IMU SFLP 融合初始 Yaw 不同，**不影响相对角度闭环**——只需记录起始 Yaw 计算偏移量（如目标 = 起始 − 90°），不依赖绝对值。
-- **跨界跳变**：Yaw 在 ±180° 边界跳变（−179° ↔ +179°），计算角度差必须用最短路径差值算法（如 `task3.c::AngleDiffCd()`），不可直接减法。
+- **跨界跳变**：Yaw 在 ±180° 边界跳变（−179° ↔ +179°），计算角度差必须用最短路径差值算法（如 `angle_utils` 接口），不可直接减法。
 - **漂移**：无磁力计/外部参考时，Yaw 长期会漂移；短时间（几秒到几十秒）内相对精度足够用于 90°/180° 转弯闭环。
 
 ### 跨模块通信

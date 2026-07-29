@@ -89,11 +89,14 @@
 #define UI_RUN_STATUS_Y   (48)    /* 运行态：传感器状态栏 */
 #define UI_RUN_HINT_Y     (56)
 
-/* task5 在题目表中的固定下标，用于显示其单路测试进度。 */
+/* task5 在题目表中的固定下标，用于显示其循迹与停车流程状态。 */
 #define UI_TASK5_INDEX    (4U)
 
 /* task2 在题目表中的固定下标，用于显示其秒表计时。 */
 #define UI_TASK2_INDEX    (1U)
+
+/* task4 在题目表中的固定下标，用于显示其秒表计时。 */
+#define UI_TASK4_INDEX    (3U)
 
 /* 任一按键按下沿触发一次短促蜂鸣器反馈（约 2~3ms）。
  * 轮询周期 30ms 粒度太粗，不再走 tick 计数关断——改为同一周期内忙等后立即关。 */
@@ -382,11 +385,13 @@ static void Ui_DrawRun(void)
     OLED_ShowString(0, 16, "TASK", OLED_8X16);
     OLED_ShowNum(40, 16, s_sel + 1U, 1, OLED_8X16);
 
-    /* 题名；任务五显示当前正在测试的 ID 和阶段，任务二显示秒表计时。 */
+    /* 题名；任务二、四显示秒表计时，任务五显示循迹与停车流程状态。 */
     if (s_sel == UI_TASK5_INDEX) {
         OLED_ShowString(0, UI_RUN_NAME_Y, (char *)Task5_GetUiStatus(), OLED_6X8);
     } else if (s_sel == UI_TASK2_INDEX) {
         OLED_ShowString(0, UI_RUN_NAME_Y, (char *)Task2_GetUiStatus(), OLED_6X8);
+    } else if (s_sel == UI_TASK4_INDEX) {
+        OLED_ShowString(0, UI_RUN_NAME_Y, (char *)Task4_GetUiStatus(), OLED_6X8);
     } else {
         OLED_ShowString(0, UI_RUN_NAME_Y, (char *)RobotCore_GetTaskName(s_sel), OLED_6X8);
     }
@@ -499,7 +504,7 @@ static void AppUiTask_Entry(void *argument)
             Ui_DrawStatusBar((state == UI_STATE_MENU) ? UI_MENU_STATUS_Y
                                                       : UI_RUN_STATUS_Y);
             if ((state == UI_STATE_RUN) && (s_sel == UI_TASK5_INDEX)) {
-                /* 任务五每 300ms 刷新一次测试对象和阶段，ID1/ID2/ID3 均可见。 */
+                /* 任务五每 300ms 刷新一次循迹与停车流程状态。 */
                 OLED_ClearArea(0, UI_RUN_NAME_Y, 128, UI_MENU_LINE_H);
                 OLED_ShowString(0, UI_RUN_NAME_Y, (char *)Task5_GetUiStatus(), OLED_6X8);
                 OLED_UpdateArea(0, UI_RUN_NAME_Y, 128, UI_MENU_LINE_H);
@@ -508,6 +513,12 @@ static void AppUiTask_Entry(void *argument)
                 /* 任务二每 300ms 刷新一次秒表计时。 */
                 OLED_ClearArea(0, UI_RUN_NAME_Y, 128, UI_MENU_LINE_H);
                 OLED_ShowString(0, UI_RUN_NAME_Y, (char *)Task2_GetUiStatus(), OLED_6X8);
+                OLED_UpdateArea(0, UI_RUN_NAME_Y, 128, UI_MENU_LINE_H);
+            }
+            if ((state == UI_STATE_RUN) && (s_sel == UI_TASK4_INDEX)) {
+                /* 任务四每 300ms 刷新一次秒表计时。 */
+                OLED_ClearArea(0, UI_RUN_NAME_Y, 128, UI_MENU_LINE_H);
+                OLED_ShowString(0, UI_RUN_NAME_Y, (char *)Task4_GetUiStatus(), OLED_6X8);
                 OLED_UpdateArea(0, UI_RUN_NAME_Y, 128, UI_MENU_LINE_H);
             }
 #if (APP_FEATURE_BALL_VISION != 0U)

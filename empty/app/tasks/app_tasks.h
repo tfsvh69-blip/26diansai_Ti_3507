@@ -64,12 +64,15 @@ void Task4_OnEnter(void);
 void Task4_OnLoop(void);
 void Task4_OnExit(void);
 
+/* 取题目四当前秒表计时文本（6.5 秒缓停后追加" DONE"），供 OLED 运行界面显示。 */
+const char *Task4_GetUiStatus(void);
+
 /* 第 5 题 */
 void Task5_OnEnter(void);
 void Task5_OnLoop(void);
 void Task5_OnExit(void);
 
-/* 取题目五当前测试角色和阶段的 ASCII 状态文本，供 OLED 运行界面显示。 */
+/* 取题目五当前循迹与停车流程的 ASCII 状态文本，供 OLED 运行界面显示。 */
 const char *Task5_GetUiStatus(void);
 
 /* 第 6 题 */

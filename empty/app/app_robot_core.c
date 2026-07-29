@@ -37,9 +37,9 @@ typedef struct {
 static const RobotTask_t s_robotTasks[] = {
     { "DIR TEST", Task1_OnEnter, Task1_OnLoop, Task1_OnExit },
     { "LINE PID", Task2_OnEnter, Task2_OnLoop, Task2_OnExit },
-    { "GYRO 90L", Task3_OnEnter, Task3_OnLoop, Task3_OnExit },
-    { "SERVO SWP", Task4_OnEnter, Task4_OnLoop, Task4_OnExit },
-    { "EMM VEL", Task5_OnEnter, Task5_OnLoop, Task5_OnExit },
+    { "Task 3", Task3_OnEnter, Task3_OnLoop, Task3_OnExit },
+    { "LINE 6S", Task4_OnEnter, Task4_OnLoop, Task4_OnExit },
+    { "Five", Task5_OnEnter, Task5_OnLoop, Task5_OnExit },
     { "Task 6", Task6_OnEnter, Task6_OnLoop, Task6_OnExit },
 };
 

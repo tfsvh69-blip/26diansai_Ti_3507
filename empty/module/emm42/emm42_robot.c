@@ -47,6 +47,26 @@ void Emm42Robot_SetSpeedRpm(Emm42RobotId_t id, int16_t rpm, uint8_t acc)
     Emm42_SetSpeedRpm(s_addrTable[id], rpm, acc);
 }
 
+void Emm42Robot_VelControl(Emm42RobotId_t id, int16_t rpm, uint8_t acc)
+{
+    int32_t    signedRpm;
+    Emm42Dir_t dir;
+    uint16_t   magnitude;
+
+    if (id >= EMM42_ROBOT_COUNT) {
+        return;
+    }
+
+    signedRpm = (int32_t)rpm;
+    if (s_dirInvertTable[id]) {
+        signedRpm = -signedRpm;
+    }
+
+    dir = (signedRpm < 0) ? EMM42_DIR_CCW : EMM42_DIR_CW;
+    magnitude = (uint16_t)((signedRpm < 0) ? -signedRpm : signedRpm);
+    Emm42_VelControl(s_addrTable[id], dir, magnitude, acc, false);
+}
+
 void Emm42Robot_Stop(Emm42RobotId_t id)
 {
     if (id >= EMM42_ROBOT_COUNT) {

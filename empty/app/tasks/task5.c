@@ -3,205 +3,499 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "FreeRTOS.h"
+#include "task.h"
+
+#include "pid.h"
+#include "bsp_line.h"
 #include "emm42_robot.h"
 
 /* ==================================================================
- * 第 5 题：张大头 Emm42_V5.0 闭环步进电机【方向标定测试】（速度模式）
+ * 第 5 题：横向停止线后 3 秒循迹并线性缓停
  *
- * 硬件：UART1（PA17=TX → 驱动器 RX，PB5=RX ← 驱动器 TX），115200 8N1，
- *       v1.1 排针 H7；3 台驱动器挂同一总线，靠设备地址（1/2/3）区分。
- *       地址 → 角色映射见 module/emm42/emm42_robot.h：
- *         1=摆杆高低调节(LIFT)、2=左轮(WHEEL_L)、3=右轮(WHEEL_R)。
- *
- * ⚠️ 本题当前用途 = 方向标定观察，不是最终业务动作：
- *    依次让 ID1 → ID2 → ID3【单独】以【正 RPM】转一段时间再停，一次只转一路，
- *    便于逐个肉眼确认"正 RPM 对应哪个物理方向"（摆杆是抬升还是下降、
- *    左/右轮是朝小车前进还是后退方向转）。三路测完后保持停车，不循环，
- *    等使用者观察记录后按 K4 退出。
- *
- *    这里的"正 RPM"会经过 Emm42Robot_SetSpeedRpm() 的角色方向标定后再下发：
- *    ID2 已直通、ID3 已取反、ID1 暂待确认。后续确认 ID1 方向时，只需改
- *    emm42_robot 层的标定表，不用改本文件。
- *
- * 使用方法：进入本题后静置观察，依次看到摆杆动一下、左轮转一下、右轮转
- * 一下（每路约 3 秒），记录每路的实际物理方向，反馈给开发者用于标定。
- *
- * 【关键设计】一次只有一路在转，帧节奏很宽松（每路只需 3 帧：使能/转/停），
- * 不存在"一个 OnLoop 里连发多帧"的问题，故不需要像并行测试那样按拍强制错开。
- *
- * 【上板判断】某路电机不转时的排查顺序：
- *   1. 量 PA17 是否有数据波形（有 = MCU 侧已发出）；
- *   2. Emm42_GetRxByteCount() > 0 说明总线上至少有驱动器在回话，链路通；
- *      恒为 0 → 查驱动器地址、波特率（默认 115200，见 ti_msp_dl_config.h）、TX/RX 是否接反；
- *   3. 驱动器电源 4S 是否供电（Emm42_V5.0 需 12~36V，仅接 3V3 逻辑电不会转）。
+ * 以题目二的 8 路灰度 PID 为基础，所有行驶 RPM 参数按 75% 缩放。完成细线
+ * 武装后首次命中 >=6 路黑线时，横向黑胶带期间保持触发前的轮速，离开横带后
+ * 继续循迹，累计 3 秒后用 2 秒软件线性减速到 0 RPM。
  * ================================================================== */
 
-/* ------------------------------------------------------------------
- * 可调参数
- * ------------------------------------------------------------------ */
+/* PID 参数沿用题目二；位置误差仍为 -7、-5、...、+7。 */
+#define T5_KP                              (5.0F)
+#define T5_KI                              (0.15F)
+#define T5_KD                              (0.2F)
+#define T5_INTEGRAL_LIMIT                  (20.0F)
+#define T5_MAX_STEER_RPM                   (75.0F)
 
-/* 未接全 3 台时，把对应角色置 0 即可跳过（不测试该角色，直接跳到下一路）。 */
-#define T5_ENABLE_LIFT      (1)
-#define T5_ENABLE_WHEEL_L   (1)
-#define T5_ENABLE_WHEEL_R   (1)
+/* 题目二行驶 RPM 参数按 75% 缩放。 */
+#define T5_BASE_RPM                        (97.5F)
+#define T5_MIN_WHEEL_RPM                   (5.0F)
+#define T5_MAX_WHEEL_RPM                   (172.5F)
+#define T5_MIN_BASE_RPM                    (7.5F)
 
-/* 测试转速（RPM）。先用低速看清方向，确认映射关系后再调整实际业务转速。 */
-#define T5_TEST_RPM         (60)
+/* 保持题目二的驱动器加速度档位与控制节拍。 */
+#define T5_EMM_ACC                         (150U)
+#define T5_DT_SEC                          (0.03F)
+#define T5_TICK_MS                         (30U)
 
-/* 加速度档位：0=不使用曲线立即变速，数值越大加速越快。低速测试用温和值。 */
-#define T5_ACC              (10U)
+/* 丢线保护、入场使能与共享 UART1 总线时序。 */
+#define T5_LINE_LOST_TICKS                 (20U)
+#define T5_RESET_SETTLE_TICKS              (2U)
+#define T5_ENABLE_SETTLE_TICKS             (6U)
+#define T5_EMM_CMD_GAP_MS                  (5U)
 
-/* 使能命令后等待的 30ms 周期数：给首个被测驱动器留出就绪和处理命令的时间。 */
-#define T5_ENABLE_SETTLE_TICKS  (10U)
+/* 抗抖与转弯减速参数沿用题目二。 */
+#define T5_ERROR_FILTER_ALPHA              (0.5F)
+#define T5_ERROR_DEADBAND                  (1.0F)
+#define T5_CORNER_SLOWDOWN_GAIN            (0.6F)
 
-/* 每路运行时长（30ms 轮询周期数）。100 拍 ≈ 3.0s，足够肉眼看清转动方向。 */
-#define T5_RUN_TICKS        (100U)
+/* 先连续识别细线，再允许宽横线触发后续流程。 */
+#define T5_ARM_HIT_MAX                     (3U)
+#define T5_ARM_TICKS                       (15U)
+#define T5_STOP_LINE_HIT_MIN               (6U)
 
-/* 每路测完后的停车间歇（30ms 周期数）。34 拍 ≈ 1.0s，用于分隔"这路测完、下一路开始"。 */
-#define T5_STOP_TICKS       (34U)
-
-/* ------------------------------------------------------------------
- * 依次测试的角色顺序表：ID1→ID2→ID3，即 摆杆→左轮→右轮。
- * s_roleEnabled 对应上面的 T5_ENABLE_* 编译期开关，跳过未接的角色。
- * ------------------------------------------------------------------ */
-
-static const Emm42RobotId_t s_roleOrder[3] = {
-    EMM42_ROBOT_LIFT,      /* ID1 */
-    EMM42_ROBOT_WHEEL_L,   /* ID2 */
-    EMM42_ROBOT_WHEEL_R,   /* ID3 */
-};
-
-static const uint8_t s_roleEnabled[3] = {
-    (uint8_t)T5_ENABLE_LIFT,
-    (uint8_t)T5_ENABLE_WHEEL_L,
-    (uint8_t)T5_ENABLE_WHEEL_R,
-};
-
-/* ------------------------------------------------------------------
- * 状态机：s_roleIdx(0~2)=当前测试到第几路，3=三路（或已启用的几路）测完；
- *         s_phase=当前路内部的四段小节：使能→就绪等待→正转→停止。
- * ------------------------------------------------------------------ */
+/* 首次压到横线后的正常循迹时间与软件线性减速时长。 */
+#define T5_AFTER_LINE_MS                   (3000U)
+#define T5_DECEL_MS                        (2000U)
 
 typedef enum {
-    T5_PHASE_ENABLE = 0,  /* 使能当前角色（一帧） */
-    T5_PHASE_ENABLE_WAIT, /* 使能后等待驱动器处理命令 */
-    T5_PHASE_RUN,         /* 以 +T5_TEST_RPM 正转 T5_RUN_TICKS 拍 */
-    T5_PHASE_STOP         /* 停止该角色，间歇 T5_STOP_TICKS 拍后切下一角色 */
-} Task5Phase_t;
+    T5_STATE_RESET_DISABLE = 0,
+    T5_STATE_RESET_WAIT,
+    T5_STATE_ENABLE_LEFT,
+    T5_STATE_ENABLE_LEFT_WAIT,
+    T5_STATE_ENABLE_RIGHT,
+    T5_STATE_ENABLE_RIGHT_WAIT,
+    T5_STATE_RUN,
+    T5_STATE_AFTER_LINE,
+    T5_STATE_DECEL,
+    T5_STATE_STOP_LEFT,
+    T5_STATE_STOP_RIGHT,
+    T5_STATE_FINISHED
+} Task5State_t;
 
-static uint8_t      s_roleIdx;   /* 0~2 当前测试角色下标；3=全部测完 */
-static Task5Phase_t s_phase;
-static uint32_t     s_tick;
+static Task5State_t s_state;
+static Pid_t        s_pid;
+static float        s_lastSteerRpm;
+static float        s_leftRpm;
+static float        s_rightRpm;
+static float        s_filteredError;
+static int32_t      s_sentLeftRpm;
+static int32_t      s_sentRightRpm;
+static uint32_t     s_lineLostTicks;
+static uint32_t     s_enableSettleTicks;
+static bool         s_sendLeftNext;
+static bool         s_finishArmed;
+static uint32_t     s_armTicks;
+static bool         s_lineStopped;
+static bool         s_holdingStopLine;
+static uint32_t     s_afterLineElapsedMs;
+static uint32_t     s_decelElapsedMs;
+static char         s_uiStatusBuf[16];
 
-/* 从 from 开始找下一个已启用的角色下标；找不到返回 3（表示测完/无可测）。 */
-static uint8_t Task5_NextEnabledRole(uint8_t from)
+static float Task5_Clamp(float value, float minValue, float maxValue)
 {
-    uint8_t i = from;
-    while ((i < 3U) && (s_roleEnabled[i] == 0U)) {
-        i++;
+    if (value < minValue) {
+        return minValue;
     }
-    return i;
+    if (value > maxValue) {
+        return maxValue;
+    }
+    return value;
+}
+
+/* 正常循迹保留差速的整体平移限幅。 */
+static void Task5_ClampWheelPair(float *leftRpm, float *rightRpm)
+{
+    float hi = (*leftRpm > *rightRpm) ? *leftRpm : *rightRpm;
+    float lo;
+    float shift;
+
+    if (hi > T5_MAX_WHEEL_RPM) {
+        shift      = hi - T5_MAX_WHEEL_RPM;
+        *leftRpm  -= shift;
+        *rightRpm -= shift;
+    }
+
+    lo = (*leftRpm < *rightRpm) ? *leftRpm : *rightRpm;
+    if (lo < T5_MIN_WHEEL_RPM) {
+        shift      = T5_MIN_WHEEL_RPM - lo;
+        *leftRpm  += shift;
+        *rightRpm += shift;
+    }
+
+    *leftRpm  = Task5_Clamp(*leftRpm, T5_MIN_WHEEL_RPM, T5_MAX_WHEEL_RPM);
+    *rightRpm = Task5_Clamp(*rightRpm, T5_MIN_WHEEL_RPM, T5_MAX_WHEEL_RPM);
+}
+
+/* 正常控制每拍最多发一帧，左右轮交替更新。 */
+static void Task5_ApplyWheelRpm(float leftRpm, float rightRpm)
+{
+    int32_t leftInt = (int32_t)(leftRpm + 0.5F);
+    int32_t rightInt = (int32_t)(rightRpm + 0.5F);
+
+    if (s_sendLeftNext) {
+        if (leftInt != s_sentLeftRpm) {
+            Emm42Robot_SetSpeedRpm(EMM42_ROBOT_WHEEL_L, (int16_t)leftInt,
+                                   T5_EMM_ACC);
+            s_sentLeftRpm = leftInt;
+        }
+    } else {
+        if (rightInt != s_sentRightRpm) {
+            Emm42Robot_SetSpeedRpm(EMM42_ROBOT_WHEEL_R, (int16_t)rightInt,
+                                   T5_EMM_ACC);
+            s_sentRightRpm = rightInt;
+        }
+    }
+    s_sendLeftNext = !s_sendLeftNext;
+}
+
+/* 按物理左→右的 LINE8→LINE1 顺序计算线位置误差。 */
+static bool Task5_GetLineError(float *error, uint32_t *hitCountOut)
+{
+    uint8_t  bitmap = BspLine_ReadAll();
+    int32_t  weightedSum = 0;
+    uint32_t hitCount = 0U;
+    uint32_t physicalIdx;
+
+    for (physicalIdx = 0U; physicalIdx < (uint32_t)BSP_LINE_COUNT; physicalIdx++) {
+        uint32_t channel = (uint32_t)BSP_LINE_COUNT - 1U - physicalIdx;
+        if ((bitmap & (uint8_t)(1U << channel)) != 0U) {
+            weightedSum += (int32_t)(physicalIdx * 2U) - 7;
+            hitCount++;
+        }
+    }
+
+    *hitCountOut = hitCount;
+    if (hitCount == 0U) {
+        return false;
+    }
+
+    *error = (float)weightedSum / (float)hitCount;
+    return true;
+}
+
+/* 有效线数据才更新滤波和 PID；长期丢线时保留题目二的安全停车。 */
+static void Task5_UpdateTracking(bool lineFound, float rawError)
+{
+    if (lineFound) {
+        if (s_lineStopped) {
+            s_filteredError = rawError;
+            Pid_Reset(&s_pid);
+        } else {
+            s_filteredError += T5_ERROR_FILTER_ALPHA * (rawError - s_filteredError);
+        }
+
+        s_lineLostTicks = 0U;
+        s_lineStopped = false;
+        {
+            float pidError = s_filteredError;
+            if ((pidError > -T5_ERROR_DEADBAND) && (pidError < T5_ERROR_DEADBAND)) {
+                pidError = 0.0F;
+            }
+            s_lastSteerRpm = Pid_Update(&s_pid, pidError, T5_DT_SEC);
+        }
+    } else {
+        s_lineLostTicks++;
+        if (s_lineLostTicks >= T5_LINE_LOST_TICKS) {
+            s_lineStopped = true;
+        }
+    }
+}
+
+/* 正常循迹目标：转弯时降低基础速度，并保持差速整体限幅。 */
+static void Task5_ApplyNormalTracking(void)
+{
+    float steerAbs;
+    float dynBaseRpm;
+    float targetLeftRpm;
+    float targetRightRpm;
+
+    if (s_lineStopped) {
+        s_leftRpm = 0.0F;
+        s_rightRpm = 0.0F;
+        Task5_ApplyWheelRpm(s_leftRpm, s_rightRpm);
+        return;
+    }
+
+    steerAbs = (s_lastSteerRpm >= 0.0F) ? s_lastSteerRpm : -s_lastSteerRpm;
+    dynBaseRpm = T5_BASE_RPM - T5_CORNER_SLOWDOWN_GAIN * steerAbs;
+    dynBaseRpm = Task5_Clamp(dynBaseRpm, T5_MIN_BASE_RPM, T5_BASE_RPM);
+    targetLeftRpm = dynBaseRpm + s_lastSteerRpm;
+    targetRightRpm = dynBaseRpm - s_lastSteerRpm;
+    Task5_ClampWheelPair(&targetLeftRpm, &targetRightRpm);
+
+    s_leftRpm = targetLeftRpm;
+    s_rightRpm = targetRightRpm;
+    Task5_ApplyWheelRpm(s_leftRpm, s_rightRpm);
+}
+
+/* 减速期允许的差速随基础速度同步收窄，保证两轮始终非负并能降到 0 RPM。 */
+static void Task5_ApplyDecelTracking(void)
+{
+    float progress;
+    float linearBaseRpm;
+    float steerAbs;
+    float dynBaseRpm;
+    float steerLimit;
+    float steerRpm;
+    float targetLeftRpm;
+    float targetRightRpm;
+
+    progress = (float)s_decelElapsedMs / (float)T5_DECEL_MS;
+    progress = Task5_Clamp(progress, 0.0F, 1.0F);
+    linearBaseRpm = T5_BASE_RPM * (1.0F - progress);
+
+    steerAbs = (s_lastSteerRpm >= 0.0F) ? s_lastSteerRpm : -s_lastSteerRpm;
+    dynBaseRpm = linearBaseRpm - T5_CORNER_SLOWDOWN_GAIN * steerAbs;
+    dynBaseRpm = Task5_Clamp(dynBaseRpm, 0.0F, linearBaseRpm);
+
+    steerLimit = dynBaseRpm;
+    if ((T5_MAX_WHEEL_RPM - dynBaseRpm) < steerLimit) {
+        steerLimit = T5_MAX_WHEEL_RPM - dynBaseRpm;
+    }
+    steerLimit = Task5_Clamp(steerLimit, 0.0F, T5_MAX_STEER_RPM);
+    steerRpm = Task5_Clamp(s_lastSteerRpm, -steerLimit, steerLimit);
+
+    targetLeftRpm = dynBaseRpm + steerRpm;
+    targetRightRpm = dynBaseRpm - steerRpm;
+    s_leftRpm = Task5_Clamp(targetLeftRpm, 0.0F, T5_MAX_WHEEL_RPM);
+    s_rightRpm = Task5_Clamp(targetRightRpm, 0.0F, T5_MAX_WHEEL_RPM);
+    Task5_ApplyWheelRpm(s_leftRpm, s_rightRpm);
+}
+
+static void Task5_FormatRemaining(const char *prefix, uint32_t elapsedMs)
+{
+    uint32_t remainingMs;
+    uint32_t tenths;
+    uint32_t idx = 0U;
+    uint32_t durationMs = (s_state == T5_STATE_AFTER_LINE) ? T5_AFTER_LINE_MS
+                                                             : T5_DECEL_MS;
+
+    if (elapsedMs >= durationMs) {
+        remainingMs = 0U;
+    } else {
+        remainingMs = durationMs - elapsedMs;
+    }
+    tenths = (remainingMs + 99U) / 100U;
+
+    while (*prefix != '\0') {
+        s_uiStatusBuf[idx++] = *prefix++;
+    }
+    s_uiStatusBuf[idx++] = (char)('0' + ((tenths / 10U) % 10U));
+    s_uiStatusBuf[idx++] = '.';
+    s_uiStatusBuf[idx++] = (char)('0' + (tenths % 10U));
+    s_uiStatusBuf[idx++] = 's';
+    s_uiStatusBuf[idx] = '\0';
 }
 
 const char *Task5_GetUiStatus(void)
 {
-    if (s_roleIdx >= 3U) {
-        return "EMM DONE";
-    }
+    switch (s_state) {
+    case T5_STATE_RUN:
+        if (s_lineStopped) {
+            return "LOST";
+        }
+        return s_finishArmed ? "LINE" : "ARM";
 
-    switch (s_phase) {
-    case T5_PHASE_ENABLE:
-        return (s_roleIdx == 0U) ? "ID1 EN" :
-               (s_roleIdx == 1U) ? "ID2 EN" : "ID3 EN";
+    case T5_STATE_AFTER_LINE:
+        if (s_holdingStopLine) {
+            return "HOLD";
+        }
+        if (s_lineStopped) {
+            return "LOST";
+        }
+        Task5_FormatRemaining("GO:", s_afterLineElapsedMs);
+        return s_uiStatusBuf;
 
-    case T5_PHASE_ENABLE_WAIT:
-        return (s_roleIdx == 0U) ? "ID1 WAIT" :
-               (s_roleIdx == 1U) ? "ID2 WAIT" : "ID3 WAIT";
+    case T5_STATE_DECEL:
+        if (s_holdingStopLine) {
+            return "HOLD";
+        }
+        Task5_FormatRemaining("DEC:", s_decelElapsedMs);
+        return s_uiStatusBuf;
 
-    case T5_PHASE_RUN:
-        return (s_roleIdx == 0U) ? "ID1 RUN" :
-               (s_roleIdx == 1U) ? "ID2 RUN" : "ID3 RUN";
+    case T5_STATE_STOP_LEFT:
+    case T5_STATE_STOP_RIGHT:
+        return "STOP";
 
-    case T5_PHASE_STOP:
-        return (s_roleIdx == 0U) ? "ID1 STOP" :
-               (s_roleIdx == 1U) ? "ID2 STOP" : "ID3 STOP";
+    case T5_STATE_FINISHED:
+        return "DONE";
 
     default:
-        return "EMM ERR";
+        return "INIT";
     }
 }
 
 void Task5_OnEnter(void)
 {
-    /* 进入本题即从第一个已启用的角色开始，不预先批量使能——按小节逐帧下发。 */
-    s_roleIdx = Task5_NextEnabledRole(0U);
-    s_phase   = T5_PHASE_ENABLE;
-    s_tick    = 0U;
+    Pid_Init(&s_pid, T5_KP, T5_KI, T5_KD,
+             T5_INTEGRAL_LIMIT, T5_MAX_STEER_RPM);
+    s_state = T5_STATE_RESET_DISABLE;
+    s_lastSteerRpm = 0.0F;
+    s_leftRpm = 0.0F;
+    s_rightRpm = 0.0F;
+    s_filteredError = 0.0F;
+    s_sentLeftRpm = 0;
+    s_sentRightRpm = 0;
+    s_lineLostTicks = 0U;
+    s_enableSettleTicks = 0U;
+    s_sendLeftNext = true;
+    s_finishArmed = false;
+    s_armTicks = 0U;
+    s_lineStopped = false;
+    s_holdingStopLine = false;
+    s_afterLineElapsedMs = 0U;
+    s_decelElapsedMs = 0U;
 }
 
 void Task5_OnLoop(void)
 {
-    if (s_roleIdx >= 3U) {
-        /* 三路（或已启用的几路）均测试完毕：保持停车，等待观察记录后 K4 退出。 */
+    float rawError;
+    bool lineFound;
+    uint32_t hitCount;
+
+    if (s_state == T5_STATE_RESET_DISABLE) {
+        Emm42Robot_Enable(EMM42_ROBOT_WHEEL_L, false);
+        vTaskDelay(pdMS_TO_TICKS(T5_EMM_CMD_GAP_MS));
+        Emm42Robot_Enable(EMM42_ROBOT_WHEEL_R, false);
+        s_enableSettleTicks = T5_RESET_SETTLE_TICKS;
+        s_state = T5_STATE_RESET_WAIT;
+        return;
+    }
+    if (s_state == T5_STATE_RESET_WAIT) {
+        if (s_enableSettleTicks > 0U) {
+            s_enableSettleTicks--;
+            return;
+        }
+        s_state = T5_STATE_ENABLE_LEFT;
+        return;
+    }
+    if (s_state == T5_STATE_ENABLE_LEFT) {
+        Emm42Robot_Enable(EMM42_ROBOT_WHEEL_L, true);
+        s_enableSettleTicks = T5_ENABLE_SETTLE_TICKS;
+        s_state = T5_STATE_ENABLE_LEFT_WAIT;
+        return;
+    }
+    if (s_state == T5_STATE_ENABLE_LEFT_WAIT) {
+        if (s_enableSettleTicks > 0U) {
+            s_enableSettleTicks--;
+            return;
+        }
+        s_state = T5_STATE_ENABLE_RIGHT;
+        return;
+    }
+    if (s_state == T5_STATE_ENABLE_RIGHT) {
+        Emm42Robot_Enable(EMM42_ROBOT_WHEEL_R, true);
+        s_enableSettleTicks = T5_ENABLE_SETTLE_TICKS;
+        s_state = T5_STATE_ENABLE_RIGHT_WAIT;
+        return;
+    }
+    if (s_state == T5_STATE_ENABLE_RIGHT_WAIT) {
+        if (s_enableSettleTicks > 0U) {
+            s_enableSettleTicks--;
+            return;
+        }
+        s_state = T5_STATE_RUN;
+    }
+
+    if (s_state == T5_STATE_STOP_LEFT) {
+        /* 线性减速已到 0，分两拍保留速度模式 0 RPM 的停车语义。 */
+        Emm42Robot_VelControl(EMM42_ROBOT_WHEEL_L, 0, T5_EMM_ACC);
+        s_sentLeftRpm = 0;
+        s_state = T5_STATE_STOP_RIGHT;
+        return;
+    }
+    if (s_state == T5_STATE_STOP_RIGHT) {
+        Emm42Robot_VelControl(EMM42_ROBOT_WHEEL_R, 0, T5_EMM_ACC);
+        s_sentRightRpm = 0;
+        s_leftRpm = 0.0F;
+        s_rightRpm = 0.0F;
+        s_state = T5_STATE_FINISHED;
+        return;
+    }
+    if (s_state == T5_STATE_FINISHED) {
         return;
     }
 
-    switch (s_phase) {
-    case T5_PHASE_ENABLE:
-        Emm42Robot_Enable(s_roleOrder[s_roleIdx], true);
-        /* 使能和速度命令至少间隔 300ms，避免首路 ID1 尚未就绪就收到转速帧。 */
-        s_phase = T5_PHASE_ENABLE_WAIT;
-        s_tick  = 0U;
-        break;
+    lineFound = Task5_GetLineError(&rawError, &hitCount);
 
-    case T5_PHASE_ENABLE_WAIT:
-        s_tick++;
-        if (s_tick >= T5_ENABLE_SETTLE_TICKS) {
-            s_phase = T5_PHASE_RUN;
-            s_tick  = 0U;
+    if (s_state == T5_STATE_RUN) {
+        /* 宽横线首次触发时立即冻结最后的正常速度帧，不让横带误差进入 PID。 */
+        if (s_finishArmed && (hitCount >= T5_STOP_LINE_HIT_MIN)) {
+            s_state = T5_STATE_AFTER_LINE;
+            s_holdingStopLine = true;
+            s_afterLineElapsedMs = 0U;
+            return;
         }
-        break;
 
-    case T5_PHASE_RUN:
-        if (s_tick == 0U) {
-            /* 只需下发一次：驱动器收到速度命令后会持续转，不用每拍重发。 */
-            Emm42Robot_SetSpeedRpm(s_roleOrder[s_roleIdx], (int16_t)T5_TEST_RPM, T5_ACC);
+        s_holdingStopLine = false;
+        Task5_UpdateTracking(lineFound, rawError);
+        if (!s_finishArmed) {
+            if (hitCount <= T5_ARM_HIT_MAX) {
+                s_armTicks++;
+                if (s_armTicks >= T5_ARM_TICKS) {
+                    s_finishArmed = true;
+                }
+            } else {
+                s_armTicks = 0U;
+            }
         }
-        s_tick++;
-        if (s_tick >= T5_RUN_TICKS) {
-            s_phase = T5_PHASE_STOP;
-            s_tick  = 0U;
-        }
-        break;
+        Task5_ApplyNormalTracking();
+        return;
+    }
 
-    case T5_PHASE_STOP:
-        if (s_tick == 0U) {
-            Emm42Robot_Stop(s_roleOrder[s_roleIdx]);
+    if (s_state == T5_STATE_AFTER_LINE) {
+        /* 横带出现后计时不中断；横带仍在传感器下方时保持最后轮速。 */
+        s_holdingStopLine = (hitCount >= T5_STOP_LINE_HIT_MIN);
+        s_afterLineElapsedMs += T5_TICK_MS;
+        if (s_afterLineElapsedMs >= T5_AFTER_LINE_MS) {
+            s_state = T5_STATE_DECEL;
+            s_decelElapsedMs = 0U;
+            return;
         }
-        s_tick++;
-        if (s_tick >= T5_STOP_TICKS) {
-            s_roleIdx = Task5_NextEnabledRole((uint8_t)(s_roleIdx + 1U));
-            s_phase   = T5_PHASE_ENABLE;
-            s_tick    = 0U;
+        if (s_holdingStopLine) {
+            return;
         }
-        break;
 
-    default:
-        break;
+        Task5_UpdateTracking(lineFound, rawError);
+        Task5_ApplyNormalTracking();
+        return;
+    }
+
+    /* 减速期再次压到横带时，冻结轮速并暂停减速计时，直到重新回到细线。 */
+    s_holdingStopLine = (hitCount >= T5_STOP_LINE_HIT_MIN);
+    if (s_holdingStopLine) {
+        return;
+    }
+
+    Task5_UpdateTracking(lineFound, rawError);
+    if (s_lineStopped) {
+        Task5_ApplyNormalTracking();
+    } else {
+        Task5_ApplyDecelTracking();
+    }
+
+    s_decelElapsedMs += T5_TICK_MS;
+    if (s_decelElapsedMs >= T5_DECEL_MS) {
+        s_state = T5_STATE_STOP_LEFT;
     }
 }
 
 void Task5_OnExit(void)
 {
-    /*
-     * 退出本题：只下发急停帧（3 台背靠背，Emm42Robot_StopAll 内部实现），保证电机立刻停住。
-     * 这里【不发失能帧】——闭环驱动器停车后保持力矩，比失力更安全（不会溜车/摆杆下坠）；
-     * 且退出是一次性调用、无法像 OnLoop 那样按拍错开，帧数越少越可靠。
-     * 下次进入本题会从 ID1 重新开始测试序列。
-     */
-    Emm42Robot_StopAll();
+    /* K4 退出保留题目二的硬安全收尾：急停后失能左右轮。 */
+    Emm42Robot_Stop(EMM42_ROBOT_WHEEL_L);
+    vTaskDelay(pdMS_TO_TICKS(T5_EMM_CMD_GAP_MS));
+    Emm42Robot_Stop(EMM42_ROBOT_WHEEL_R);
+    vTaskDelay(pdMS_TO_TICKS(T5_EMM_CMD_GAP_MS));
+    Emm42Robot_Enable(EMM42_ROBOT_WHEEL_L, false);
+    vTaskDelay(pdMS_TO_TICKS(T5_EMM_CMD_GAP_MS));
+    Emm42Robot_Enable(EMM42_ROBOT_WHEEL_R, false);
 
-    s_roleIdx = 0U;
-    s_phase   = T5_PHASE_ENABLE;
-    s_tick    = 0U;
+    Pid_Reset(&s_pid);
+    s_state = T5_STATE_RUN;
+    s_finishArmed = false;
+    s_armTicks = 0U;
+    s_lineStopped = false;
+    s_holdingStopLine = false;
+    s_afterLineElapsedMs = 0U;
+    s_decelElapsedMs = 0U;
 }
