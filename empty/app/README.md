@@ -94,6 +94,34 @@ app 层（本目录）
 `id` 取 `BSP_MOTOR_1..BSP_MOTOR_4`。四路各占独立定时器（TIMG0/8/12/6）与独立 ZERO 中断计步，
 互不影响；全部接口**非阻塞**、直接下发（调用即返回，运动在后台跑）。1/32 细分下安全转速约 5~300 RPM；直接高速起转可能失步，应先低速实测。
 
+### 张大头 Emm42_V5.0 闭环步进接口（UART1 串口命令式，两层 API）
+
+与上面的 `bsp_motor`（TMC2209 开环 STEP/DIR）是**两套完全不同的电机**：这一套 MCU 只发命令帧，驱动器内部闭环执行，不占定时器、不产生脉冲。**当前 4 路 TMC2209 开环电机暂不用于本轮开发**，代码保留未改动。
+
+当前总线上 3 台设备，地址 1/2/3 对应角色见下表；**业务代码优先用角色层 [`emm42_robot.h`](../module/emm42/emm42_robot.h)**，不要直接记地址数字：
+
+| 角色枚举 | 协议地址 | 部件 |
+|---|---|---|
+| `EMM42_ROBOT_LIFT` | 1 | 摆杆高低调节 |
+| `EMM42_ROBOT_WHEEL_L` | 2 | 左轮 |
+| `EMM42_ROBOT_WHEEL_R` | 3 | 右轮 |
+
+| 需求 | 调用（角色层，推荐） | 说明 |
+|---|---|---|
+| 初始化 | `Emm42Robot_Init()` | 内部转调 `Emm42_Init()`，注册 UART1 回复中断；`App_Init` 已调用一次 |
+| 使能 / 失能 | `Emm42Robot_Enable(id, true/false)` | 起转前必须先使能 |
+| 指定速度+方向 | `Emm42Robot_SetSpeedRpm(id, ±rpm, acc)` | 正/负会按角色方向标定后转换为协议层 CW/CCW；`0`=转急停帧；`acc` 0=立即变速 |
+| 立即停止（单路） | `Emm42Robot_Stop(id)` | 急停 |
+| 立即停止（3 路） | `Emm42Robot_StopAll()` | 背靠背 3 帧，**仅限 OnExit 等一次性安全收尾场景**，不要放 OnLoop |
+| 取协议地址 | `Emm42Robot_GetAddr(id)` | 诊断打印用 |
+
+⚠️ **方向标定/差速运动学状态**：`Emm42Robot_SetSpeedRpm` 会在角色层补偿方向；ID2（左轮）已确认直通，ID3（右轮）已确认取反，ID1（摆杆）尚待确认且暂按直通。左右轮差速运动学仍未实现；确认 ID1 方向后只需更新 `emm42_robot.c` 的标定表。
+
+底层协议接口（`module/emm42/emm42_v5.h`，只认地址，角色层内部转调这些）：`Emm42_Enable/SetSpeedRpm/VelControl/PosControl/StopNow/SyncMotion/ResetClogProtection/ResetCurPosToZero/ReadSysParams`，诊断用 `Emm42_GetTxFrameCount/GetRxByteCount/GetRxFrameCount/GetLastReply`（`GetRxByteCount()>0` 说明总线上至少有驱动器回话）。地址常量 `EMM42_ADDR_MOTOR1/2/3` + `EMM42_ADDR_BROADCAST(0)`。需要直接按地址操作或用位置模式/同步多机时才绕过角色层直接调这些。
+
+所有接口（两层都一样）**非阻塞、不等回复、不做延时**；
+⚠️ 驱动器处理一帧需要时间，**不要在同一个 `OnLoop` 里连发多帧**——参考 `tasks/task5.c` 的做法：每 30ms 轮询拍最多下发一帧（第 0 拍 LIFT、第 1 拍 WHEEL_L、第 2 拍 WHEEL_R）。
+
 ### 固定半径差速圆弧接口（[`../module/diff_drive/diff_drive.h`](../module/diff_drive/diff_drive.h)）
 
 日常直接调用 `DiffDrive_RunRadiusTurn(半径, 中心RPM)`：正半径左转、负半径右转，内部立即映射为 M1/M2 左侧同速、M3/M4 右侧同速，不经过梯形加速，也不会私自缩放输入速度。默认几何为左右轮距 201 mm、前后轮距 201 mm、胎宽 27 mm。调用示例和侧滑校正方法见 [`../docs/DIFF_DRIVE.md`](../docs/DIFF_DRIVE.md)。

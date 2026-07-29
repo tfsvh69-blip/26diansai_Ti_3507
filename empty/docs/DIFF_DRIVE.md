@@ -39,10 +39,7 @@ if (DiffDrive_RunRadiusTurn(200, 100)) {
 
 ## 任务二测试
 
-OLED 菜单中的题目二为 `ARC TEST`，当前仅用于差速函数和小车硬件测试，并非正式赛题。修改 `app/tasks/task2.c` 顶部两个宏后烧录：
-
-- `T2_TURN_RADIUS_MM`：测试半径，当前 `200` mm 左转；改为 `-200` mm 右转。
-- `T2_CENTER_RPM`：当前 `100` RPM；它会原样参与左右 RPM 计算。
+`DiffDrive_RunRadiusTurn()` 保留为可复用的圆弧运动学接口；题目二已改为正式的 `LINE PID` 循迹，不再调用该接口或保留圆弧测试参数。若后续需要单独验证圆弧，可在专用测试任务中直接调用此接口。
 
 进入后小车立即以目标 RPM 持续圆弧行驶，K4 立即急停并失能。当前 200 mm 左转会得到约左侧 50 RPM、右侧 150 RPM。
 

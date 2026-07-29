@@ -8,9 +8,21 @@
 
 ## 项目结构
 
-工程主体在 `empty/`：`app/` 放任务、业务流程和题目状态机，题目 N 使用 `app/tasks/taskN.c`；题目一 `DIR TEST`（M1→M4 单轮正方向测试）、题目二 `ARC TEST`（固定半径差速圆弧测试）、题目三 `GYRO 90L`（陀螺仪 PID 闭环左转 90°，✅ 冒烟测试已通过），菜单任一按键短促嘀声（~2ms），M1/M2 已在 BSP 全局取反标定。步进电机命令统一直接下发、不做加减速。`algo/` 放可跨题复用的纯算法（PID 控制器、角度差值/归一化），任务层只保留可调参数宏。`bsp/` 放板级与外设驱动，手写 DriverLib 初始化位于 `bsp/board/ti_msp_dl_config.c`；`module/` 放可复用设备/协议模块；`common/` 放功能开关、FreeRTOS 配置和共享消息；`docs/` 放任务、接线、UART 和架构记录。
+工程主体在 `empty/`：`app/` 放任务、业务流程和题目状态机，题目 N 使用 `app/tasks/taskN.c`；当前 5 道题均为硬件/函数测试（非正式赛题）：题目一 `DIR TEST`（M1→M4 单轮正方向）、题目二 `ARC TEST`（固定半径差速圆弧）、题目三 `GYRO 90L`（陀螺仪 PID 闭环左转 90°，✅ 已调通）、题目四 `SERVO SWP`（四路舵机 2s 间隔 0°↔270° 翻转）、题目五 `EMM VEL`（张大头 Emm42_V5.0 闭环步进速度模式，UART1 串口命令式驱动，当前 3 路角色：摆杆高低调节(地址1)/左轮(地址2)/右轮(地址3)，方向未标定，每 30ms 拍最多下发一帧），菜单任一按键短促嘀声（~2ms），M1/M2 已在 BSP 全局取反标定。步进电机命令统一直接下发、不做加减速。`algo/` 放可跨题复用的纯算法（PID 控制器、角度差值/归一化），任务层只保留可调参数宏。`bsp/` 放板级与外设驱动，手写 DriverLib 初始化位于 `bsp/board/ti_msp_dl_config.c`；`module/` 放可复用设备/协议模块；`common/` 放功能开关、FreeRTOS 配置和共享消息；`docs/` 放任务、接线、UART 和架构记录。
 
 `source/ti/` 与 `empty/third_party/` 属于 SDK 或第三方代码，除非任务明确涉及 SDK 或 FreeRTOS 移植，否则不要修改。
+
+### EMM42 方向标定状态
+
+题目五 `EMM VEL` 的角色方向由 `module/emm42/emm42_robot.c` 统一处理：ID2（左轮）直通、ID3（右轮）取反、ID1（摆杆）待确认且暂直通。任务仍按 ID1→ID2→ID3 依次正 RPM 测试；每路使能后先等待约 300ms，再下发速度帧，避免首路 ID1 的使能帧与速度帧间隔不足。确认 ID1 后仅更新角色层标定表。
+
+### 循迹通道状态
+
+灰度循迹使用 H6 的全部 8 路：LINE1~LINE8=PB17~PB24；硬件物理左→右为 LINE8→LINE1，OLED 菜单右半同步显示 `87654321` 及 bit7→bit0 的对应 8 位状态。当前模块识别到线为低电平，`BSP_LINE_ACTIVE_LOW=1` 归一化为 OLED 的 `1`=识别到线。PB17~PB24 都不是 5V 容忍引脚，灰度模块信号必须为 3.3V。
+
+### 题目二正式循迹（已上车测试通过）
+
+题目二当前为 `LINE PID`：以 8 路灰度循迹经 UART1 控制 Emm42 的 ID2 左轮与 ID3 右轮前进，ID1 摆杆不参与；PID 增益、基础速度等具体数值由用户持续在实车上调参，以 `app/tasks/task2.c` 顶部当前值为准。**入场走节拍化状态机**：`OnEnter` 只复位变量，`OnLoop` 里先失能 ID2/ID3（`T2_STATE_RESET_DISABLE`→等 `T2_RESET_SETTLE_TICKS`）再依次使能两路（各等 `T2_ENABLE_SETTLE_TICKS`）才进入 `T2_STATE_RUN`；`T2_ENABLE_SETTLE_TICKS` 已实测 3 拍(90ms)会有约一半概率使能不生效、6 拍(180ms)才稳定，不要调低于此。左右轮命令每 30ms 交替下发一帧，速度命令加速度档位 `T2_EMM_ACC` 用非 0 曲线档位（0 会立即生效但车身突兀抖动），PID 目标 RPM 每拍直接下发、不叠加软件斜坡。误差先做一阶低通滤波、再过一道死区 `T2_ERROR_DEADBAND` 才喂给 PID，抑制命中路数在相邻两档间跳变引起的中心抖动；转向越大基础速度自动按比例降低。左右轮差速限幅 `Task2_ClampWheelPair()` 用"整体平移"而非独立 clamp，避免外侧轮触顶压扁转向差速（高速冲出弯道的典型根因），`T2_MAX_WHEEL_RPM` 须 `>= T2_BASE_RPM` 且总跨度 `>= 2*T2_MAX_STEER_RPM`。终点检测看命中路数是否 `>= T2_FINISH_HIT_MIN`（当前 6，含 7/8 路），且需先连续命中细线一段时间"武装"（避免出发瞬间在宽起始线上误判），才判定跑完一圈并硬停车锁定，等 K4 手动退出。K4 退出与终点急停都要给 ID2/ID3 背靠背下发多帧，帧间插 5ms 延时防共享总线互相干扰丢帧；ID1 摆杆不受影响。OLED 运行界面复用题目五的题名行显示秒表计时（`Task2_GetUiStatus()`，到终点自动定格），因主频/tick 精度疑点乘了一个实测校准系数 `T2_STOPWATCH_CAL_SCALE`。秒表时间达到 `T2_DECEL_START_MS`（固定 14500ms）后基础速度线性下降（梯度 `T2_DECEL_GRADIENT_RPM_PER_SEC`，下限 `T2_DECEL_MIN_RPM`），跟转弯减速取更小值生效。
 
 ## 构建、烧录与验证
 

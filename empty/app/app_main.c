@@ -16,6 +16,7 @@
 #include "app_ui_task.h"
 #include "ball_parser.h"
 #include "bsp_uart.h"
+#include "emm42_robot.h"
 #include "laser_ld14.h"
 
 /*
@@ -123,6 +124,16 @@ void App_Init(void)
      */
     BallParser_Reset();
     BspUart0_SetRxHandler(BallParser_FeedByte);
+#endif
+
+#if (APP_FEATURE_EMM42 != 0U)
+    /*
+     * 张大头 Emm42_V5.0 闭环步进驱动（UART1/PA17/PB5，115200 8N1，当前 3 路：
+     * 摆杆/左轮/右轮，见 module/emm42/emm42_robot.h）：不是任务，命令由题目
+     * 状态机（app/tasks/task5.c）经 Emm42Robot_* 接口按需下发，驱动器回复走
+     * UART1 RX 中断逐字节喂给 module/emm42 的诊断统计。此处只注册回调 + 放开中断。
+     */
+    Emm42Robot_Init();
 #endif
 
 #if (APP_FEATURE_IMU != 0U)

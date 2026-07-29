@@ -5,11 +5,11 @@
 #include "ti_msp_dl_config.h"
 
 /*
- * 循迹模块极性开关：0 = 识别到线时信号脚为高电平（当前模块，用户实测确认）；
- *                   1 = 识别到线时为低电平（换模块后极性相反时改这里，无需动其它代码）。
+ * 循迹模块极性开关：0 = 识别到线时信号脚为高电平；
+ *                   1 = 识别到线时为低电平（当前模块，用户实测确认）。
  */
 #ifndef BSP_LINE_ACTIVE_LOW
-#define BSP_LINE_ACTIVE_LOW   (0U)
+#define BSP_LINE_ACTIVE_LOW   (1U)
 #endif
 
 typedef struct {
@@ -17,7 +17,7 @@ typedef struct {
     uint32_t   pin;
 } BspLineResource_t;
 
-/* 顺序即 LINE1~LINE7（PB17~PB23），下标 0=LINE1(最左) … 6=LINE7(最右)。 */
+/* 顺序即 LINE1~LINE8（PB17~PB24），下标 0=LINE1(最右) … 7=LINE8(最左)。 */
 static const BspLineResource_t s_lineResource[BSP_LINE_COUNT] = {
     { LINE1_PORT, LINE1_PIN },
     { LINE2_PORT, LINE2_PIN },
@@ -26,6 +26,7 @@ static const BspLineResource_t s_lineResource[BSP_LINE_COUNT] = {
     { LINE5_PORT, LINE5_PIN },
     { LINE6_PORT, LINE6_PIN },
     { LINE7_PORT, LINE7_PIN },
+    { LINE8_PORT, LINE8_PIN },
 };
 
 uint8_t BspLine_ReadAll(void)

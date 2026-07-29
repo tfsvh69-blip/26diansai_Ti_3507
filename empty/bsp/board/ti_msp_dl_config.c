@@ -119,6 +119,7 @@ void SYSCFG_DL_initPower(void)
     DL_GPIO_reset(GPIOA);
     DL_GPIO_reset(GPIOB);
     DL_UART_Main_reset(UART_0_INST);
+    DL_UART_Main_reset(UART_1_INST);
     DL_UART_Main_reset(UART_2_INST);
     DL_I2C_reset(IMU_I2C_1_INST);
     DL_TimerG_reset(MOTOR_STEP_TIMER_INST);
@@ -130,6 +131,7 @@ void SYSCFG_DL_initPower(void)
     DL_GPIO_enablePower(GPIOA);
     DL_GPIO_enablePower(GPIOB);
     DL_UART_Main_enablePower(UART_0_INST);
+    DL_UART_Main_enablePower(UART_1_INST);
     DL_UART_Main_enablePower(UART_2_INST);
     DL_I2C_enablePower(IMU_I2C_1_INST);
     DL_TimerG_enablePower(MOTOR_STEP_TIMER_INST);
@@ -156,6 +158,20 @@ void SYSCFG_DL_GPIO_init(void)
         DL_GPIO_RESISTOR_PULL_UP, DL_GPIO_DRIVE_STRENGTH_HIGH, DL_GPIO_HIZ_DISABLE);
     DL_GPIO_initPeripheralInputFunctionFeatures(GPIO_UART_0_IOMUX_RX,
         GPIO_UART_0_IOMUX_RX_FUNC, DL_GPIO_INVERSION_DISABLE,
+        DL_GPIO_RESISTOR_PULL_UP, DL_GPIO_HYSTERESIS_DISABLE,
+        DL_GPIO_WAKEUP_DISABLE);
+
+    /*
+     * UART1 使用 PA17=TX、PB5=RX，接张大头 Emm42_V5.0 闭环驱动（v1.1 排针 H7）。
+     * RX 端加内部上拉：驱动器未接/未上电时接收线保持高电平（空闲态），避免误触发起始位。
+     * 注意接线说明 R1——多台驱动器的 TX 并联在 PB5 上（当前 3 台：摆杆/左轮/右轮，
+     * 见 module/emm42/emm42_robot.h），需外部肖特基做线与后才可同时接。
+     */
+    DL_GPIO_initPeripheralOutputFunctionFeatures(GPIO_UART_1_IOMUX_TX,
+        GPIO_UART_1_IOMUX_TX_FUNC, DL_GPIO_INVERSION_DISABLE,
+        DL_GPIO_RESISTOR_PULL_UP, DL_GPIO_DRIVE_STRENGTH_HIGH, DL_GPIO_HIZ_DISABLE);
+    DL_GPIO_initPeripheralInputFunctionFeatures(GPIO_UART_1_IOMUX_RX,
+        GPIO_UART_1_IOMUX_RX_FUNC, DL_GPIO_INVERSION_DISABLE,
         DL_GPIO_RESISTOR_PULL_UP, DL_GPIO_HYSTERESIS_DISABLE,
         DL_GPIO_WAKEUP_DISABLE);
 
@@ -274,30 +290,33 @@ void SYSCFG_DL_GPIO_init(void)
         DL_GPIO_HYSTERESIS_ENABLE, DL_GPIO_WAKEUP_DISABLE);
 
     /*
-     * 7 路灰度循迹 LINE1~LINE7（PB17~PB23）：数字输入 + 内部下拉 + 迟滞。
-     * 识别到线=高电平，故用下拉：模块未接/悬空时读到低(未识别)，是安全默认；
-     * 模块信号为推挽输出，弱内部下拉不会与之冲突。任务低频轮询读取电平。
+     * 8 路灰度循迹 LINE1~LINE8（PB17~PB24）：数字输入 + 内部上拉 + 迟滞。
+     * 识别到线=低电平，故用上拉：模块未接/悬空时读到高(未识别)，是安全默认；
+     * 模块信号为推挽输出，弱内部上拉不会与之冲突。任务低频轮询读取电平。
      */
     DL_GPIO_initDigitalInputFeatures(LINE1_IOMUX,
-        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_DOWN,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
         DL_GPIO_HYSTERESIS_ENABLE, DL_GPIO_WAKEUP_DISABLE);
     DL_GPIO_initDigitalInputFeatures(LINE2_IOMUX,
-        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_DOWN,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
         DL_GPIO_HYSTERESIS_ENABLE, DL_GPIO_WAKEUP_DISABLE);
     DL_GPIO_initDigitalInputFeatures(LINE3_IOMUX,
-        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_DOWN,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
         DL_GPIO_HYSTERESIS_ENABLE, DL_GPIO_WAKEUP_DISABLE);
     DL_GPIO_initDigitalInputFeatures(LINE4_IOMUX,
-        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_DOWN,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
         DL_GPIO_HYSTERESIS_ENABLE, DL_GPIO_WAKEUP_DISABLE);
     DL_GPIO_initDigitalInputFeatures(LINE5_IOMUX,
-        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_DOWN,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
         DL_GPIO_HYSTERESIS_ENABLE, DL_GPIO_WAKEUP_DISABLE);
     DL_GPIO_initDigitalInputFeatures(LINE6_IOMUX,
-        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_DOWN,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
         DL_GPIO_HYSTERESIS_ENABLE, DL_GPIO_WAKEUP_DISABLE);
     DL_GPIO_initDigitalInputFeatures(LINE7_IOMUX,
-        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_DOWN,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
+        DL_GPIO_HYSTERESIS_ENABLE, DL_GPIO_WAKEUP_DISABLE);
+    DL_GPIO_initDigitalInputFeatures(LINE8_IOMUX,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
         DL_GPIO_HYSTERESIS_ENABLE, DL_GPIO_WAKEUP_DISABLE);
 
     /*
@@ -428,6 +447,38 @@ void SYSCFG_DL_UART_0_init(void)
      */
     DL_UART_Main_setRXFIFOThreshold(UART_0_INST, DL_UART_MAIN_RX_FIFO_LEVEL_ONE_ENTRY);
     DL_UART_Main_enable(UART_0_INST);
+}
+
+static const DL_UART_Main_ClockConfig gUART_1ClockConfig = {
+    .clockSel    = DL_UART_MAIN_CLOCK_MFCLK,
+    .divideRatio = DL_UART_MAIN_CLOCK_DIVIDE_RATIO_1
+};
+
+static const DL_UART_Main_Config gUART_1Config = {
+    .mode        = DL_UART_MAIN_MODE_NORMAL,
+    .direction   = DL_UART_MAIN_DIRECTION_TX_RX,
+    .flowControl = DL_UART_MAIN_FLOW_CONTROL_NONE,
+    .parity      = DL_UART_MAIN_PARITY_NONE,
+    .wordLength  = DL_UART_MAIN_WORD_LENGTH_8_BITS,
+    .stopBits    = DL_UART_MAIN_STOP_BITS_ONE
+};
+
+void SYSCFG_DL_UART_1_init(void)
+{
+    /*
+     * UART1：张大头 Emm42_V5.0 闭环步进驱动，115200 8N1，使用 MFCLK/1。
+     * 与 UART0 同为 4MHz + 16x 过采样，故分频值相同（IBRD=2、FBRD=11）。
+     * RX FIFO 阈值 1 字节：驱动器回复帧很短（4~8 字节），按字节取走避免残留。
+     * 中断与 NVIC 由 bsp_uart.c 的 BspUart1_Init 在注册回调后再放开。
+     */
+    DL_UART_Main_setClockConfig(UART_1_INST,
+        (DL_UART_Main_ClockConfig *) &gUART_1ClockConfig);
+    DL_UART_Main_init(UART_1_INST, (DL_UART_Main_Config *) &gUART_1Config);
+    DL_UART_Main_setOversampling(UART_1_INST, DL_UART_MAIN_OVERSAMPLING_RATE_16X);
+    DL_UART_Main_setBaudRateDivisor(UART_1_INST,
+        UART_1_IBRD_115200_MFCLK, UART_1_FBRD_115200_MFCLK);
+    DL_UART_Main_setRXFIFOThreshold(UART_1_INST, DL_UART_MAIN_RX_FIFO_LEVEL_ONE_ENTRY);
+    DL_UART_Main_enable(UART_1_INST);
 }
 
 static const DL_UART_Main_ClockConfig gUART_2ClockConfig = {

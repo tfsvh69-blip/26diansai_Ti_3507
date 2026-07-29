@@ -339,7 +339,7 @@
               <MiscControls></MiscControls>
               <Define>__MSPM0G3507__</Define>
               <Undefine></Undefine>
-              <IncludePath>..\..\source\third_party\CMSIS\Core\Include;..\..\source;..;..\app;..\app\tasks;..\bsp;..\bsp\board;..\bsp\delay;..\common;..\module;..\module\oled;..\module\imu;..\module\laser;..\module\vision;..\module\nrf24l01;..\module\diff_drive;..\algo;..\third_party\FreeRTOS\include;..\third_party\FreeRTOS\portable\ARM_CM0;..\third_party\ti_driverlib;..\third_party\st_lsm6dsv16x</IncludePath>
+              <IncludePath>..\..\source\third_party\CMSIS\Core\Include;..\..\source;..;..\app;..\app\tasks;..\bsp;..\bsp\board;..\bsp\delay;..\common;..\module;..\module\oled;..\module\imu;..\module\laser;..\module\vision;..\module\nrf24l01;..\module\emm42;..\module\diff_drive;..\algo;..\third_party\FreeRTOS\include;..\third_party\FreeRTOS\portable\ARM_CM0;..\third_party\ti_driverlib;..\third_party\st_lsm6dsv16x</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -877,6 +877,31 @@
               <FileName>ball_parser.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\module\vision\ball_parser.h</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>module_emm42</GroupName>
+          <Files>
+            <File>
+              <FileName>emm42_v5.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\module\emm42\emm42_v5.c</FilePath>
+            </File>
+            <File>
+              <FileName>emm42_v5.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\module\emm42\emm42_v5.h</FilePath>
+            </File>
+            <File>
+              <FileName>emm42_robot.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\module\emm42\emm42_robot.c</FilePath>
+            </File>
+            <File>
+              <FileName>emm42_robot.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\module\emm42\emm42_robot.h</FilePath>
             </File>
           </Files>
         </Group>

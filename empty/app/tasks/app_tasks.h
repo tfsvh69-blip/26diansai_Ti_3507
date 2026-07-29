@@ -51,6 +51,9 @@ void Task2_OnEnter(void);
 void Task2_OnLoop(void);
 void Task2_OnExit(void);
 
+/* 取题目二当前秒表计时文本（"T:12.3s"，到终点后追加" DONE"），供 OLED 运行界面显示。 */
+const char *Task2_GetUiStatus(void);
+
 /* 第 3 题 */
 void Task3_OnEnter(void);
 void Task3_OnLoop(void);
@@ -65,6 +68,9 @@ void Task4_OnExit(void);
 void Task5_OnEnter(void);
 void Task5_OnLoop(void);
 void Task5_OnExit(void);
+
+/* 取题目五当前测试角色和阶段的 ASCII 状态文本，供 OLED 运行界面显示。 */
+const char *Task5_GetUiStatus(void);
 
 /* 第 6 题 */
 void Task6_OnEnter(void);

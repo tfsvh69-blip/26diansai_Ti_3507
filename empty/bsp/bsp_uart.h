@@ -35,6 +35,26 @@ void BspUart0_Lock(void);
 void BspUart0_Unlock(void);
 
 /*
+ * UART1（张大头 Emm42_V5.0 闭环步进驱动，PA17=TX/PB5=RX，115200 8N1）接收字节回调类型。
+ * 驱动器回复帧短（4~8 字节）但到达时刻不确定，故 RX 走中断逐字节回调；
+ * 回调在 UART1 中断上下文中执行，内部不得调用非 FromISR 的 FreeRTOS API。
+ */
+typedef void (*BspUart1RxHandler_t)(uint8_t byte);
+
+/*
+ * 注册 UART1 接收回调并使能 RX + 溢出中断 + NVIC。
+ * 需在 UART1 外设(SYSCFG_DL_UART_1_init)初始化之后、调度器启动前调用。
+ * handler 允许为 NULL（只发不收，回复字节被丢弃）。
+ */
+void BspUart1_Init(BspUart1RxHandler_t handler);
+
+/*
+ * 向 UART1 阻塞发送一串字节（Emm42 命令帧最长 20 字节，115200 下约 1.7ms）。
+ * 供协议层组帧后整帧下发；不要在中断或高频控制环里调用。
+ */
+void BspUart1_SendBytes(const uint8_t *data, uint16_t len);
+
+/*
  * UART2（激光测距1，PB15=TX/PB16=RX，230400 8N1）接收字节回调类型。
  * 230400 波特率连续流下任务轮询来不及，故 RX 走中断逐字节回调，
  * 用回调注册解耦 bsp 与解析模块（bsp 不直接依赖 module 层）。

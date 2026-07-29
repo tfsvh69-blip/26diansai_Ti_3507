@@ -164,6 +164,66 @@ void UART0_IRQHandler(void)
     }
 }
 
+/* UART1 接收字节回调（张大头 Emm42 回复解析器由 module 层注册）。 */
+static BspUart1RxHandler_t s_uart1RxHandler = NULL;
+
+void BspUart1_Init(BspUart1RxHandler_t handler)
+{
+    /* 先登记回调，再放开中断，避免中断先于回调就绪时丢字节（NULL 已在 ISR 内防护）。 */
+    s_uart1RxHandler = handler;
+
+    /* 同时使能 RX 与溢出错误中断：溢出时也能进 ISR 取空 FIFO 并清标志。 */
+    DL_UART_Main_enableInterrupt(UART_1_INST,
+        DL_UART_MAIN_INTERRUPT_RX | DL_UART_MAIN_INTERRUPT_OVERRUN_ERROR);
+    NVIC_EnableIRQ(UART_1_INST_IRQn);
+}
+
+void BspUart1_SendBytes(const uint8_t *data, uint16_t len)
+{
+    uint16_t i;
+
+    if ((data == NULL) || (len == 0U)) {
+        return;
+    }
+
+    /*
+     * 整帧逐字节阻塞发送：Emm42 命令帧最长 20 字节，115200 下约 1.7ms，
+     * 期间只阻塞调用任务本身（不关中断、不挂调度器），其它任务照常轮转。
+     * UART1 是张大头驱动专用总线，当前仅题目状态机单任务下发，故不另加互斥量；
+     * 后续若有多个任务并发下发命令，需照 UART0 的做法补递归互斥量保证整帧原子。
+     */
+    for (i = 0U; i < len; i++) {
+        DL_UART_Main_transmitDataBlocking(UART_1_INST, data[i]);
+    }
+}
+
+/*
+ * UART1 中断服务函数（张大头 Emm42_V5.0，115200 8N1）。
+ * 每次中断把 RX FIFO 里的所有字节全部取空并逐个喂给回复解析回调。
+ * 符合 CLAUDE.md：ISR 内只做快速处理，不调用非 FromISR 的 FreeRTOS API。
+ */
+void UART1_IRQHandler(void)
+{
+    uint8_t byte;
+
+    switch (DL_UART_Main_getPendingInterrupt(UART_1_INST)) {
+        case DL_UART_MAIN_IIDX_RX:
+        case DL_UART_MAIN_IIDX_OVERRUN_ERROR:
+            /* RX 阈值到达或发生溢出都在此取空 FIFO；丢字节由下一帧回复自然重同步。 */
+            while (DL_UART_Main_receiveDataCheck(UART_1_INST, &byte)) {
+                if (s_uart1RxHandler != NULL) {
+                    s_uart1RxHandler(byte);
+                }
+            }
+            DL_UART_Main_clearInterruptStatus(UART_1_INST,
+                DL_UART_MAIN_INTERRUPT_OVERRUN_ERROR);
+            break;
+
+        default:
+            break;
+    }
+}
+
 /* UART2 接收字节回调（激光测距解析器由 app 层注册）。 */
 static BspUart2RxHandler_t s_uart2RxHandler = NULL;
 

@@ -18,6 +18,7 @@ void BspBoard_Init(void)
     SYSCFG_DL_GPIO_init();
     SYSCFG_DL_SYSCTL_init();
     SYSCFG_DL_UART_0_init();
+    SYSCFG_DL_UART_1_init();   /* 张大头 Emm42 闭环步进驱动总线 */
     SYSCFG_DL_UART_2_init();
     SYSCFG_DL_I2C_1_init();
     SYSCFG_DL_TIMER_STEP_init();

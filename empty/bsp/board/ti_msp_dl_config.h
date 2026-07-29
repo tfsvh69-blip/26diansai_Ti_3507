@@ -113,6 +113,38 @@ extern volatile bool g_sysClockUsingHFXT;
 #define GPIO_UART_2_IOMUX_RX                                      (IOMUX_PINCM33)
 #define GPIO_UART_2_IOMUX_RX_FUNC                         IOMUX_PINCM33_PF_UART2_RX
 
+/*
+ * UART1：张大头 Emm42_V5.0 闭环步进驱动器（v1.1 排针 H7，当前 3 台挂同一总线：
+ * 摆杆高低调节/左轮/右轮，地址 1/2/3，角色映射见 module/emm42/emm42_robot.h）。
+ * MCU 视角 PA17=TX / PB5=RX，8N1；时钟源 MFCLK=4MHz，16x 过采样。
+ *
+ * 波特率：Emm42_V5.0 出厂默认 115200（参考工程 26RuiKang STM32 亦按 115200 实跑通），
+ * 接线说明表格里的 38400 是备选建议值。若驱动器已被改成 38400，
+ * 把 UART_1_BAUD_RATE 及下方 IBRD/FBRD 换成 38400 那组即可（两组都已算好）：
+ *   115200 → IBRD=2、FBRD=11，实际 4MHz/(16*(2+11/64))=115163bps，误差 -0.03%
+ *    38400 → IBRD=6、FBRD=33，实际 4MHz/(16*(6+33/64))=38369bps，误差 -0.08%
+ * 接收采用中断逐字节喂协议解析器，见 bsp_uart.c 的 UART1_IRQHandler。
+ */
+#define UART_1_INST                                                       UART1
+#define UART_1_INST_IRQn                                        (UART1_INT_IRQn)
+#define UART_1_INST_FREQUENCY                                          4000000
+#define UART_1_BAUD_RATE                                                (115200)
+#define UART_1_IBRD_115200_MFCLK                                            (2U)
+#define UART_1_FBRD_115200_MFCLK                                           (11U)
+/* 备选：驱动器设为 38400 时改用这两个值。 */
+#define UART_1_IBRD_38400_MFCLK                                             (6U)
+#define UART_1_FBRD_38400_MFCLK                                            (33U)
+
+/* UART1 复用引脚：PA17=TX（PINCM39），PB5=RX（PINCM18），复用功能 PF2（已查 SDK 头文件确认）。 */
+#define GPIO_UART_1_TX_PORT                                               (GPIOA)
+#define GPIO_UART_1_TX_PIN                                      (DL_GPIO_PIN_17)
+#define GPIO_UART_1_IOMUX_TX                                      (IOMUX_PINCM39)
+#define GPIO_UART_1_IOMUX_TX_FUNC                         IOMUX_PINCM39_PF_UART1_TX
+#define GPIO_UART_1_RX_PORT                                               (GPIOB)
+#define GPIO_UART_1_RX_PIN                                       (DL_GPIO_PIN_5)
+#define GPIO_UART_1_IOMUX_RX                                      (IOMUX_PINCM18)
+#define GPIO_UART_1_IOMUX_RX_FUNC                         IOMUX_PINCM18_PF_UART1_RX
+
 /* LED1：PB25（PINCM56），v1.1 高电平点亮（IO→阳极）。SDK 头文件已确认 IOMUX_PINCM56=GPIOB_DIO25。 */
 #define LED_LED1_PORT                                                    (GPIOB)
 #define LED_LED1_PIN                                            (DL_GPIO_PIN_25)
@@ -314,10 +346,10 @@ extern volatile bool g_sysClockUsingHFXT;
 #define IMU_INT_IOMUX                                             (IOMUX_PINCM38)
 
 /*
- * 7 路灰度循迹（v1.1，接口 H6）：LINE1~LINE7 = PB17~PB23，全为数字输入。
- * LINE1=最左(小车左) … LINE7=最右(小车右)；识别到线=高电平（模块实测极性）。
+ * 8 路灰度循迹（v1.1，接口 H6）：LINE1~LINE8 = PB17~PB24，全为数字输入。
+ * LINE8=最左(小车左) … LINE1=最右(小车右)；识别到线=低电平（模块实测极性）。
  * PINCM 已按 SDK mspm0g350x.h 核实（注意 PB20=PINCM48，非连续）。
- * ⚠️ PB17~PB23 非 5V 容忍：模块信号须 3.3V 电平，否则需分压/电平转换（接线文档风险 R2）。
+ * ⚠️ PB17~PB24 非 5V 容忍：模块信号须 3.3V 电平，否则需分压/电平转换（接线文档风险 R2）。
  */
 #define LINE1_PORT                                                       (GPIOB)
 #define LINE1_PIN                                               (DL_GPIO_PIN_17)
@@ -340,6 +372,9 @@ extern volatile bool g_sysClockUsingHFXT;
 #define LINE7_PORT                                                       (GPIOB)
 #define LINE7_PIN                                               (DL_GPIO_PIN_23)
 #define LINE7_IOMUX                                              (IOMUX_PINCM51)
+#define LINE8_PORT                                                       (GPIOB)
+#define LINE8_PIN                                               (DL_GPIO_PIN_24)
+#define LINE8_IOMUX                                              (IOMUX_PINCM52)
 
 /*
  * 继电器 RELAY（v1.1，接口 P1-3）：PA24，普通 GPIO 推挽输出。
@@ -358,6 +393,7 @@ void SYSCFG_DL_initPower(void);
 void SYSCFG_DL_GPIO_init(void);
 void SYSCFG_DL_SYSCTL_init(void);
 void SYSCFG_DL_UART_0_init(void);
+void SYSCFG_DL_UART_1_init(void);
 void SYSCFG_DL_UART_2_init(void);
 void SYSCFG_DL_I2C_1_init(void);
 void SYSCFG_DL_TIMER_STEP_init(void);

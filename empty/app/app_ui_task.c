@@ -10,6 +10,7 @@
 #include "app_config.h"
 #include "app_imu_uart_task.h"
 #include "app_robot_core.h"
+#include "app_tasks.h"
 #include "ball_parser.h"
 #include "bsp_buzzer.h"
 #include "bsp_key.h"
@@ -78,8 +79,8 @@
 #if (APP_FEATURE_LINE_TRACK != 0U)
 #define UI_LINE_X         (UI_RIGHT_X) /* 右侧循迹面板左边界 x */
 #define UI_LINE_W         (62)     /* 循迹面板宽度（128-66） */
-#define UI_LINE_CH_Y      (40)     /* 第6行：通道号 "1234567" */
-#define UI_LINE_ST_Y      (48)     /* 第7行：状态   "0011100" */
+#define UI_LINE_CH_Y      (40)     /* 第6行：通道号 "87654321" */
+#define UI_LINE_ST_Y      (48)     /* 第7行：LINE8→LINE1 的对应状态 */
 #define UI_LINE_H         (16)     /* 两行高度 y=40..55 */
 #endif
 
@@ -87,6 +88,12 @@
 #define UI_RUN_NAME_Y     (40)
 #define UI_RUN_STATUS_Y   (48)    /* 运行态：传感器状态栏 */
 #define UI_RUN_HINT_Y     (56)
+
+/* task5 在题目表中的固定下标，用于显示其单路测试进度。 */
+#define UI_TASK5_INDEX    (4U)
+
+/* task2 在题目表中的固定下标，用于显示其秒表计时。 */
+#define UI_TASK2_INDEX    (1U)
 
 /* 任一按键按下沿触发一次短促蜂鸣器反馈（约 2~3ms）。
  * 轮询周期 30ms 粒度太粗，不再走 tick 计数关断——改为同一周期内忙等后立即关。 */
@@ -272,9 +279,9 @@ static void Ui_DrawBallPanel(void)
 #if (APP_FEATURE_LINE_TRACK != 0U)
 /*
  * 绘制右半循迹两行（不做刷屏推送，交给调用方）：
- *   第6行(y=40)：通道号 "1234567"（左=1号=小车左，右=7号=小车右）；
- *   第7行(y=48)：对应状态 "0011100"，与上行逐位对齐，1=识别到线、0=未识别。
- * 状态取 BspLine_ReadAll 位图：bit0=LINE1 放最左，bit6=LINE7 放最右，屏上左右即小车左右。
+ *   第6行(y=40)：通道号 "87654321"（左=8号=小车左，右=1号=小车右）；
+ *   第7行(y=48)：对应状态按 bit7…bit0 倒序显示，与上行逐位对齐，1=识别到线、0=未识别。
+ * 状态取 BspLine_ReadAll 位图：bit7=LINE8 放最左，bit0=LINE1 放最右，屏上左右即小车左右。
  */
 static void Ui_DrawLineFields(void)
 {
@@ -282,9 +289,10 @@ static void Ui_DrawLineFields(void)
     char     st[BSP_LINE_COUNT + 1U];
     uint32_t i;
 
-    OLED_ShowString(UI_LINE_X, UI_LINE_CH_Y, "1234567", OLED_6X8);
+    OLED_ShowString(UI_LINE_X, UI_LINE_CH_Y, "87654321", OLED_6X8);
     for (i = 0U; i < (uint32_t)BSP_LINE_COUNT; i++) {
-        st[i] = (char)('0' + ((bitmap >> i) & 0x1U));
+        /* OLED 左侧从物理最左的 LINE8 开始显示，因此按位图高位到低位取值。 */
+        st[i] = (char)('0' + ((bitmap >> ((uint32_t)BSP_LINE_COUNT - 1U - i)) & 0x1U));
     }
     st[BSP_LINE_COUNT] = '\0';
     OLED_ShowString(UI_LINE_X, UI_LINE_ST_Y, st, OLED_6X8);
@@ -374,8 +382,14 @@ static void Ui_DrawRun(void)
     OLED_ShowString(0, 16, "TASK", OLED_8X16);
     OLED_ShowNum(40, 16, s_sel + 1U, 1, OLED_8X16);
 
-    /* 题名。 */
-    OLED_ShowString(0, UI_RUN_NAME_Y, (char *)RobotCore_GetTaskName(s_sel), OLED_6X8);
+    /* 题名；任务五显示当前正在测试的 ID 和阶段，任务二显示秒表计时。 */
+    if (s_sel == UI_TASK5_INDEX) {
+        OLED_ShowString(0, UI_RUN_NAME_Y, (char *)Task5_GetUiStatus(), OLED_6X8);
+    } else if (s_sel == UI_TASK2_INDEX) {
+        OLED_ShowString(0, UI_RUN_NAME_Y, (char *)Task2_GetUiStatus(), OLED_6X8);
+    } else {
+        OLED_ShowString(0, UI_RUN_NAME_Y, (char *)RobotCore_GetTaskName(s_sel), OLED_6X8);
+    }
 
     /* 传感器状态栏（写入当前值，之后由主循环低频局部刷更新）。 */
     {
@@ -484,6 +498,18 @@ static void AppUiTask_Entry(void *argument)
             statusTick = 0U;
             Ui_DrawStatusBar((state == UI_STATE_MENU) ? UI_MENU_STATUS_Y
                                                       : UI_RUN_STATUS_Y);
+            if ((state == UI_STATE_RUN) && (s_sel == UI_TASK5_INDEX)) {
+                /* 任务五每 300ms 刷新一次测试对象和阶段，ID1/ID2/ID3 均可见。 */
+                OLED_ClearArea(0, UI_RUN_NAME_Y, 128, UI_MENU_LINE_H);
+                OLED_ShowString(0, UI_RUN_NAME_Y, (char *)Task5_GetUiStatus(), OLED_6X8);
+                OLED_UpdateArea(0, UI_RUN_NAME_Y, 128, UI_MENU_LINE_H);
+            }
+            if ((state == UI_STATE_RUN) && (s_sel == UI_TASK2_INDEX)) {
+                /* 任务二每 300ms 刷新一次秒表计时。 */
+                OLED_ClearArea(0, UI_RUN_NAME_Y, 128, UI_MENU_LINE_H);
+                OLED_ShowString(0, UI_RUN_NAME_Y, (char *)Task2_GetUiStatus(), OLED_6X8);
+                OLED_UpdateArea(0, UI_RUN_NAME_Y, 128, UI_MENU_LINE_H);
+            }
 #if (APP_FEATURE_BALL_VISION != 0U)
             /* 右侧球面板只在菜单态显示/刷新（运行态整屏归题目自身用）。 */
             if (state == UI_STATE_MENU) {

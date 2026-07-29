@@ -12,18 +12,28 @@ static const uint32_t s_ccpIndex[BSP_SERVO_COUNT] = {
 
 void BspServo_SetPulseUs(BspServoId_t id, uint16_t pulseUs)
 {
+    BspServo_SetPulseUsRange(id, pulseUs, SERVO_PULSE_MIN_US, SERVO_PULSE_MAX_US);
+}
+
+void BspServo_SetPulseUsRange(BspServoId_t id, uint16_t pulseUs,
+                               uint16_t minUs, uint16_t maxUs)
+{
     uint32_t cc;
 
     if ((uint32_t)id >= (uint32_t)BSP_SERVO_COUNT) {
         return;
     }
 
-    /* 限幅到安全范围 */
-    if (pulseUs < SERVO_PULSE_MIN_US) {
-        pulseUs = SERVO_PULSE_MIN_US;
+    /* min/max 为 0 时回退到默认安全范围。 */
+    if (minUs == 0U) { minUs = SERVO_PULSE_MIN_US; }
+    if (maxUs == 0U) { maxUs = SERVO_PULSE_MAX_US; }
+
+    /* 限幅到调用者指定的范围 */
+    if (pulseUs < minUs) {
+        pulseUs = minUs;
     }
-    if (pulseUs > SERVO_PULSE_MAX_US) {
-        pulseUs = SERVO_PULSE_MAX_US;
+    if (pulseUs > maxUs) {
+        pulseUs = maxUs;
     }
 
     /*

@@ -54,18 +54,21 @@
 | NRF24L01+ | SCK | PA27 | `NRF24_SCK_PIN` | `IOMUX_PINCM60` | GPIO 模拟 SPI 模式0，推挽输出，上电默认低 | 发包时可见时钟脉冲 |
 | NRF24L01+ | MOSI | PA14 | `NRF24_MOSI_PIN` | `IOMUX_PINCM36` | GPIO 模拟 SPI，MCU→模块 | 发包时随 SCK 变化 |
 | NRF24L01+ | MISO | PA0 | `NRF24_MISO_PIN` | `IOMUX_PINCM1` | GPIO 输入，模块→MCU | 模块正常时寄存器可写回读 |
+| 张大头 Emm42 | UART1 TX(MCU) | PA17 | `GPIO_UART_1_TX_PIN` | `IOMUX_PINCM39` / `IOMUX_PINCM39_PF_UART1_TX`，v1.1 排针 H7-4 | UART1 发送，MFCLK/115200 8N1；→ 驱动器 RX（命令帧出口） | 运行第 5 题 `EMM VEL` 时该脚应有数据波形 |
+| 张大头 Emm42 | UART1 RX(MCU) | PB5 | `GPIO_UART_1_RX_PIN` | `IOMUX_PINCM18` / `IOMUX_PINCM18_PF_UART1_RX`，v1.1 排针 H7-3 | UART1 接收，← 驱动器 TX；RX 中断逐字节喂 `module/emm42` 诊断统计；**当前 3 台设备共用此总线**（地址1=摆杆高低调节、2=左轮、3=右轮，角色映射见 `module/emm42/emm42_robot.h`）；⚠️多台驱动器 TX 并联于此脚（风险 R1，原文档述两台，现三台风险等比放大），需外部 BAT54S 肖特基线与 + 4.7kΩ 上拉，否则调试期一次只接部分台（配合 `task5.c` 的 `T5_ENABLE_*` 跳过未接角色）。⚠️ v1.1 PCB 的 H7 排针只设计了 Motor1/Motor2 两个物理连接头，第 3 台设备的物理接线点待确认，暂未反映在权威接线文档中 | `Emm42_GetRxByteCount()` >0 说明总线上至少有驱动器回话；恒为 0 查地址/波特率/TX-RX 接反 |
 | 激光测距1 | UART2 TX(MCU) | PB15 | `GPIO_UART_2_TX_PIN` | `IOMUX_PINCM32` / `IOMUX_PINCM32_PF_UART2_TX`，v1.1 排针 H21 | UART2 发送，MFCLK/230400 8N1；接激光模块 RX（本模块只收不发，此脚一般不用） | — |
 | 激光测距1 | UART2 RX(MCU) | PB16 | `GPIO_UART_2_RX_PIN` | `IOMUX_PINCM33` / `IOMUX_PINCM33_PF_UART2_RX`，v1.1 排针 H21 | UART2 接收，接激光模块 TX；RX 中断逐字节喂 `LaserLd14` 解析器 | 串口每行 `D1=<mm>mm`；一直 `D1=---` 见下方排查 |
 | ATK-MS6DSV | IMU_SCL | PB2 | `IMU_I2C_SCL_PIN` | `IOMUX_PINCM15` / `IOMUX_PINCM15_PF_I2C1_SCL`，U2.15 | **GPIO 软件 I2C SCL**（开漏模拟）；扩展板已焊 4.7k 上拉到 3.3V | 串口应输出 `IMU INIT OK`，否则优先查 SCL 是否接到 B02 |
 | ATK-MS6DSV | IMU_SDA | PB3 | `IMU_I2C_SDA_PIN` | `IOMUX_PINCM16` / `IOMUX_PINCM16_PF_I2C1_SDA`，U2.17 | **GPIO 软件 I2C SDA**（开漏模拟）；SA0 接地后 7bit 地址 `0x6A`；IMU 供电 3.3V | 初始化失败码 `2` 多为 I2C ACK/接线/地址/上拉问题 |
 | ATK-MS6DSV | IMU_INT | PA16 | `IMU_INT_PIN` | `IOMUX_PINCM38`，U2.67 | GPIO 输入，下拉；当前任务轮询读取电平，暂未接入 ISR | 串口每行 `INT=0/1` 反映当前 PA16 电平 |
-| 灰度循迹 | LINE1（最左/小车左） | PB17 | `LINE1_PIN` | `IOMUX_PINCM43`，H6-3 | GPIO 输入，内部下拉；识别到线=高电平 | OLED 菜单右半第7行对应位显 `1` |
+| 灰度循迹 | LINE1（最右/小车右） | PB17 | `LINE1_PIN` | `IOMUX_PINCM43`，H6-3 | GPIO 输入，内部上拉；识别到线=低电平 | OLED 菜单右半第7行最右位显 `1` |
 | 灰度循迹 | LINE2 | PB18 | `LINE2_PIN` | `IOMUX_PINCM44`，H6-4 | 同上 | — |
 | 灰度循迹 | LINE3 | PB19 | `LINE3_PIN` | `IOMUX_PINCM45`，H6-5 | 同上 | — |
 | 灰度循迹 | LINE4（居中） | PB20 | `LINE4_PIN` | `IOMUX_PINCM48`，H6-6 | 同上（注意 PINCM48 非连续） | — |
 | 灰度循迹 | LINE5 | PB21 | `LINE5_PIN` | `IOMUX_PINCM49`，H6-7 | 同上 | — |
 | 灰度循迹 | LINE6 | PB22 | `LINE6_PIN` | `IOMUX_PINCM50`，H6-8 | 同上 | — |
-| 灰度循迹 | LINE7（最右/小车右） | PB23 | `LINE7_PIN` | `IOMUX_PINCM51`，H6-9 | 同上 | — |
+| 灰度循迹 | LINE7 | PB23 | `LINE7_PIN` | `IOMUX_PINCM51`，H6-9 | 同上 | — |
+| 灰度循迹 | LINE8（最左/小车左） | PB24 | `LINE8_PIN` | `IOMUX_PINCM52`，H6-10 | 同上 | OLED 菜单右半第7行最左位显 `1` |
 | 继电器 | RELAY | PA24 | `RELAY_PIN` | `IOMUX_PINCM54`，P1-3 | GPIO 推挽输出 + 内部下拉；高电平吸合(通)、低电平断开(停)，上电默认断开，驱动大电流电磁铁负载 | 测试任务每 2s 切换一次，可听咔哒声/看指示灯 |
 
 > 当前 UART0 TX 已从 PB0 改为 PA10。PA10/PA11 均属于核心板特殊功能风险引脚，本次按用户确认使用。
@@ -175,16 +178,16 @@
   - `D1` 有值但明显不对/跳变：多为波特率略偏或校验口径问题，可临时打印 `LaserLd14Data_t` 的 `frameOkCnt`/`crcErrCnt`/`rxBytes` 定位是"没在收"还是"收了但过不了校验"。
 - ⚠️ **电平风险（原理图风险 R2）**：激光模块 TX 若为 5V 电平，而 PB16 **不是 5V 容忍引脚**，长期直连有损坏风险。接线前务必先量模块 TX 输出电平；若为 5V 需串分压/加电平转换。
 
-## 7 路灰度循迹（LINE1~LINE7，接口 H6）
+## 8 路灰度循迹（LINE1~LINE8，接口 H6）
 
-> ✅ **2026-07-25 已上板实测通过**：极性映射（识别到线=高电平）、7 路通道左右对应关系、OLED 菜单右半第 6/7 行显示均验证功能正常。
+> ✅ **2026-07-29 已上板实测确认**：模块识别到线时为低电平；已将读取归一化为 OLED 的 `1`=识别到线，并保留已确认的左右对应关系与第 6/7 行显示。
 
-- 硬件：8 路灰度循迹模块（H6 引出 8 路 LINE1~LINE8），当前**用 7 路**（LINE1~LINE7=PB17~PB23），LINE8(PB24) 空置未接入代码。
-- 朝向约定：以小车正朝向看，**LINE1=最左（小车左）… LINE7=最右（小车右）**；`bsp_line.c` 位图 bit0=LINE1、bit6=LINE7，OLED 上从左到右即小车物理左到右。
-- 读取方式：**直接读 GPIO 高低电平**（无协议、无串口）。模块极性「识别到线=高电平」（用户实测确认）。`BspLine_ReadAll()` 一次读全 7 路，按极性归一化为「1=识别到线、0=未识别」的低 7 位位图。
-- 极性反相：若换了极性相反（识别到线=低）的模块，把 `bsp/bsp_line.c` 顶部 `BSP_LINE_ACTIVE_LOW` 由 `0` 改 `1` 即可整体反相，无需动其它代码。
-- GPIO 配置：数字输入 + **内部下拉** + 迟滞。用下拉是因为识别到线=高、空闲/未接=低，模块拔掉时读到 0（未识别）是安全默认；模块信号为推挽输出，弱内部下拉不与之冲突。
-- 显示：仅在 OLED 题目菜单**菜单态**右半下部第 6/7 行显示（第6行通道号 `1234567`、第7行状态 `0011100`），由 `APP_FEATURE_LINE_TRACK` 门控，300ms 局部刷新。见 `FREERTOS_TASKS.md`「右侧循迹面板」。
+- 硬件：8 路灰度循迹模块（H6 引出 8 路 LINE1~LINE8），全部接入代码：LINE1~LINE8=PB17~PB24。
+- 朝向约定：以小车正朝向看，**LINE8=最左（小车左）… LINE1=最右（小车右）**；`bsp_line.c` 位图仍固定 bit0=LINE1、bit7=LINE8，OLED 显示时按 bit7→bit0 倒序，保证屏上左右与小车物理左右一致。
+- 读取方式：**直接读 GPIO 高低电平**（无协议、无串口）。模块极性「识别到线=低电平」（用户实测确认）。`BspLine_ReadAll()` 一次读全 8 路，按极性归一化为「1=识别到线、0=未识别」的 8 位位图。
+- 极性反相：当前 `bsp/bsp_line.c` 顶部 `BSP_LINE_ACTIVE_LOW=1`。若换成识别到线=高电平的模块，改为 `0` 即可整体反相，无需动其它代码。
+- GPIO 配置：数字输入 + **内部上拉** + 迟滞。用上拉是因为识别到线=低、空闲/未接=高，模块拔掉时读到 0（未识别）是安全默认；模块信号为推挽输出，弱内部上拉不与之冲突。
+- 显示：仅在 OLED 题目菜单**菜单态**右半下部第 6/7 行显示（第6行通道号 `87654321`、第7行状态按 LINE8→LINE1 对齐，如 `10011100`），由 `APP_FEATURE_LINE_TRACK` 门控，300ms 局部刷新。见 `FREERTOS_TASKS.md`「右侧循迹面板」。
 - 🔴 **电平风险（接线文档风险 R2，P0）**：H6 由 +5V 供电，8 路信号直连 PB17~PB24，而 **MSPM0G3507 的 PBx 全部不是 5V 容忍**（仅 PA0/PA1 容忍 5V）。若模块信号输出为 5V，长期直连有损坏引脚风险。**接入前务必先量模块信号脚的输出高电平**：3.3V 才可直连；若为 5V 需灰度改供 3V3、或每路串分压、或加 74LVC245 电平转换。
 
 ## 继电器 RELAY（PA24，接口 P1-3）

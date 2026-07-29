@@ -40,6 +40,15 @@ typedef enum {
 /* 设置指定舵机的脉宽（微秒），自动限幅到 [SERVO_PULSE_MIN_US, SERVO_PULSE_MAX_US]。 */
 void BspServo_SetPulseUs(BspServoId_t id, uint16_t pulseUs);
 
+/*
+ * 可指定安全范围的脉宽设置（供舵机行程测试使用）。
+ * 脉宽会被限幅到 [minUs, maxUs]，传入 0 的 min/max 回退到默认 SAFE 范围。
+ * 典型用法：BspServo_SetPulseUsRange(id, 500, 500, 2500) → 测试 270° 舵机全行程。
+ * ⚠️ 仅在测试时使用宽范围，正常业务仍走 SetPulseUs（800~2200us 安全区间）。
+ */
+void BspServo_SetPulseUsRange(BspServoId_t id, uint16_t pulseUs,
+                               uint16_t minUs, uint16_t maxUs);
+
 /* 启动/停止 TIMA0 计数器（启停所有舵机 PWM 输出）。 */
 void BspServo_Start(void);
 void BspServo_Stop(void);
