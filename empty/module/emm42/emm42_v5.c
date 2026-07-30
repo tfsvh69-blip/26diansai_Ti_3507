@@ -2,6 +2,10 @@
 
 #include <stddef.h>
 
+#include "FreeRTOS.h"
+#include "semphr.h"
+#include "task.h"
+
 #include "bsp_uart.h"
 
 /*
@@ -28,6 +32,13 @@ static volatile uint8_t  s_rxLen;
 /* 最后一帧完整回复的快照 */
 static volatile uint8_t  s_lastReply[EMM42_REPLY_MAX_LEN];
 static volatile uint8_t  s_lastReplyLen;
+
+/*
+ * 独立钢球控制线程会与 UI 题目状态机并发共用 UART1。协议层用互斥量保证整帧
+ * 不交叉，并在帧后统一留 5ms 给共享总线上的驱动器处理/回复。
+ */
+#define EMM42_TX_FRAME_GAP_MS (5U)
+static SemaphoreHandle_t s_txMutex;
 
 /*
  * UART1 接收中断回调（中断上下文，只做累积，不调用任何 FreeRTOS API）。
@@ -61,8 +72,19 @@ static void Emm42_OnRxByte(uint8_t byte)
 
 static void Emm42_SendFrame(const uint8_t *cmd, uint16_t len)
 {
+    bool schedulerRunning = xTaskGetSchedulerState() == taskSCHEDULER_RUNNING;
+
+    if ((s_txMutex != NULL) && schedulerRunning) {
+        (void)xSemaphoreTake(s_txMutex, portMAX_DELAY);
+    }
+
     BspUart1_SendBytes(cmd, len);
     s_txFrameCount++;
+
+    if ((s_txMutex != NULL) && schedulerRunning) {
+        vTaskDelay(pdMS_TO_TICKS(EMM42_TX_FRAME_GAP_MS));
+        (void)xSemaphoreGive(s_txMutex);
+    }
 }
 
 void Emm42_Init(void)
@@ -72,6 +94,11 @@ void Emm42_Init(void)
     s_rxFrameCount = 0U;
     s_rxLen        = 0U;
     s_lastReplyLen = 0U;
+
+    if (s_txMutex == NULL) {
+        s_txMutex = xSemaphoreCreateMutex();
+        configASSERT(s_txMutex != NULL);
+    }
 
     /* 注册 RX 中断回调（UART1 外设本身已在 BspBoard_Init 中初始化完毕）。 */
     BspUart1_Init(Emm42_OnRxByte);

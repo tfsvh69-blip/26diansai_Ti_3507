@@ -36,7 +36,7 @@ typedef struct {
  * 钩子实现分别在 app/tasks/task1.c ~ task6.c。
  */
 static const RobotTask_t s_robotTasks[] = {
-    { "DIR TEST", Task1_OnEnter, Task1_OnLoop, Task1_OnExit },
+    { "VIDEO 5S", Task1_OnEnter, Task1_OnLoop, Task1_OnExit },
     { "LINE PID", Task2_OnEnter, Task2_OnLoop, Task2_OnExit },
     { "Task 3", Task3_OnEnter, Task3_OnLoop, Task3_OnExit },
     { "LINE 6S", Task4_OnEnter, Task4_OnLoop, Task4_OnExit },
@@ -84,7 +84,7 @@ void RobotCore_EnterTask(uint32_t taskIdx)
         return;
     }
 
-    /* 先通知视觉端题目开始；录像由视觉端按协议仅对题目 2～6 执行。 */
+    /* 先通知视觉端题目开始；录像行为由通信协议按题号定义。 */
 #if (APP_FEATURE_VISION_LINK != 0U)
     AppVisionLink_TaskStart((uint8_t)(taskIdx + 1U));
 #endif
@@ -117,7 +117,7 @@ void RobotCore_ExitTask(uint32_t taskIdx)
         s_robotTasks[taskIdx].onExit();
     }
 
-    /* 用户退出后的安全收尾完成后，通知视觉端题目结束；录像题目由视觉端保存。 */
+    /* 用户退出后的安全收尾完成后，通知视觉端题目结束并按协议保存录像。 */
 #if (APP_FEATURE_VISION_LINK != 0U)
     AppVisionLink_TaskStop((uint8_t)(taskIdx + 1U));
 #endif

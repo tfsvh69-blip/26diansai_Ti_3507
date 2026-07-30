@@ -19,6 +19,14 @@ typedef struct {
     bool     ackStart;
 } AppVisionLinkStatus_t;
 
+typedef struct {
+    bool     received;
+    bool     valid;
+    bool     na;
+    int16_t  pixel;
+    uint32_t sequence;
+} AppVisionXSample_t;
+
 /* 初始化 UART0 接收解析器与通信状态机；调度器启动前调用一次。 */
 void AppVisionLink_Init(void);
 
@@ -31,5 +39,11 @@ void AppVisionLink_TaskStop(uint8_t taskId);
 
 /* 读取经过 PONG/X 超时判定后的 OLED 显示快照。 */
 void AppVisionLink_GetStatus(AppVisionLinkStatus_t *out);
+
+/*
+ * 读取解析器发布的最新 X 样本及序号，不附加 UI 显示超时。
+ * 控制线程靠 sequence 识别新帧，并自行执行更严格的丢球安全策略。
+ */
+void AppVisionLink_GetLatestX(AppVisionXSample_t *out);
 
 #endif /* APP_VISION_LINK_H */

@@ -61,8 +61,8 @@ void Emm42Robot_Enable(Emm42RobotId_t id, bool enable);
 /*
  * 单路速度模式：rpm 的正负会先经过本层角色方向标定，再转换为协议层 CW/CCW；
  * rpm==0 转成急停帧；acc 为加速度档位，0=不使用曲线立即变速。
- * 与底层 Emm42_* 系列一致：单帧下发、非阻塞、不等回复，调用方自行控制帧间隔
- * （不要在同一个 OnLoop 里连续调用多个角色，参考 app/tasks/task5.c 的按拍错开写法）。
+ * 与底层 Emm42_* 系列一致：单帧下发、不等回复。协议出口会互斥并统一保留
+ * 5ms 帧间隔；热循环仍不要无意义重复下发，参考各题按拍更新的写法。
  */
 void Emm42Robot_SetSpeedRpm(Emm42RobotId_t id, int16_t rpm, uint8_t acc);
 

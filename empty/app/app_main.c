@@ -4,6 +4,7 @@
 #include "task.h"
 
 #include "app_config.h"
+#include "app_ball_control_task.h"
 #include "app_imu_uart_task.h"
 #include "app_led_task.h"
 #include "app_motor_test_task.h"
@@ -155,6 +156,14 @@ void App_Init(void)
      */
     Emm42Robot_Init();
     App_Emm42BootDisableAll();
+#endif
+
+#if (APP_FEATURE_BALL_CONTROL != 0U)
+    /*
+     * 钢球位置闭环：上电保持 OFF，菜单态按 K4 后才使能 ID1 并跟踪 X=320。
+     * 独立线程通过命令队列接收目标，后续题目可复用同一接口修改目标位置。
+     */
+    AppBallControlTask_Init();
 #endif
 
 #if (APP_FEATURE_IMU != 0U)

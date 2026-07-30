@@ -15,10 +15,11 @@
 |---|---|---|---|
 | **1** | [`main.c`](main.c) | 程序入口：`BspBoard_Init()` → 串口启动提示 → `App_Init()` → `vTaskStartScheduler()` | 先理解整机启动流程 |
 | **2** | [`app_main.c`](app_main.c) | `App_Init()` 里用 `APP_FEATURE_*` 门控创建了哪些任务、注册了哪些 RX 中断 | 拿到"任务清单 + 功能开关"全貌 |
+| **2.1** | [`app_ball_control_task.c`](app_ball_control_task.c) / [`.h`](app_ball_control_task.h) | 菜单 K4 启停的钢球 X 后台闭环、目标命令队列、α-β + PD 与安全保护 | 后续题目通过统一接口传目标，不直接争用 ID1 |
 | **3** | [`app_led_task.c`](app_led_task.c) | 最简单的任务：每 300ms 翻转 PB25 心跳灯 | 入门理解 FreeRTOS 任务的最简写法 |
 | **4** | [`app_ui_task.c`](app_ui_task.c) | **当前主界面 UIMENU**：4 键选题/运行状态机、底部传感器状态栏(Yaw/激光)、右侧小球检测文字面板；事件驱动整屏刷 + 局部低频刷 | 现在上电看到的就是它；理解 OLED 独占与分区刷新 |
 | **5** | [`app_robot_core.c`](app_robot_core.c) / [`.h`](app_robot_core.h) | 6 道题的 **dispatch 表**：登记每题 `OnEnter/OnLoop/OnExit` 钩子，被 UIMENU 在运行态调用 | 题目业务与 UI 解耦；**只登记不写业务** |
-| **5.1** | [`tasks/app_tasks.h`](tasks/app_tasks.h) + [`tasks/task1.c`](tasks/task1.c) … [`task6.c`](tasks/task6.c) | **各题业务代码就在这里**：第 N 题 = `taskN.c`；task1 测试 M1~M4 正方向，task2 为 8 路灰度 PID 循迹，task3 经 UART1 仅控制 Emm42 ID1 正反方向各约 500ms，task4 完整复用任务二并在前进 6.5 秒后缓停，task5 为横线后 0.5 秒循迹并线性缓停且显示校准秒表，task6 为 demo 框架 | 写赛题状态机只改这里；`app_tasks.h` 顶部有“怎么填 + 能调哪些底层接口”说明 |
+| **5.1** | [`tasks/app_tasks.h`](tasks/app_tasks.h) + [`tasks/task1.c`](tasks/task1.c) … [`task6.c`](tasks/task6.c) | **各题业务代码就在这里**：第 N 题 = `taskN.c`；task1 通过视觉通信录制 5 秒无叠加标注的正常画面，task2 为 8 路灰度 PID 循迹，task3 经 UART1 仅控制 Emm42 ID1 正反方向各约 500ms，task4 完整复用任务二并在前进 6.5 秒后缓停，task5 为横线后 0.5 秒循迹并线性缓停且显示校准秒表，task6 为 demo 框架 | 写赛题状态机只改这里；`app_tasks.h` 顶部有“怎么填 + 能调哪些底层接口”说明 |
 | **6** | [`app_imu_uart_task.c`](app_imu_uart_task.c) | IMU 姿态：GPIO 软件 I2C → LSM6DSV16X → SFLP 融合欧拉角；发布线程安全 **Yaw 快照** 供 OLED；串口遥测默认静默 | 最复杂的任务：I2C 超时/总线恢复、FIFO、打印节流、非阻塞重试 |
 | **7** | [`app_uart_test_task.c`](app_uart_test_task.c) | UART0 接收回显自检（**默认禁用**，`APP_FEATURE_UART_ECHO=0`） | 理解串口多任务共享的递归互斥量模式；注意它与小球接收互斥 |
 | **8** | [`app_motor_test_task.c`](app_motor_test_task.c) | 四电机定圈旋转（**默认禁用**，按键让给 UIMENU） | "任务发令→bsp+ISR 执行→自动停表"的分层模型 |
@@ -38,6 +39,7 @@
 2. **上电看到的 OLED 界面是谁画的？** → `app_ui_task.c`（UIMENU）：菜单/运行两态、底部状态栏、右侧视觉通信面板。
 3. **题目业务逻辑写在哪？** → **`app/tasks/taskN.c`（第 N 题就在 taskN.c）**，每题一套状态机骨架；`app_robot_core.c` 只把它们登记进 dispatch 表，UIMENU 只管显示与按键。
 4. **树莓派发来的 X 坐标怎么进来的、显示在哪？** → UART0 RX 中断喂 `module/vision` 解析器 → `app_vision_link` 做在线/超时判定 → UIMENU 右侧面板；开关 `APP_FEATURE_VISION_LINK`。
+4.1 **怎么让钢球到指定 X？** → 调 `AppBallControl_RequestTarget(targetPx)`；上电菜单态按 K4 等价于请求 `X=320`，再次 K4 请求停止。
 5. **陀螺仪 Yaw / 激光距离怎么显示到状态栏？** → `IMU100Hz` 临界区发布 Yaw 快照、`module/laser` 发布距离快照，UIMENU 局部低频刷底行。
 6. **怎么加一个新任务？** → 参照 `app_led_task.c`：`.c` 写 `Entry`+`Init`、`.h` 声明 `Init`，在 `app_main.c` 的 `App_Init()` 里用 `#if APP_FEATURE_xxx` 门控调用。
 7. **多个任务共用 UART0 不会冲突吗？** → `bsp_uart.c` 的递归互斥量，`BspUart0_Lock/Unlock` 保证整行原子（注意 UART0 RX 中断接收小球报文时，轮询自检 `UART_ECHO` 必须关，二者互斥有编译期护栏）。
@@ -51,7 +53,7 @@ app 层（本目录）
   ├── 依赖 bsp/   （板级外设：GPIO、UART0/2、电机 STEP/DIR/ENN、按键、舵机 PWM、蜂鸣器）
   ├── 依赖 module/（可复用模块：imu 姿态、oled 显示、laser 测距解析、vision 小球报文解析）
   ├── 依赖 common/（app_config.h：功能开关 + 任务栈/优先级/周期宏）
-  └── 不依赖 algo/（算法层当前为空）
+  └── 依赖 algo/（PID、角度工具、α-β 位置/速度滤波）
 
 当前数据流（都是"最新值快照"，非事件队列）：
   IMU100Hz ──写──▶ Yaw 快照 ─────────┐
@@ -121,8 +123,11 @@ app 层（本目录）
 
 底层协议接口（`module/emm42/emm42_v5.h`，只认地址，角色层内部转调这些）：`Emm42_Enable/SetSpeedRpm/VelControl/PosControl/StopNow/SyncMotion/ResetClogProtection/ResetCurPosToZero/ReadSysParams`，诊断用 `Emm42_GetTxFrameCount/GetRxByteCount/GetRxFrameCount/GetLastReply`（`GetRxByteCount()>0` 说明总线上至少有驱动器回话）。地址常量 `EMM42_ADDR_MOTOR1/2/3` + `EMM42_ADDR_BROADCAST(0)`。单路相对位置模式优先使用角色层 `Emm42Robot_MoveRelative()`；仅需绝对位置或同步多机时才绕过角色层直接调底层接口。
 
-所有接口（两层都一样）**非阻塞、不等回复、不做延时**；
-⚠️ 驱动器处理一帧需要时间，**不要在同一个 `OnLoop` 里连发多帧**——题目二、四、五均采用每 30ms 轮询拍最多下发一帧，左右轮交替更新。
+所有接口（两层都一样）不等待驱动器回复；调度器运行后，协议出口用互斥量保证
+多线程整帧不交叉，并在每帧后 `vTaskDelay(5ms)`。仍不要在热循环里无意义重复
+下发——题目二、四、五采用每 30ms 轮询拍最多一帧；`BALLCTRL` 正常态只在
+新视觉帧到达时更新 ID1，单次 NA 或短时断帧进入 `B:DEG` 后每 20ms 最多发送
+一帧向 0 RPM 收敛的软减速命令。
 
 ### 固定半径差速圆弧接口（[`../module/diff_drive/diff_drive.h`](../module/diff_drive/diff_drive.h)）
 

@@ -524,6 +524,16 @@
               <FilePath>..\app\app_main.h</FilePath>
             </File>
             <File>
+              <FileName>app_ball_control_task.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\app\app_ball_control_task.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_ball_control_task.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\app\app_ball_control_task.h</FilePath>
+            </File>
+            <File>
               <FileName>app_led_task.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\app\app_led_task.c</FilePath>
@@ -957,6 +967,16 @@
               <FileName>pid.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\algo\pid.h</FilePath>
+            </File>
+            <File>
+              <FileName>alpha_beta_filter.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\algo\alpha_beta_filter.c</FilePath>
+            </File>
+            <File>
+              <FileName>alpha_beta_filter.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\algo\alpha_beta_filter.h</FilePath>
             </File>
             <File>
               <FileName>angle_utils.c</FileName>

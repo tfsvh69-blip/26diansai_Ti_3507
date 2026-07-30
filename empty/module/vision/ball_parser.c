@@ -90,9 +90,7 @@ static void VisionParser_CaptureXText(const uint8_t *buf, uint16_t len)
         pos++;
     }
     s_xText[out] = '\0';
-    s_xReceived = true;
     s_xValid = false;
-    s_xSeq++;
 }
 
 static void VisionParser_ParsePong(const uint8_t *buf, uint16_t end)
@@ -179,7 +177,7 @@ static void VisionParser_ParseLine(const uint8_t *buf, uint16_t len)
     }
     if ((star == 0U) || (star + 3U != len)) {
         s_crcErrCnt++;
-        return;
+        goto publish_x;
     }
     for (i = 0U; i < star; i++) {
         checksum ^= buf[i];
@@ -189,7 +187,7 @@ static void VisionParser_ParseLine(const uint8_t *buf, uint16_t len)
     if ((hi == 0xFFU) || (lo == 0xFFU) ||
         (checksum != (uint8_t)((hi << 4) | lo))) {
         s_crcErrCnt++;
-        return;
+        goto publish_x;
     }
     if (VisionParser_Match(buf, 0U, 5U, "PONG,") && (star > 5U)) {
         VisionParser_ParsePong(buf, star);
@@ -199,6 +197,16 @@ static void VisionParser_ParseLine(const uint8_t *buf, uint16_t len)
         VisionParser_ParseX(buf, star);
     } else {
         s_crcErrCnt++;
+    }
+
+publish_x:
+    /*
+     * xSeq 最后发布。任务若在 ISR 更新期间读取快照，可用序号前后一致性
+     * 判断数据是否完整，避免把“新序号 + 旧坐标”误当成一帧有效控制输入。
+     */
+    if (isX) {
+        s_xReceived = true;
+        s_xSeq++;
     }
 }
 
@@ -254,6 +262,9 @@ void VisionParser_FeedByte(uint8_t byte)
 bool VisionParser_GetLatest(VisionData_t *out)
 {
     uint16_t i;
+    uint32_t xSeqBefore;
+    uint32_t xSeqAfter = 0U;
+    uint8_t attempt;
 
     if (out == NULL) {
         return false;
@@ -266,13 +277,24 @@ bool VisionParser_GetLatest(VisionData_t *out)
     out->ackTaskId = s_ackTaskId;
     out->ackStart = s_ackStart;
     out->ackSeq = s_ackSeq;
-    out->xReceived = s_xReceived;
-    out->xValid = s_xValid;
-    out->xPixel = s_xPixel;
-    out->xSeq = s_xSeq;
-    for (i = 0U; i <= VISION_X_TEXT_MAX; i++) {
-        out->xText[i] = s_xText[i];
+    /*
+     * ISR 在写完 X 全部字段后才递增 xSeq。前后序号一致表示本次拷贝完整；
+     * 若恰好被新帧中断，则重拷一次。
+     */
+    for (attempt = 0U; attempt < 2U; attempt++) {
+        xSeqBefore = s_xSeq;
+        out->xReceived = s_xReceived;
+        out->xValid = s_xValid;
+        out->xPixel = s_xPixel;
+        for (i = 0U; i <= VISION_X_TEXT_MAX; i++) {
+            out->xText[i] = s_xText[i];
+        }
+        xSeqAfter = s_xSeq;
+        if (xSeqBefore == xSeqAfter) {
+            break;
+        }
     }
+    out->xSeq = xSeqAfter;
     out->frameOkCnt = s_frameOkCnt;
     out->crcErrCnt = s_crcErrCnt;
     out->rxBytes = s_rxBytes;

@@ -7,6 +7,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
+#include "app_ball_control_task.h"
 #include "app_config.h"
 #include "app_imu_uart_task.h"
 #include "app_robot_core.h"
@@ -28,7 +29,7 @@
  *   RUN  运行态：进入所选题目的运行界面，周期调用该题业务钩子。
  *
  * 按键（KEY1~4 = PA28/PA31/PA30/PA29，按下接地）：
- *   K1 上移   K2 下移   K3 确认进入   K4 返回菜单
+ *   K1 上移   K2 下移   K3 确认进入   K4 运行态返回/菜单态启停钢球居中
  *
  * 刷屏策略：软件 I2C 整屏刷约 50ms，故采用「事件驱动」——只有按键改变了
  * 选中项或状态时才重绘 + OLED_Update；平时任务只是轻量轮询按键，不刷屏，
@@ -73,7 +74,7 @@
 #define UI_VISION_X         (UI_RIGHT_X) /* 右侧视觉通信面板左边界 x */
 #define UI_VISION_W         (62)         /* 右侧视觉通信面板宽度（128-66） */
 #define UI_VISION_FIELD_Y   (8)          /* 字段区起始 y */
-#define UI_VISION_FIELD_H   (24)         /* 三行：网络、X、PING */
+#define UI_VISION_FIELD_H   (32)         /* 四行：网络、X、ACK、钢球闭环 */
 #endif
 
 #if (APP_FEATURE_LINE_TRACK != 0U)
@@ -214,6 +215,27 @@ static void Ui_DrawStatusBar(int16_t y)
 }
 
 #if (APP_FEATURE_VISION_LINK != 0U)
+#if (APP_FEATURE_BALL_CONTROL != 0U)
+static const char *Ui_GetBallControlText(void)
+{
+    AppBallControlStatus_t status;
+
+    AppBallControl_GetStatus(&status);
+    switch (status.state) {
+    case APP_BALL_CONTROL_OFF:             return "B:OFF";
+    case APP_BALL_CONTROL_STARTING:        return "B:START";
+    case APP_BALL_CONTROL_WAIT_VISION:     return "B:WAIT";
+    case APP_BALL_CONTROL_RUNNING:         return "B:RUN";
+    case APP_BALL_CONTROL_HOLDING:         return "B:HOLD";
+    case APP_BALL_CONTROL_DEGRADED:        return "B:DEG";
+    case APP_BALL_CONTROL_LOST:            return "B:LOST";
+    case APP_BALL_CONTROL_FAULT_DIRECTION: return "B:DIR!";
+    case APP_BALL_CONTROL_FAULT_EDGE:      return "B:EDGE!";
+    default:                               return "B:???";
+    }
+}
+#endif
+
 /*
  * 绘制右侧视觉通信字段（不做刷屏推送，交给调用方）：
  *   NET:ON/OFF 为匹配 PONG 后的 3 秒在线判定；
@@ -248,6 +270,11 @@ static void Ui_DrawVisionFields(void)
 
     OLED_ShowString(UI_VISION_X, UI_VISION_FIELD_Y + 16,
         vision.ackMatched ? (vision.ackStart ? "ACK:ST" : "ACK:SP") : "ACK:--", OLED_6X8);
+
+#if (APP_FEATURE_BALL_CONTROL != 0U)
+    OLED_ShowString(UI_VISION_X, UI_VISION_FIELD_Y + 24,
+                    (char *)Ui_GetBallControlText(), OLED_6X8);
+#endif
 }
 
 /*
@@ -316,7 +343,7 @@ static void Ui_DrawMenu(void)
     OLED_Clear();
 #if (APP_FEATURE_VISION_LINK != 0U)
     /* 标题收窄到左半，给右侧视觉通信面板让位。 */
-    OLED_ShowString(0, UI_MENU_TITLE_Y, "TASKS", OLED_6X8);
+    OLED_ShowString(0, UI_MENU_TITLE_Y, "K4=BAL", OLED_6X8);
 #else
     OLED_ShowString(13, UI_MENU_TITLE_Y, "== SELECT TASK ==", OLED_6X8);
 #endif
@@ -460,11 +487,20 @@ static void AppUiTask_Entry(void *argument)
                 dirty = true;
             }
 
-            /* K3 确认进入运行态：调 RobotCore_EnterTask 后切运行界面。K4 菜单态无动作。 */
+            /* K3 进入题目；K4 菜单态启停独立钢球居中线程，界面仍留在菜单。 */
             if (edge[BSP_KEY_3]) {
                 state = UI_STATE_RUN;
                 RobotCore_EnterTask(s_sel);
                 Ui_DrawRun();
+#if (APP_FEATURE_BALL_CONTROL != 0U)
+            } else if (edge[BSP_KEY_4]) {
+                if (AppBallControl_IsActive()) {
+                    AppBallControl_RequestStop();
+                } else {
+                    (void)AppBallControl_RequestTarget(APP_BALL_CONTROL_CENTER_X_PX);
+                }
+                Ui_DrawVisionPanel();
+#endif
             } else if (dirty) {
                 Ui_DrawMenu();
             }

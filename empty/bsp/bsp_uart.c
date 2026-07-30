@@ -189,8 +189,8 @@ void BspUart1_SendBytes(const uint8_t *data, uint16_t len)
     /*
      * 整帧逐字节阻塞发送：Emm42 命令帧最长 20 字节，115200 下约 1.7ms，
      * 期间只阻塞调用任务本身（不关中断、不挂调度器），其它任务照常轮转。
-     * UART1 是张大头驱动专用总线，当前仅题目状态机单任务下发，故不另加互斥量；
-     * 后续若有多个任务并发下发命令，需照 UART0 的做法补递归互斥量保证整帧原子。
+     * UART1 是张大头驱动专用总线；并发整帧互斥与驱动器处理间隔由上层
+     * module/emm42 协议出口统一保证，BSP 只负责同步发送字节。
      */
     for (i = 0U; i < len; i++) {
         DL_UART_Main_transmitDataBlocking(UART_1_INST, data[i]);

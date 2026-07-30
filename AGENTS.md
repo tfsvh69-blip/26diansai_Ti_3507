@@ -8,13 +8,29 @@
 
 ## 项目结构
 
-工程主体在 `empty/`：`app/` 放任务、业务流程和题目状态机，题目 N 使用 `app/tasks/taskN.c`；当前 5 道题均为硬件/函数测试（非正式赛题）：题目一 `DIR TEST`（M1→M4 单轮正方向）、题目二 `LINE PID`（8 路灰度 PID 循迹）、题目三 `Task 3`（经 UART1 仅控制 Emm42 ID1，低速正反各约 500ms）、题目四 `LINE 6S`（完整复用题目二循迹参数，累计前进 6.5 秒后以速度模式 0 RPM 缓停）、题目五 `Five`（低速横向停止线后 0.5 秒循迹并线性缓停，UART1 仅控制左/右轮 ID2/ID3），菜单任一按键短促嘀声（约2~3ms），题目二、五自动完成时使用同一短促提示音，M1/M2 已在 BSP 全局取反标定。题目四的缓停加速度由 `T4_STOP_EMM_ACC` 传给 `Emm42Robot_VelControl()`，该接口会保留 0 RPM 速度模式帧；K4 退出和终点保护仍急停。`algo/` 放可跨题复用的纯算法（PID 控制器、角度差值/归一化），任务层只保留可调参数宏。`bsp/` 放板级与外设驱动，手写 DriverLib 初始化位于 `bsp/board/ti_msp_dl_config.c`；`module/` 放可复用设备/协议模块；`common/` 放功能开关、FreeRTOS 配置和共享消息；`docs/` 放任务、接线、UART 和架构记录。
+工程主体在 `empty/`：`app/` 放任务、业务流程和题目状态机，题目 N 使用 `app/tasks/taskN.c`；当前 5 道题均为硬件/函数测试（非正式赛题）：题目一 `VIDEO 5S`（通过视觉协议录制 5 秒无叠加标注的正常画面）、题目二 `LINE PID`（8 路灰度 PID 循迹）、题目三 `Task 3`（经 UART1 仅控制 Emm42 ID1，低速正反各约 500ms）、题目四 `LINE 6S`（完整复用题目二循迹参数，累计前进 6.5 秒后以速度模式 0 RPM 缓停）、题目五 `Five`（低速横向停止线后 0.5 秒循迹并线性缓停，UART1 仅控制左/右轮 ID2/ID3），菜单任一按键短促嘀声（约2~3ms），题目二、五自动完成时使用同一短促提示音，M1/M2 已在 BSP 全局取反标定。题目四的缓停加速度由 `T4_STOP_EMM_ACC` 传给 `Emm42Robot_VelControl()`，该接口会保留 0 RPM 速度模式帧；K4 退出和终点保护仍急停。`algo/` 放可跨题复用的纯算法（PID 控制器、角度差值/归一化），任务层只保留可调参数宏。`bsp/` 放板级与外设驱动，手写 DriverLib 初始化位于 `bsp/board/ti_msp_dl_config.c`；`module/` 放可复用设备/协议模块；`common/` 放功能开关、FreeRTOS 配置和共享消息；`docs/` 放任务、接线、UART 和架构记录。
 
 `source/ti/` 与 `empty/third_party/` 属于 SDK 或第三方代码，除非任务明确涉及 SDK 或 FreeRTOS 移植，否则不要修改。
+
+钢球位置控制使用独立 `app/app_ball_control_task.c`（`BALLCTRL`）线程：上电默认
+OFF，OLED 菜单态 K4 启停目标 `X=320`，运行态 K4 仍退出当前题目。线程只在约
+15Hz 的新视觉 `xSeq` 上用 α-β + 局部 PID 更新 Emm42 ID1；I 项只在新有效帧、
+原始误差 1~12px 且低速时按真实帧间隔累积，并单独限制为 ±2RPM；目标变化、
+K4、DEG/LOST、误差过零、低误差、高速度或安全故障时必须清零 I。正常 RUN 状态不做
+最大 RPM、软件斜率或驱动器加速度曲线限制。单次 `X,NA` 或
+130ms 无有效 X 进入 `B:DEG`，每 20ms 把命令向 0 RPM 回退 2 RPM；连续两帧
+NA 或 220ms 无有效 X 才进入 `B:LOST` 急停，恢复需连续两帧有效 X。方向发散或
+画面边缘仍立即保护停车；不再使用软件估算行程限幅。后续题目通过
+`AppBallControl_RequestTarget()` 传目标；题目三直接测试 ID1，进入前必须等待
+后台闭环释放。具体上车步骤和参数以 `empty/docs/BALL_CONTROL.md` 为准。
 
 ### EMM42 方向标定状态
 
 角色方向由 `module/emm42/emm42_robot.c` 统一处理：ID1（摆杆）正方向为连杆向下、ID2（左轮）直通、ID3（右轮）取反。题目五 `Five` 只使用 ID2/ID3 做循迹；每轮依次使能后均等待约 180ms，再开始交替下发速度帧。机械安装变化时仅更新角色层标定表。
+
+`BALLCTRL` 与轮子题目会并发共用 UART1，`module/emm42/emm42_v5.c` 协议出口
+必须保留整帧互斥和 5ms 帧间隔。ID1 的“连杆向下”标定不能推导相机 X 的最终
+闭环极性，首次上车必须低速确认 `BALL_CTRL_OUTPUT_SIGN`，方向未确认前不得调 PID。
 
 ### 循迹通道状态
 

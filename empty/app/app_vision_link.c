@@ -9,7 +9,7 @@
 #define VISION_BOOT_PING_COUNT       (3U)
 #define VISION_BOOT_PING_INTERVAL_MS (500U)
 #define VISION_OFFLINE_MS            (3000U)
-#define VISION_X_TIMEOUT_MS          (100U)
+#define VISION_X_TIMEOUT_MS          (220U)
 
 static uint16_t s_nextPingId;
 static uint16_t s_waitPongId;
@@ -244,4 +244,23 @@ void AppVisionLink_GetStatus(AppVisionLinkStatus_t *out)
                       (data.ackTaskId == s_lastTaskId) &&
                       (data.ackStart == s_lastTaskStart);
     out->ackStart = data.ackStart;
+}
+
+void AppVisionLink_GetLatestX(AppVisionXSample_t *out)
+{
+    VisionData_t data;
+
+    if (out == NULL) {
+        return;
+    }
+
+    (void)VisionParser_GetLatest(&data);
+    out->received = data.xReceived;
+    out->valid = data.xReceived && data.xValid;
+    out->na = data.xReceived &&
+              (data.xText[0] == 'N') &&
+              (data.xText[1] == 'A') &&
+              (data.xText[2] == '\0');
+    out->pixel = data.xPixel;
+    out->sequence = data.xSeq;
 }

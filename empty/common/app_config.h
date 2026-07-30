@@ -27,6 +27,7 @@
 #define APP_FEATURE_RELAY_SELFTEST  (0U)  /* 继电器自检任务(RELAYTEST)：每 2 秒自动切换吸合/断开，仅上电验证用；默认关，置 1 恢复自检 */
 #define APP_FEATURE_NRF24_TX_TEST   (0U)  /* NRF24L01+ 发射测试：每 500ms 向 USB 无线串口发送递增文本【2026-07-29 临时关闭，减CPU占用，需要时改回 1】 */
 #define APP_FEATURE_EMM42           (1U)  /* 张大头 Emm42_V5.0 闭环步进（UART1/PA17/PB5，115200）：注册回复接收中断，命令由第 5 题下发 */
+#define APP_FEATURE_BALL_CONTROL    (1U)  /* 钢球 X 位置后台闭环：K4 菜单态启停，视觉反馈驱动 ID1 */
 
 /*
  * Emm42 上电安全失能：复位后对 ID1/ID2/ID3 各重复发送失能帧，帧间使用约 10ms
@@ -53,6 +54,10 @@
  */
 #if (APP_FEATURE_VISION_LINK != 0U) && (APP_FEATURE_UART_ECHO != 0U)
 #error "APP_FEATURE_VISION_LINK 与 APP_FEATURE_UART_ECHO 争用 UART0 RX，不能同时为 1"
+#endif
+#if (APP_FEATURE_BALL_CONTROL != 0U) && \
+    ((APP_FEATURE_VISION_LINK == 0U) || (APP_FEATURE_EMM42 == 0U))
+#error "APP_FEATURE_BALL_CONTROL 依赖 APP_FEATURE_VISION_LINK 和 APP_FEATURE_EMM42"
 #endif
 /* =================================================== */
 
@@ -143,6 +148,14 @@
  * 一行(128×8≈整屏1/8)，配合低频，对 CPU/实时性几乎无影响（整屏刷仍只在界面切换时）。
  */
 #define APP_UI_STATUS_DIVIDER           (10U)
+
+/*
+ * 钢球位置闭环线程：10ms 轮询视觉最新值，实际控制更新仍跟随约 15Hz 的新 X 帧。
+ * 优先级比 UI/普通题目状态机高一级，保证丢球急停和新帧响应不会被 OLED 刷新拖延。
+ */
+#define APP_BALL_CONTROL_TASK_STACK_WORDS (configMINIMAL_STACK_SIZE * 2U)
+#define APP_BALL_CONTROL_TASK_PRIORITY    (2U)
+#define APP_BALL_CONTROL_PERIOD_MS        (10U)
 
 /*
  * IMU I2C 引脚物理测试开关。

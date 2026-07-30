@@ -7,6 +7,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
+#include "app_ball_control_task.h"
 #include "emm42_robot.h"
 
 /* ==================================================================
@@ -28,7 +29,8 @@
 #define T3_ENABLE_SETTLE_MS       (180U)
 
 typedef enum {
-    T3_STATE_RESET_DISABLE = 0,   /* 清除 ID1 的残留使能状态 */
+    T3_STATE_WAIT_BALL_RELEASE = 0, /* 等待后台钢球闭环释放 ID1 */
+    T3_STATE_RESET_DISABLE,       /* 清除 ID1 的残留使能状态 */
     T3_STATE_RESET_WAIT,          /* 等待失能命令生效 */
     T3_STATE_ENABLE,              /* 使能 ID1 */
     T3_STATE_ENABLE_WAIT,         /* 等待控制器完成使能 */
@@ -48,8 +50,12 @@ static bool Task3_Elapsed(TickType_t now, TickType_t then, uint32_t timeoutMs)
 
 void Task3_OnEnter(void)
 {
-    /* OnEnter 只复位状态；串口命令由 OnLoop 的状态机按拍下发。 */
-    s_state = T3_STATE_RESET_DISABLE;
+    /*
+     * 题目三是 ID1 独立方向测试，与后台钢球闭环不能同时占用同一电机。
+     * 先通过命令队列请求闭环安全退出，再由 OnLoop 等待它真正释放。
+     */
+    AppBallControl_RequestStop();
+    s_state = T3_STATE_WAIT_BALL_RELEASE;
     s_stateStartTick = 0U;
 }
 
@@ -58,6 +64,12 @@ void Task3_OnLoop(void)
     TickType_t now = xTaskGetTickCount();
 
     switch (s_state) {
+    case T3_STATE_WAIT_BALL_RELEASE:
+        if (!AppBallControl_IsActive()) {
+            s_state = T3_STATE_RESET_DISABLE;
+        }
+        break;
+
     case T3_STATE_RESET_DISABLE:
         /* 仅失能 ID1，绝不触碰任务二使用的 ID2/ID3。 */
         Emm42Robot_Enable(EMM42_ROBOT_LIFT, false);
@@ -126,6 +138,6 @@ void Task3_OnExit(void)
     vTaskDelay(pdMS_TO_TICKS(5U));
     Emm42Robot_Enable(EMM42_ROBOT_LIFT, false);
 
-    s_state = T3_STATE_RESET_DISABLE;
+    s_state = T3_STATE_WAIT_BALL_RELEASE;
     s_stateStartTick = 0U;
 }

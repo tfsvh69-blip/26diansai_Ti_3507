@@ -56,7 +56,8 @@
 |---|---|---|---|
 | `LED1` | `app/app_led_task.c` | 300 ms | LED1(PB25) 心跳灯，用于判断 FreeRTOS 是否正常调度 |
 | `UART0TX` | `app/app_uart_test_task.c` | 10 ms 轮询 | UART0 接收回显，收到非换行字符返回 `UART RX OK` |
-| `UIMENU` | `app/app_ui_task.c` | 30 ms 轮询 | **OLED 题目菜单 UI**：4 键(K1上/K2下/K3确认/K4返回)选题并进入运行界面，任一按键均短促嘀声（约2~3ms），**独占 OLED 与 KEY1~4**；题目业务委托 `app_robot_core` → `app/tasks/taskN.c` 的 `OnEnter/OnLoop/OnExit`。当前 5 道题均为硬件/函数测试（非正式赛题）：task1 `DIR TEST` 四轮方向核对、task2 `LINE PID` 8 路灰度 PID 循迹、task3 `Task 3` 经 UART1 仅控制 Emm42 ID1 正反低速各约 500ms、task4 `LINE 6S` 完整复用题目二循迹并在累计前进 6.5 秒后以速度模式 0 RPM 缓停、task5 `Five` 低速横向停止线后 0.5 秒循迹并线性缓停（UART1 仅控制 ID2 左轮与 ID3 右轮）；task6 骨架待填。任务二、五自动完成时使用与按键完全相同的短促提示音。M1/M2 已全局取反标定 |
+| `UIMENU` | `app/app_ui_task.c` | 30 ms 轮询 | **OLED 题目菜单 UI**：4 键(K1上/K2下/K3确认/K4返回)选题并进入运行界面，任一按键均短促嘀声（约2~3ms），**独占 OLED 与 KEY1~4**；题目业务委托 `app_robot_core` → `app/tasks/taskN.c` 的 `OnEnter/OnLoop/OnExit`。当前 5 道题均为硬件/函数测试（非正式赛题）：task1 `VIDEO 5S` 通过视觉协议录制 5 秒无叠加标注的正常画面、task2 `LINE PID` 8 路灰度 PID 循迹、task3 `Task 3` 经 UART1 仅控制 Emm42 ID1 正反低速各约 500ms、task4 `LINE 6S` 完整复用题目二循迹并在累计前进 6.5 秒后以速度模式 0 RPM 缓停、task5 `Five` 低速横向停止线后 0.5 秒循迹并线性缓停（UART1 仅控制 ID2 左轮与 ID3 右轮）；task6 骨架待填。任务二、五自动完成时使用与按键完全相同的短促提示音。M1/M2 已全局取反标定 |
+| `BALLCTRL` | `app/app_ball_control_task.c` | 10 ms 轮询 | **上电默认 OFF**；菜单态 K4 启停目标 `X=320` 的钢球后台闭环，α-β 估计位置/速度后以局部 PID 控制 Emm42 ID1。I 只在新有效帧、原始误差 1~12px 且低速时按真实帧间隔累积，I 输出单独限制为 ±2RPM；目标改变、K4、DEG/LOST、跨目标、低误差、高速度、方向或边缘故障会清零 I。正常 RUN 状态不做总 RPM、软件斜率或驱动器加速度曲线限制。单次 `X,NA` 或 130ms 无有效 X 进入 `B:DEG` 并每 20ms 把命令向 0 RPM 回退 2 RPM；连续两帧 NA 或 220ms 无有效 X 才进入 `B:LOST` 急停，恢复需连续两帧有效 X。方向发散或画面边缘仍立即保护停车；不再使用软件估算行程限幅。后续题目通过 `AppBallControl_RequestTarget()` 传目标 |
 | `IMU100Hz` | `app/app_imu_uart_task.c` | 10 ms | 读取 ATK-MS6DSV 姿态 + 追加激光测距1(D1)，按 5Hz 整行输出 Roll/Pitch/Yaw/加减速度/D1 |
 | `MOTORTEST` | `app/app_motor_test_task.c` | 20 ms 轮询 | **【默认禁用】** KEY1/KEY2 让 4 个电机（各自独立接口同时下发）正/反转 2 圈测试（按键已让给 UIMENU） |
 | `SERVOSWEEP` | `app/app_servo_test_task.c` | 20 ms | **【默认禁用】4 个舵机各自独立错相摆动**（800~2200us，无按键）；单控用 `BspServo_SetPulseUs(id,us)` |
@@ -65,6 +66,7 @@
 > 激光测距1（UART2）不是任务，而是 **UART2 RX 中断**逐字节喂 `module/laser` 的 LD14 解析器；距离由 `IMU100Hz` 任务读取并随整行输出。
 > 小球检测（UART0）同样不是任务，而是 **UART0 RX 中断**逐字节喂 `module/vision` 的 `$BALL` 解析器（上位机→下位机，NMEA+XOR）；结果由 `UIMENU` 读取显示在 OLED 右侧文字面板。见 [empty/docs/MESSAGE_LIST.md](empty/docs/MESSAGE_LIST.md) 的 `$BALL` 报文小节。
 > 题目菜单 UI 见 [empty/docs/FREERTOS_TASKS.md](empty/docs/FREERTOS_TASKS.md) 的「OLED 题目菜单 UI」小节；**题目业务逻辑逐题填 [empty/app/tasks/](empty/app/tasks/) 的 `taskN.c`**（第 N 题 = `taskN.c`），题名/题数登记在 `app_robot_core.c` 的 `s_robotTasks[]`。四路步进电机为**各自独立**驱动（`bsp_motor.h`，RPM 单位、带符号定方向）。OLED 当前只能显示 ASCII（无中文字库）。
+> K4 在运行态仍表示退出当前题目；仅在菜单态切换 `BALLCTRL` 启停。题目三与后台闭环都使用 ID1，进入题目三前会先等待闭环释放 ID1。
 
 ### 功能总开关（按需启用外设）
 
@@ -72,10 +74,14 @@
 
 修改或新增任务后必须同步更新 [empty/docs/FREERTOS_TASKS.md](empty/docs/FREERTOS_TASKS.md)。
 
+`APP_FEATURE_BALL_CONTROL=1` 创建 `BALLCTRL` 线程但上电不使能 ID1；它依赖
+`APP_FEATURE_VISION_LINK=1` 和 `APP_FEATURE_EMM42=1`，无效组合由编译期护栏拦截。
+
 ### EMM42 方向标定状态
 
 - 角色层 `module/emm42/emm42_robot.c` 统一处理 Emm42 正方向：ID1（摆杆）正方向为连杆向下，ID2（左轮）直通，ID3（右轮）取反。
 - 题目五 `Five` 仅使能并控制 ID2 左轮、ID3 右轮；沿用题目二的节拍化使能时序，两轮各等待约 180ms 后进入交替速度控制。机械安装变化时，只修改 ID1 的角色层标定表。
+- `BALLCTRL` 独立线程只控制 ID1；Emm42 协议出口用互斥量保证它与 ID2/ID3 题目线程的 UART1 整帧不交叉，并统一保留 5ms 帧间隔。ID1 正 RPM 只标定到“连杆向下”，钢球 X 的最终控制极性仍须按 `docs/BALL_CONTROL.md` 低速实机确认。
 - 左右轮差速运动学尚未实现。
 
 ### 循迹通道状态
@@ -177,7 +183,7 @@ A23、A21、A20、A19、A18、A11、A10、A5、A6、A4、A3、A2
 
 ### 跨模块通信
 
-当前暂未启用跨任务消息。后续新增时优先使用 FreeRTOS queue / event group / stream buffer，并在 [empty/docs/MESSAGE_LIST.md](empty/docs/MESSAGE_LIST.md) 中记录。应用之间不要通过全局变量或直接包含头文件传递业务数据。
+`BALLCTRL` 使用长度为 1 的 FreeRTOS 覆盖队列接收启停/目标 X 命令，并通过临界区快照发布状态；定义见 [empty/docs/MESSAGE_LIST.md](empty/docs/MESSAGE_LIST.md)。后续新增有先后语义的消息仍优先使用 queue / event group / stream buffer，应用之间不要通过裸全局变量传递业务数据。
 
 ## 修改代码后自查
 
