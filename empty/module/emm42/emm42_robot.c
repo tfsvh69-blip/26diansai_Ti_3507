@@ -89,6 +89,52 @@ void Emm42Robot_MoveRelative(Emm42RobotId_t id, int32_t pulses, uint16_t rpm,
     Emm42_PosControl(s_addrTable[id], dir, rpm, acc, magnitude, false, false);
 }
 
+void Emm42Robot_MoveAbsolute(Emm42RobotId_t id, int32_t targetPulses,
+                             uint16_t rpm, uint8_t acc)
+{
+    int64_t     signedPulses;
+    Emm42Dir_t  dir;
+    uint32_t    magnitude;
+
+    /*
+     * 与 MoveRelative 不同：这里【不能】把 targetPulses==0 当成"不动"提前返回，
+     * 绝对模式下 0 表示回到位置原点，是最常用的目标值。
+     */
+    if ((id >= EMM42_ROBOT_COUNT) || (rpm == 0U)) {
+        return;
+    }
+
+    /*
+     * 角色方向标定只翻转正负方向，不改变位置原点：原点由驱动器内部维护，
+     * 上层无论怎么标定方向，绝对目标 0 始终对应 ResetPosToZero 时的物理位置。
+     */
+    signedPulses = (int64_t)targetPulses;
+    if (s_dirInvertTable[id]) {
+        signedPulses = -signedPulses;
+    }
+
+    /* 绝对模式下协议的"方向"字节表示目标绝对位置的符号，脉冲数取绝对值。 */
+    dir = (signedPulses < 0) ? EMM42_DIR_CCW : EMM42_DIR_CW;
+    magnitude = (uint32_t)((signedPulses < 0) ? -signedPulses : signedPulses);
+    Emm42_PosControl(s_addrTable[id], dir, rpm, acc, magnitude, true, false);
+}
+
+void Emm42Robot_ResetPosToZero(Emm42RobotId_t id)
+{
+    if (id >= EMM42_ROBOT_COUNT) {
+        return;
+    }
+    Emm42_ResetCurPosToZero(s_addrTable[id]);
+}
+
+void Emm42Robot_ClearClogProtection(Emm42RobotId_t id)
+{
+    if (id >= EMM42_ROBOT_COUNT) {
+        return;
+    }
+    Emm42_ResetClogProtection(s_addrTable[id]);
+}
+
 void Emm42Robot_Stop(Emm42RobotId_t id)
 {
     if (id >= EMM42_ROBOT_COUNT) {

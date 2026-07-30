@@ -17,9 +17,7 @@ typedef enum {
     APP_BALL_CONTROL_WAIT_VISION,
     APP_BALL_CONTROL_RUNNING,
     APP_BALL_CONTROL_HOLDING,
-    APP_BALL_CONTROL_DEGRADED,
     APP_BALL_CONTROL_LOST,
-    APP_BALL_CONTROL_FAULT_DIRECTION,
     APP_BALL_CONTROL_FAULT_EDGE
 } AppBallControlState_t;
 
@@ -29,8 +27,7 @@ typedef struct {
     int16_t measuredPx;
     float filteredPx;
     float velocityPxPerSec;
-    int16_t commandRpm;
-    float integralRpm;
+    int32_t commandPulse;   /* 位置模式当前下发的绝对目标脉冲（原速度模式的 commandRpm/integralRpm 已废弃） */
     uint32_t sampleSeq;
 } AppBallControlStatus_t;
 

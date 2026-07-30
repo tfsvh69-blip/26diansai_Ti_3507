@@ -12,30 +12,38 @@
 #include "emm42_robot.h"
 
 /* ==================================================================
- * 钢球 X 位置后台闭环
+ * 钢球 X 位置后台闭环 —— 位置模式版本
  *
- * 数据流：视觉 X → α-β 位置/速度估计 → 局部 PID → ID1 速度模式。
+ * 数据流：视觉 X → α-β 位置/速度估计 → 局部 PD → ID1 绝对位置模式。
  * 本线程只控制 EMM42_ROBOT_LIFT，不触碰 ID2/ID3；题目层通过
  * AppBallControl_RequestTarget() 传目标，不直接共享内部变量。
  *
- * I 项只在低速小误差阶段补偿静摩擦，并带独立输出限幅及清零条件。
- * 参数确认顺序应为输出方向 → Kp → Kd → Ki，I 不能替代摆杆角度反馈。
+ * 2026-07-31 由速度模式换成位置模式：速度模式下 PID 输出的 RPM 对摆杆角度
+ * 是一次积分、球位置对摆杆角度又是二次积分，整链三阶，纯 PID 极难镇定；
+ * 且为了防止 RPM 失控，此前专门加了软降速(DEGRADED)、连续丢帧硬急停(LOST)、
+ * 方向发散急停(FAULT_DIRECTION) 等保护——一旦被正常调参过程中偶发的视觉
+ * 丢帧触发，就会打断本来平滑的运动，导致"移动过程中突然停止"。
+ *
+ * 位置模式每帧下发的是"目标该停在哪个绝对脉冲位置"，没有新命令时电机保持
+ * 在原地（结构上自带安全，不会像速度模式那样一直转下去），因此上述保护
+ * 大部分不再需要：本版本只保留两处真正需要主动出手的情形——边缘保护（球
+ * 真的快滚出摆杆）和用户主动 K4 停止；其余情况（单帧 NA、暂时丢球）只更新
+ * 显示状态，不打断已下发的绝对目标。详见 docs/BALL_CONTROL.md §9。
  * ================================================================== */
 
 /*
- * 视觉约 15Hz，即名义帧间隔 66.7ms。130ms 未收到有效 X 先软降级，
- * 220ms（约 3.3 帧）仍无有效 X 才进入 LOST 并急停。
+ * 视觉约 30fps（原设计假设 15Hz，现上位机已提升帧率），名义帧间隔约 33ms。
+ * 连续两帧 NA 或 220ms 无有效帧才判定 LOST——现在只影响 OLED 显示，不再
+ * 主动下发停止命令。
  */
-#define BALL_CTRL_VISION_DEGRADE_MS       (130U)
-#define BALL_CTRL_VISION_TIMEOUT_MS       (220U)
 #define BALL_CTRL_NA_LOST_COUNT           (2U)
+#define BALL_CTRL_VISION_TIMEOUT_MS       (220U)
 #define BALL_CTRL_RECOVERY_VALID_COUNT    (2U)
-#define BALL_CTRL_DEGRADE_STEP_PERIOD_MS  (20U)
-#define BALL_CTRL_DEGRADE_RPM_STEP        (2)
-#define BALL_CTRL_DT_MIN_SEC              (0.030F)
+#define BALL_CTRL_DT_MIN_SEC              (0.02F)   /* 30fps~33ms，留够余量避免虚高估计速度 */
 #define BALL_CTRL_DT_MAX_SEC              (0.200F)
+#define BALL_CTRL_NOMINAL_DT_SEC          (1.0F / 30.0F) /* 尚无双帧间隔时的默认 dt，按当前视觉帧率 */
 
-/* 沿用题目二/三实测稳定的 Emm42 复位与使能等待。 */
+/* 沿用题目二/三/六实测稳定的 Emm42 复位与使能等待。 */
 #define BALL_CTRL_RESET_SETTLE_MS         (60U)
 #define BALL_CTRL_ENABLE_SETTLE_MS        (180U)
 
@@ -44,37 +52,77 @@
 #define BALL_CTRL_FILTER_BETA             (0.08F)
 
 /*
- * 局部 PID 输出单位为 RPM：
- *   rpm = OUTPUT_SIGN × (Kp × errorForP - Kd × velocity + Ki × integralError)
+ * 位置模式控制律（纯 PD，无 I 项——绝对位置命令本身就能顶住静摩擦把丝杆
+ * 定在目标位置，不需要像速度模式那样额外补偿）：
+ *   targetPulse = LEVEL_TRIM_PULSE + SIGN * (Kx*errorPx - Kv*velocityPxPerSec)
  *
- * ID1 正 RPM 已标定为“连杆向下”，但连杆位于摆杆哪一端决定钢球 X 的响应方向。
- * 首次上车必须先用小偏差确认；若越控越远，只改 OUTPUT_SIGN 的正负。
+ * ID1 正 RPM 已标定为"连杆向下"，但连杆位于摆杆哪一端决定钢球 X 的响应
+ * 方向。首次上车必须先用小增益确认；若越控越远，只改本文件的 OUTPUT_SIGN，
+ * 不要改 emm42_robot.c 里的角色方向标定表（那是全局标定，会连带影响其它
+ * 题目）。
+ *
+ * v1 按要求不加任何输出限幅/深度保护。Kx=30 已实测确认方向正确（球靠近
+ * 目标时丝杆确实收回水平）；纯 P 在目标附近有轻微振荡（球带惯性冲过头，
+ * P 项才反向修正，标准欠阻尼表现），从这个小值开始加 Kv 压振荡，观察后
+ * 再翻倍或减半调整，见 docs/BALL_CONTROL.md 阶段 E。
+ *
+ * 2026-07-31 题目六阶梯测试实测出钢球静摩擦阈值约 3200~4000 脉冲，而
+ * Kx=30 时中等误差（几十~一百多像素）算出来的脉冲量远够不到这个阈值——
+ * 丝杆会抬到一个不痛不痒的高度就停住，球既不前进也不回落，卡死不动。
+ * 这不是"稳态误差"该用 I 项解决的问题（I 项需要时间慢慢积分才能顶过
+ * 阈值，且冲破瞬间会因为多余的积分量造成明显过冲），而是静摩擦这类
+ * 阈值型非线性该用的经典处理：球基本没在动时，只要算出来的量级不到
+ * 阈值，直接把幅度顶到阈值（方向不变），一步打破僵局；球已经在动、
+ * 有速度时不做这个夹紧，让 Kv 正常接管减速，不然会打断已经在收敛的运动。
  */
 #define BALL_CTRL_OUTPUT_SIGN             (1.0F)
-#define BALL_CTRL_KP_RPM_PER_PX           (0.1F)
-#define BALL_CTRL_KD_RPM_PER_PXPS         (1.6F)
-/* I 项只补偿低速小误差区的静摩擦，不能替代摆杆位置反馈。 */
-#define BALL_CTRL_KI_RPM_PER_PXSEC         (0.5F)
-#define BALL_CTRL_I_OUTPUT_LIMIT_RPM       (5.0F)
-#define BALL_CTRL_I_DEADBAND_PX            (1.0F)
-#define BALL_CTRL_I_ENABLE_ERROR_PX        (12.0F)
-#define BALL_CTRL_I_ENABLE_VELOCITY_PXPS   (10.0F)
-/* 速度模式加速度为 0，PID 输出直接生效，不叠加软件或驱动器速度斜坡。 */
-#define BALL_CTRL_EMM_ACC                 (0U)
+#define BALL_CTRL_KX_PULSE_PER_PX         (25.0F)
+#define BALL_CTRL_KV_PULSE_PER_PXPS       (9.0F)
+#define BALL_CTRL_LEVEL_TRIM_PULSE        (0)
 
-/* 中心保持判定与安全边界。 */
-#define BALL_CTRL_POSITION_DEADBAND_PX    (4.0F)
+/* 到目标这么近就不再强行修正，回水平即可（本身也推不动，不算白白放弃精度）。 */
+#define BALL_CTRL_SETTLE_DEADBAND_PX      (3.0F)
+
+/* 题目六阶梯测试实测的钢球静摩擦阈值（3200~4000 脉冲），取中间值，可调。 */
+#define BALL_CTRL_STICTION_PULSE          (3600.0F)
+
+/* 判定"球基本没在动"的速度门限，低于此值才允许静摩擦夹紧介入。 */
+#define BALL_CTRL_STUCK_VELOCITY_PXPS     (5.0F)
+
+/*
+ * 低速状态要持续这么久才算"真的卡住"，不是正常减速路过低速的一瞬间。
+ * 没有这个时间门限时，球快到目标前的正常减速（Kv 在正常刹车）也会有
+ * 瞬间低速，会被误判成"卡住"进而满幅夹紧，把已经快停稳的球重新推走，
+ * 形成"以为卡住→满幅踹一脚→冲过头→减速→又被当成卡住"的持续振荡
+ * （2026-07-31 实测：目标附近 50px 内来回抖动、到不了）。
+ */
+#define BALL_CTRL_STUCK_TIME_MS           (150U)
+
+/*
+ * 位置模式运行参数。30RPM 是题目六"转10圈慢慢量距离"标定测试用的保守值，
+ * 直接套到实时闭环上太慢（30RPM≈4mm/s 丝杆线速度，见 docs/BALL_CONTROL.md），
+ * 提到 200RPM 起步测试（协议层上限 3000RPM，驱动器额定 3000RPM+，尚未在本
+ * 机构上实测过这个速度，先观察有无异响/失步再决定要不要再提高）。
+ *
+ * acc 必须用 0（瞬时），不能像题目二轮子那样用非 0 曲线档位：手册公式
+ * "每升1RPM需要(256-acc)*50us"，acc=150 时爬到 200RPM 要 1 秒多，但
+ * BALLCTRL 每 33ms 就刷新一次新的绝对目标，曲线还没爬起来就被下一帧打断
+ * 重新规划，实际能达到的速度被摁在 33ms/(256-acc)/50us 这个RPM量级——
+ * 比 acc=0 时瞬时给到目标 RPM 反而慢得多（2026-07-31 实测验证）。
+ * 题目二 acc=180 有效是因为它是持续巡航、前后两帧目标转速差很小，不需要
+ * 从 0 重新爬升，跟这里"每帧一次全新绝对目标"的场景不通用，不能照搬。
+ */
+#define BALL_CTRL_POS_RPM                 (200U)
+#define BALL_CTRL_POS_ACC                 (0U)
+
+/* 中心保持判定，仅用于 OLED 显示 HOLDING/RUNNING，不影响任何控制动作。 */
 #define BALL_CTRL_HOLD_POSITION_PX        (5.0F)
 #define BALL_CTRL_HOLD_VELOCITY_PXPS      (10.0F)
 #define BALL_CTRL_HOLD_TIME_MS            (500U)
+
+/* 安全边界：球越过这个像素范围视为快滚出摆杆，命令回水平并锁定报警。 */
 #define BALL_CTRL_SAFE_X_MIN_PX           (20)
 #define BALL_CTRL_SAFE_X_MAX_PX           (620)
-
-/* 首次启动方向保护：同侧误差连续扩大到初值 +25px 时停止并提示 DIR。 */
-#define BALL_CTRL_DIR_CHECK_MIN_ERROR_PX  (20.0F)
-#define BALL_CTRL_DIR_CHECK_IMPROVE_PX    (10.0F)
-#define BALL_CTRL_DIR_CHECK_GROW_PX       (25.0F)
-#define BALL_CTRL_DIR_CHECK_BAD_SAMPLES   (3U)
 
 typedef enum {
     BALL_CTRL_INTERNAL_OFF = 0,
@@ -82,13 +130,12 @@ typedef enum {
     BALL_CTRL_INTERNAL_RESET_WAIT,
     BALL_CTRL_INTERNAL_ENABLE,
     BALL_CTRL_INTERNAL_ENABLE_WAIT,
+    BALL_CTRL_INTERNAL_ZERO,
     BALL_CTRL_INTERNAL_WAIT_VISION,
     BALL_CTRL_INTERNAL_ACTIVE,
-    BALL_CTRL_INTERNAL_DEGRADED,
     BALL_CTRL_INTERNAL_LOST,
     BALL_CTRL_INTERNAL_STOP,
     BALL_CTRL_INTERNAL_DISABLE,
-    BALL_CTRL_INTERNAL_FAULT_DIRECTION,
     BALL_CTRL_INTERNAL_FAULT_EDGE
 } BallControlInternalState_t;
 
@@ -122,43 +169,12 @@ static bool BallControl_Elapsed(TickType_t now, TickType_t then, uint32_t timeou
     return (TickType_t)(now - then) >= pdMS_TO_TICKS(timeoutMs);
 }
 
-static bool BallControl_SameSign(float a, float b)
-{
-    return ((a >= 0.0F) && (b >= 0.0F)) || ((a < 0.0F) && (b < 0.0F));
-}
-
-static bool BallControl_CrossedZero(float previous, float current)
-{
-    return ((previous > 0.0F) && (current <= 0.0F)) ||
-           ((previous < 0.0F) && (current >= 0.0F));
-}
-
-static float BallControl_GetIntegralErrorLimit(void)
-{
-    if (BALL_CTRL_KI_RPM_PER_PXSEC <= 0.0F) {
-        return 0.0F;
-    }
-
-    return BALL_CTRL_I_OUTPUT_LIMIT_RPM / BALL_CTRL_KI_RPM_PER_PXSEC;
-}
-
-static int16_t BallControl_RoundRpm(float value)
+static int32_t BallControl_RoundToInt32(float value)
 {
     if (value >= 0.0F) {
-        return (int16_t)(value + 0.5F);
+        return (int32_t)(value + 0.5F);
     }
-    return (int16_t)(value - 0.5F);
-}
-
-static int16_t BallControl_StepRpmTowardZero(int16_t commandRpm)
-{
-    if (commandRpm > BALL_CTRL_DEGRADE_RPM_STEP) {
-        return commandRpm - BALL_CTRL_DEGRADE_RPM_STEP;
-    }
-    if (commandRpm < -BALL_CTRL_DEGRADE_RPM_STEP) {
-        return commandRpm + BALL_CTRL_DEGRADE_RPM_STEP;
-    }
-    return 0;
+    return (int32_t)(value - 0.5F);
 }
 
 static AppBallControlState_t BallControl_ToPublicState(BallControlInternalState_t state,
@@ -171,17 +187,14 @@ static AppBallControlState_t BallControl_ToPublicState(BallControlInternalState_
     case BALL_CTRL_INTERNAL_RESET_WAIT:
     case BALL_CTRL_INTERNAL_ENABLE:
     case BALL_CTRL_INTERNAL_ENABLE_WAIT:
+    case BALL_CTRL_INTERNAL_ZERO:
         return APP_BALL_CONTROL_STARTING;
     case BALL_CTRL_INTERNAL_WAIT_VISION:
         return APP_BALL_CONTROL_WAIT_VISION;
     case BALL_CTRL_INTERNAL_ACTIVE:
         return holding ? APP_BALL_CONTROL_HOLDING : APP_BALL_CONTROL_RUNNING;
-    case BALL_CTRL_INTERNAL_DEGRADED:
-        return APP_BALL_CONTROL_DEGRADED;
     case BALL_CTRL_INTERNAL_LOST:
         return APP_BALL_CONTROL_LOST;
-    case BALL_CTRL_INTERNAL_FAULT_DIRECTION:
-        return APP_BALL_CONTROL_FAULT_DIRECTION;
     case BALL_CTRL_INTERNAL_FAULT_EDGE:
         return APP_BALL_CONTROL_FAULT_EDGE;
     case BALL_CTRL_INTERNAL_STOP:
@@ -193,8 +206,8 @@ static AppBallControlState_t BallControl_ToPublicState(BallControlInternalState_
 
 static void BallControl_Publish(BallControlInternalState_t state, bool holding,
                                 int16_t targetPx, int16_t measuredPx,
-                                const AlphaBetaFilter_t *filter, int16_t commandRpm,
-                                float integralRpm, uint32_t sampleSeq)
+                                const AlphaBetaFilter_t *filter, int32_t commandPulse,
+                                uint32_t sampleSeq)
 {
     taskENTER_CRITICAL();
     s_publicStatus.state = BallControl_ToPublicState(state, holding);
@@ -202,14 +215,21 @@ static void BallControl_Publish(BallControlInternalState_t state, bool holding,
     s_publicStatus.measuredPx = measuredPx;
     s_publicStatus.filteredPx = filter->position;
     s_publicStatus.velocityPxPerSec = filter->velocity;
-    s_publicStatus.commandRpm = commandRpm;
-    s_publicStatus.integralRpm = integralRpm;
+    s_publicStatus.commandPulse = commandPulse;
     s_publicStatus.sampleSeq = sampleSeq;
     taskEXIT_CRITICAL();
 }
 
 static void AppBallControlTask_Entry(void *argument)
 {
+    /*
+     * 只在本次上电后第一次启动时清零：把上电前人工摸平的位置定义为原点。
+     * 之后反复用 K4 停/启调参不会重新清零，沿用第一次建立的原点，避免中途
+     * 摆杆停在某个倾角时被误当成新零点、跨轮次累积误差。函数级 static 在
+     * 任务生命周期内持续存在，只有 MCU 重新上电才会复位。
+     */
+    static bool hasZeroedSinceBoot = false;
+
     BallControlInternalState_t state = BALL_CTRL_INTERNAL_OFF;
     BallControlCommand_t command;
     AppVisionXSample_t vision;
@@ -218,26 +238,19 @@ static void AppBallControlTask_Entry(void *argument)
     TickType_t stateStart = lastWake;
     TickType_t lastValidSampleTick = 0U;
     TickType_t holdStartTick = 0U;
-    TickType_t degradeStepTick = 0U;
+    TickType_t stuckStartTick = 0U;
     uint32_t seenSampleSeq = 0U;
     uint32_t consecutiveNaCount = 0U;
     uint32_t recoveryValidCount = 0U;
     int16_t targetPx = APP_BALL_CONTROL_CENTER_X_PX;
     int16_t measuredPx = 0;
-    int16_t commandRpm = 0;
-    float integralErrorPxSec = 0.0F;
-    float integralRpm = 0.0F;
-    float previousRawError = 0.0F;
-    float directionInitialError = 0.0F;
-    uint32_t directionBadSamples = 0U;
-    bool directionCheckActive = false;
-    bool previousRawErrorValid = false;
+    int32_t commandPulse = 0;
     bool holding = false;
 
     (void)argument;
     AlphaBetaFilter_Init(&filter, BALL_CTRL_FILTER_ALPHA, BALL_CTRL_FILTER_BETA);
-    BallControl_Publish(state, holding, targetPx, measuredPx, &filter,
-                        commandRpm, integralRpm, seenSampleSeq);
+    BallControl_Publish(state, holding, targetPx, measuredPx, &filter, commandPulse,
+                        seenSampleSeq);
 
     for (;;) {
         TickType_t now = xTaskGetTickCount();
@@ -247,10 +260,7 @@ static void AppBallControlTask_Entry(void *argument)
             targetPx = command.targetPx;
             holding = false;
             holdStartTick = 0U;
-            /* 目标变更或 K4 启停后，旧目标的积分偏置不能保留。 */
-            integralErrorPxSec = 0.0F;
-            integralRpm = 0.0F;
-            previousRawErrorValid = false;
+            stuckStartTick = 0U;
 
             if (command.enable) {
                 if (state == BALL_CTRL_INTERNAL_OFF) {
@@ -258,14 +268,9 @@ static void AppBallControlTask_Entry(void *argument)
                     seenSampleSeq = 0U;
                     lastValidSampleTick = 0U;
                     measuredPx = 0;
-                    commandRpm = 0;
-                    integralErrorPxSec = 0.0F;
-                    integralRpm = 0.0F;
+                    commandPulse = 0;
                     consecutiveNaCount = 0U;
                     recoveryValidCount = 0U;
-                    degradeStepTick = 0U;
-                    directionCheckActive = false;
-                    directionBadSamples = 0U;
                     state = BALL_CTRL_INTERNAL_RESET_DISABLE;
                 }
                 /* 已运行时更新 targetPx 即可，不重做电机使能时序。 */
@@ -298,14 +303,21 @@ static void AppBallControlTask_Entry(void *argument)
 
         case BALL_CTRL_INTERNAL_ENABLE_WAIT:
             if (BallControl_Elapsed(now, stateStart, BALL_CTRL_ENABLE_SETTLE_MS)) {
-                state = BALL_CTRL_INTERNAL_WAIT_VISION;
+                state = BALL_CTRL_INTERNAL_ZERO;
             }
             break;
 
+        case BALL_CTRL_INTERNAL_ZERO:
+            if (!hasZeroedSinceBoot) {
+                Emm42Robot_ResetPosToZero(EMM42_ROBOT_LIFT);
+                hasZeroedSinceBoot = true;
+            }
+            state = BALL_CTRL_INTERNAL_WAIT_VISION;
+            break;
+
         case BALL_CTRL_INTERNAL_WAIT_VISION:
-        case BALL_CTRL_INTERNAL_DEGRADED:
-        case BALL_CTRL_INTERNAL_LOST:
         case BALL_CTRL_INTERNAL_ACTIVE:
+        case BALL_CTRL_INTERNAL_LOST:
             AppVisionLink_GetLatestX(&vision);
 
             if (vision.sequence != seenSampleSeq) {
@@ -313,53 +325,32 @@ static void AppBallControlTask_Entry(void *argument)
 
                 if (vision.na) {
                     consecutiveNaCount++;
-                    recoveryValidCount = 0U;
-                    holding = false;
-                    holdStartTick = 0U;
-                    /* 丢球后不允许旧积分继续推动摆杆。 */
-                    integralErrorPxSec = 0.0F;
-                    integralRpm = 0.0F;
-                    previousRawErrorValid = false;
-                    if (lastValidSampleTick == 0U) {
-                        /*
-                         * 启动后尚未收到过有效 X 时，以首个 NA 作为丢失计时起点，
-                         * 防止只收到一帧 NA 后链路中断而永久停留在 DEG。
-                         */
-                        lastValidSampleTick = now;
-                    }
-
                     if ((consecutiveNaCount >= BALL_CTRL_NA_LOST_COUNT) &&
                         (state != BALL_CTRL_INTERNAL_LOST)) {
-                        /* 连续两帧 NA 才判定持续丢球，急停后保持 ID1 使能。 */
-                        Emm42Robot_Stop(EMM42_ROBOT_LIFT);
-                        commandRpm = 0;
-                        AlphaBetaFilter_Reset(&filter);
-                        state = BALL_CTRL_INTERNAL_LOST;
-                    } else if (state != BALL_CTRL_INTERNAL_LOST) {
                         /*
-                         * 单次 NA 只进入软降级，保留滤波状态并逐步把速度降到零，
-                         * 避免偶发漏检造成频繁急停，也不继续沿用非零速度。
+                         * 连续两帧 NA 才判定持续丢球；只标记状态供 OLED 显示，
+                         * 不再急停——摆杆已经停在最后一次有效目标上，本身就安全。
                          */
-                        state = BALL_CTRL_INTERNAL_DEGRADED;
-                        degradeStepTick = now;
+                        AlphaBetaFilter_Reset(&filter);
+                        recoveryValidCount = 0U;
+                        holding = false;
+                        holdStartTick = 0U;
+                        stuckStartTick = 0U;
+                        state = BALL_CTRL_INTERNAL_LOST;
                     }
                 } else if (vision.valid) {
                     float dtSec;
                     float rawError;
-                    float errorForP;
+                    float pulseDelta;
                     float output;
-                    float absError;
-                    float integralLimit;
-                    bool resetIntegral;
 
                     measuredPx = vision.pixel;
                     if ((measuredPx <= BALL_CTRL_SAFE_X_MIN_PX) ||
                         (measuredPx >= BALL_CTRL_SAFE_X_MAX_PX)) {
-                        Emm42Robot_Stop(EMM42_ROBOT_LIFT);
-                        commandRpm = 0;
-                        integralErrorPxSec = 0.0F;
-                        integralRpm = 0.0F;
-                        previousRawErrorValid = false;
+                        /* 球快滚出摆杆：命令回水平，标记故障并锁定，等 K4 处理。 */
+                        Emm42Robot_MoveAbsolute(EMM42_ROBOT_LIFT, BALL_CTRL_LEVEL_TRIM_PULSE,
+                                               BALL_CTRL_POS_RPM, BALL_CTRL_POS_ACC);
+                        commandPulse = BALL_CTRL_LEVEL_TRIM_PULSE;
                         state = BALL_CTRL_INTERNAL_FAULT_EDGE;
                         break;
                     }
@@ -367,11 +358,7 @@ static void AppBallControlTask_Entry(void *argument)
                     consecutiveNaCount = 0U;
 
                     if ((state == BALL_CTRL_INTERNAL_WAIT_VISION) ||
-                        (state == BALL_CTRL_INTERNAL_LOST) ||
-                        (state == BALL_CTRL_INTERNAL_DEGRADED)) {
-                        integralErrorPxSec = 0.0F;
-                        integralRpm = 0.0F;
-                        previousRawErrorValid = false;
+                        (state == BALL_CTRL_INTERNAL_LOST)) {
                         /*
                          * 启动或视觉恢复的第一帧只重建位置并把速度置零；
                          * 第二帧才有可信 dt 和速度，可重新产生控制输出。
@@ -379,7 +366,7 @@ static void AppBallControlTask_Entry(void *argument)
                         if (recoveryValidCount == 0U) {
                             AlphaBetaFilter_Reset(&filter);
                             AlphaBetaFilter_Update(&filter, (float)measuredPx,
-                                                   1.0F / 15.0F);
+                                                   BALL_CTRL_NOMINAL_DT_SEC);
                             lastValidSampleTick = now;
                             recoveryValidCount = 1U;
                             holding = false;
@@ -390,14 +377,13 @@ static void AppBallControlTask_Entry(void *argument)
                             break;
                         }
                         recoveryValidCount++;
-                        if (recoveryValidCount <
-                            BALL_CTRL_RECOVERY_VALID_COUNT) {
+                        if (recoveryValidCount < BALL_CTRL_RECOVERY_VALID_COUNT) {
                             break;
                         }
                     }
 
                     if (lastValidSampleTick == 0U) {
-                        dtSec = 1.0F / 15.0F;
+                        dtSec = BALL_CTRL_NOMINAL_DT_SEC;
                     } else {
                         dtSec = (float)(TickType_t)(now - lastValidSampleTick) /
                                 (float)configTICK_RATE_HZ;
@@ -409,78 +395,46 @@ static void AppBallControlTask_Entry(void *argument)
                     recoveryValidCount = BALL_CTRL_RECOVERY_VALID_COUNT;
 
                     rawError = (float)targetPx - filter.position;
-                    absError = BallControl_Abs(rawError);
-                    errorForP = rawError;
-                    if (absError <= BALL_CTRL_POSITION_DEADBAND_PX) {
-                        errorForP = 0.0F;
-                    }
 
-                    /*
-                     * I 项只在低速、小误差、连续有效视觉下补偿静摩擦。越过目标、
-                     * 速度升高或离开补偿区时立即清零，避免积分变成持续倾角。
-                     */
-                    resetIntegral = (state != BALL_CTRL_INTERNAL_ACTIVE) ||
-                                    (BALL_CTRL_KI_RPM_PER_PXSEC <= 0.0F) ||
-                                    (absError <= BALL_CTRL_I_DEADBAND_PX) ||
-                                    (absError > BALL_CTRL_I_ENABLE_ERROR_PX) ||
-                                    (BallControl_Abs(filter.velocity) >
-                                     BALL_CTRL_I_ENABLE_VELOCITY_PXPS) ||
-                                    (previousRawErrorValid &&
-                                     BallControl_CrossedZero(previousRawError,
-                                                              rawError));
-                    if (resetIntegral) {
-                        integralErrorPxSec = 0.0F;
+                    /* 纯 PD，无 I 项。 */
+                    pulseDelta = (BALL_CTRL_KX_PULSE_PER_PX * rawError) -
+                                 (BALL_CTRL_KV_PULSE_PER_PXPS * filter.velocity);
+
+                    if (BallControl_Abs(rawError) <= BALL_CTRL_SETTLE_DEADBAND_PX) {
+                        /* 已经足够接近目标：不强行推，回水平即可，也不算"卡住"。 */
+                        pulseDelta = 0.0F;
+                        stuckStartTick = 0U;
+                    } else if (BallControl_Abs(filter.velocity) <=
+                               BALL_CTRL_STUCK_VELOCITY_PXPS) {
+                        /*
+                         * 只有低速状态【持续够久】才算真的卡住——球正常减速接近目标
+                         * 时也会有瞬间低速，不能一测到低速就立刻满幅夹紧，否则会把
+                         * 快停稳的球重新推走，变成持续振荡。
+                         */
+                        if (stuckStartTick == 0U) {
+                            stuckStartTick = now;
+                        } else if (BallControl_Elapsed(now, stuckStartTick,
+                                                       BALL_CTRL_STUCK_TIME_MS) &&
+                                   (BallControl_Abs(pulseDelta) < BALL_CTRL_STICTION_PULSE)) {
+                            /* 确认卡住：直接把幅度顶到实测阈值（保留方向）打破僵局。 */
+                            pulseDelta = (pulseDelta >= 0.0F) ? BALL_CTRL_STICTION_PULSE
+                                                               : -BALL_CTRL_STICTION_PULSE;
+                        }
                     } else {
-                        integralLimit = BallControl_GetIntegralErrorLimit();
-                        integralErrorPxSec += rawError * dtSec;
-                        integralErrorPxSec = BallControl_Clamp(integralErrorPxSec,
-                                                               -integralLimit,
-                                                               integralLimit);
+                        /* 球在正常移动，没有卡住，重置计时。 */
+                        stuckStartTick = 0U;
                     }
-                    integralRpm = BALL_CTRL_KI_RPM_PER_PXSEC * integralErrorPxSec;
-                    previousRawError = rawError;
-                    previousRawErrorValid = true;
 
-                    output = BALL_CTRL_OUTPUT_SIGN *
-                             (BALL_CTRL_KP_RPM_PER_PX * errorForP -
-                              BALL_CTRL_KD_RPM_PER_PXPS * filter.velocity +
-                              integralRpm);
-                    commandRpm = BallControl_RoundRpm(output);
-                    Emm42Robot_VelControl(EMM42_ROBOT_LIFT, commandRpm,
-                                          BALL_CTRL_EMM_ACC);
+                    output = (float)BALL_CTRL_LEVEL_TRIM_PULSE +
+                             (BALL_CTRL_OUTPUT_SIGN * pulseDelta);
+                    commandPulse = BallControl_RoundToInt32(output);
+
+                    Emm42Robot_MoveAbsolute(EMM42_ROBOT_LIFT, commandPulse,
+                                           BALL_CTRL_POS_RPM, BALL_CTRL_POS_ACC);
                     state = BALL_CTRL_INTERNAL_ACTIVE;
 
-                    /* 首次大偏差只做一次方向自检，确认误差在向中心收敛。 */
-                    if (!directionCheckActive && (directionInitialError == 0.0F) &&
-                        (absError >= BALL_CTRL_DIR_CHECK_MIN_ERROR_PX)) {
-                        directionInitialError = rawError;
-                        directionCheckActive = true;
-                    }
-                    if (directionCheckActive) {
-                        float initialAbs = BallControl_Abs(directionInitialError);
-
-                        if (!BallControl_SameSign(rawError, directionInitialError) ||
-                            (absError <= initialAbs - BALL_CTRL_DIR_CHECK_IMPROVE_PX)) {
-                            directionCheckActive = false;
-                        } else if (absError >= initialAbs + BALL_CTRL_DIR_CHECK_GROW_PX) {
-                            directionBadSamples++;
-                            if (directionBadSamples >= BALL_CTRL_DIR_CHECK_BAD_SAMPLES) {
-                                Emm42Robot_Stop(EMM42_ROBOT_LIFT);
-                                commandRpm = 0;
-                                integralErrorPxSec = 0.0F;
-                                integralRpm = 0.0F;
-                                previousRawErrorValid = false;
-                                state = BALL_CTRL_INTERNAL_FAULT_DIRECTION;
-                            }
-                        } else {
-                            directionBadSamples = 0U;
-                        }
-                    }
-
-                    if ((state == BALL_CTRL_INTERNAL_ACTIVE) &&
-                        (absError <= BALL_CTRL_HOLD_POSITION_PX) &&
-                        (BallControl_Abs(filter.velocity) <=
-                         BALL_CTRL_HOLD_VELOCITY_PXPS)) {
+                    if ((BallControl_Abs(rawError) <= BALL_CTRL_HOLD_POSITION_PX) &&
+                        (BallControl_Abs(filter.velocity) <= BALL_CTRL_HOLD_VELOCITY_PXPS)) {
                         if (holdStartTick == 0U) {
                             holdStartTick = now;
                         } else if (BallControl_Elapsed(now, holdStartTick,
@@ -497,57 +451,21 @@ static void AppBallControlTask_Entry(void *argument)
             if (((state == BALL_CTRL_INTERNAL_ACTIVE) ||
                  (state == BALL_CTRL_INTERNAL_WAIT_VISION)) &&
                 (lastValidSampleTick != 0U) &&
-                BallControl_Elapsed(now, lastValidSampleTick,
-                                    BALL_CTRL_VISION_DEGRADE_MS)) {
-                state = BALL_CTRL_INTERNAL_DEGRADED;
-                degradeStepTick = now;
-                recoveryValidCount = 0U;
-                holding = false;
-                holdStartTick = 0U;
-                integralErrorPxSec = 0.0F;
-                integralRpm = 0.0F;
-                previousRawErrorValid = false;
-            }
-
-            if ((state == BALL_CTRL_INTERNAL_DEGRADED) &&
-                BallControl_Elapsed(now, degradeStepTick,
-                                    BALL_CTRL_DEGRADE_STEP_PERIOD_MS)) {
-                int16_t reducedRpm = BallControl_StepRpmTowardZero(commandRpm);
-
-                degradeStepTick = now;
-                if (reducedRpm != commandRpm) {
-                    commandRpm = reducedRpm;
-                    Emm42Robot_VelControl(EMM42_ROBOT_LIFT, commandRpm,
-                                          BALL_CTRL_EMM_ACC);
-                }
-            }
-
-            if (((state == BALL_CTRL_INTERNAL_ACTIVE) ||
-                 (state == BALL_CTRL_INTERNAL_DEGRADED) ||
-                 (state == BALL_CTRL_INTERNAL_WAIT_VISION)) &&
-                (lastValidSampleTick != 0U) &&
-                BallControl_Elapsed(now, lastValidSampleTick,
-                                    BALL_CTRL_VISION_TIMEOUT_MS)) {
-                Emm42Robot_Stop(EMM42_ROBOT_LIFT);
-                commandRpm = 0;
+                BallControl_Elapsed(now, lastValidSampleTick, BALL_CTRL_VISION_TIMEOUT_MS)) {
+                /* 视觉链路彻底没数据（不只是偶发 NA），同样只标记 LOST，不主动停车。 */
                 AlphaBetaFilter_Reset(&filter);
                 state = BALL_CTRL_INTERNAL_LOST;
                 consecutiveNaCount = BALL_CTRL_NA_LOST_COUNT;
                 recoveryValidCount = 0U;
                 holding = false;
                 holdStartTick = 0U;
-                integralErrorPxSec = 0.0F;
-                integralRpm = 0.0F;
-                previousRawErrorValid = false;
+                stuckStartTick = 0U;
             }
             break;
 
         case BALL_CTRL_INTERNAL_STOP:
             Emm42Robot_Stop(EMM42_ROBOT_LIFT);
-            commandRpm = 0;
-            integralErrorPxSec = 0.0F;
-            integralRpm = 0.0F;
-            previousRawErrorValid = false;
+            commandPulse = 0;
             state = BALL_CTRL_INTERNAL_DISABLE;
             break;
 
@@ -556,34 +474,24 @@ static void AppBallControlTask_Entry(void *argument)
             AlphaBetaFilter_Reset(&filter);
             consecutiveNaCount = 0U;
             recoveryValidCount = 0U;
-            degradeStepTick = 0U;
-            directionInitialError = 0.0F;
-            directionBadSamples = 0U;
-            directionCheckActive = false;
-            integralErrorPxSec = 0.0F;
-            integralRpm = 0.0F;
-            previousRawErrorValid = false;
             holding = false;
             state = BALL_CTRL_INTERNAL_OFF;
             break;
 
-        case BALL_CTRL_INTERNAL_FAULT_DIRECTION:
         case BALL_CTRL_INTERNAL_FAULT_EDGE:
-            /* 故障态保持电机使能和当前位置，等待 K4 请求安全停止。 */
+            /* 已把摆杆命令回水平，保持使能和当前位置，等待 K4 请求安全停止。 */
             break;
 
         default:
+            /* 状态异常时只对本模块的 ID1 做安全收尾。 */
             Emm42Robot_Stop(EMM42_ROBOT_LIFT);
-            commandRpm = 0;
-            integralErrorPxSec = 0.0F;
-            integralRpm = 0.0F;
-            previousRawErrorValid = false;
+            commandPulse = 0;
             state = BALL_CTRL_INTERNAL_STOP;
             break;
         }
 
-        BallControl_Publish(state, holding, targetPx, measuredPx, &filter,
-                            commandRpm, integralRpm, seenSampleSeq);
+        BallControl_Publish(state, holding, targetPx, measuredPx, &filter, commandPulse,
+                            seenSampleSeq);
         vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(APP_BALL_CONTROL_PERIOD_MS));
     }
 }
@@ -600,8 +508,7 @@ void AppBallControlTask_Init(void)
     s_publicStatus.measuredPx = 0;
     s_publicStatus.filteredPx = 0.0F;
     s_publicStatus.velocityPxPerSec = 0.0F;
-    s_publicStatus.commandRpm = 0;
-    s_publicStatus.integralRpm = 0.0F;
+    s_publicStatus.commandPulse = 0;
     s_publicStatus.sampleSeq = 0U;
 
     ret = xTaskCreate(AppBallControlTask_Entry,

@@ -99,6 +99,9 @@
 /* task4 在题目表中的固定下标，用于显示其秒表计时。 */
 #define UI_TASK4_INDEX    (3U)
 
+/* task6 在题目表中的固定下标，用于显示 ID1 位置模式测试的当前阶段。 */
+#define UI_TASK6_INDEX    (5U)
+
 /* 菜单当前选中项与可见窗口首项（题目多于一屏时滚动）。 */
 static uint32_t s_sel     = 0U;
 static uint32_t s_menuTop = 0U;
@@ -227,9 +230,7 @@ static const char *Ui_GetBallControlText(void)
     case APP_BALL_CONTROL_WAIT_VISION:     return "B:WAIT";
     case APP_BALL_CONTROL_RUNNING:         return "B:RUN";
     case APP_BALL_CONTROL_HOLDING:         return "B:HOLD";
-    case APP_BALL_CONTROL_DEGRADED:        return "B:DEG";
     case APP_BALL_CONTROL_LOST:            return "B:LOST";
-    case APP_BALL_CONTROL_FAULT_DIRECTION: return "B:DIR!";
     case APP_BALL_CONTROL_FAULT_EDGE:      return "B:EDGE!";
     default:                               return "B:???";
     }
@@ -396,13 +397,18 @@ static void Ui_DrawRun(void)
     OLED_ShowString(0, 16, "TASK", OLED_8X16);
     OLED_ShowNum(40, 16, s_sel + 1U, 1, OLED_8X16);
 
-    /* 题名；任务二、四显示秒表计时，任务五显示循迹与停车流程状态。 */
+    /*
+     * 题名；任务二、四显示秒表计时，任务五显示循迹与停车流程状态，
+     * 任务六显示 ID1 位置模式测试的当前阶段与目标脉冲。
+     */
     if (s_sel == UI_TASK5_INDEX) {
         OLED_ShowString(0, UI_RUN_NAME_Y, (char *)Task5_GetUiStatus(), OLED_6X8);
     } else if (s_sel == UI_TASK2_INDEX) {
         OLED_ShowString(0, UI_RUN_NAME_Y, (char *)Task2_GetUiStatus(), OLED_6X8);
     } else if (s_sel == UI_TASK4_INDEX) {
         OLED_ShowString(0, UI_RUN_NAME_Y, (char *)Task4_GetUiStatus(), OLED_6X8);
+    } else if (s_sel == UI_TASK6_INDEX) {
+        OLED_ShowString(0, UI_RUN_NAME_Y, (char *)Task6_GetUiStatus(), OLED_6X8);
     } else {
         OLED_ShowString(0, UI_RUN_NAME_Y, (char *)RobotCore_GetTaskName(s_sel), OLED_6X8);
     }
@@ -540,6 +546,12 @@ static void AppUiTask_Entry(void *argument)
                 /* 任务四每 300ms 刷新一次秒表计时。 */
                 OLED_ClearArea(0, UI_RUN_NAME_Y, 128, UI_MENU_LINE_H);
                 OLED_ShowString(0, UI_RUN_NAME_Y, (char *)Task4_GetUiStatus(), OLED_6X8);
+                OLED_UpdateArea(0, UI_RUN_NAME_Y, 128, UI_MENU_LINE_H);
+            }
+            if ((state == UI_STATE_RUN) && (s_sel == UI_TASK6_INDEX)) {
+                /* 任务六每 300ms 刷新一次位置模式测试阶段（串口静默时的唯一反馈）。 */
+                OLED_ClearArea(0, UI_RUN_NAME_Y, 128, UI_MENU_LINE_H);
+                OLED_ShowString(0, UI_RUN_NAME_Y, (char *)Task6_GetUiStatus(), OLED_6X8);
                 OLED_UpdateArea(0, UI_RUN_NAME_Y, 128, UI_MENU_LINE_H);
             }
 #if (APP_FEATURE_VISION_LINK != 0U)

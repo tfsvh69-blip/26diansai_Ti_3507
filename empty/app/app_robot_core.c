@@ -41,7 +41,7 @@ static const RobotTask_t s_robotTasks[] = {
     { "Task 3", Task3_OnEnter, Task3_OnLoop, Task3_OnExit },
     { "LINE 6S", Task4_OnEnter, Task4_OnLoop, Task4_OnExit },
     { "Five", Task5_OnEnter, Task5_OnLoop, Task5_OnExit },
-    { "Task 6", Task6_OnEnter, Task6_OnLoop, Task6_OnExit },
+    { "ID1 POS", Task6_OnEnter, Task6_OnLoop, Task6_OnExit },
 };
 
 #define ROBOT_TASK_COUNT \

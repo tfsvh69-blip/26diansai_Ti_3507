@@ -80,6 +80,9 @@ void Task6_OnEnter(void);
 void Task6_OnLoop(void);
 void Task6_OnExit(void);
 
+/* 取题目六 ID1 位置模式测试的当前阶段文本（如 "ABS +9600"），供 OLED 运行界面显示。 */
+const char *Task6_GetUiStatus(void);
+
 #ifdef __cplusplus
 }
 #endif

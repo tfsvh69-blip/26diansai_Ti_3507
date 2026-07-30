@@ -79,6 +79,36 @@ void Emm42Robot_VelControl(Emm42RobotId_t id, int16_t rpm, uint8_t acc);
 void Emm42Robot_MoveRelative(Emm42RobotId_t id, int32_t pulses, uint16_t rpm,
                              uint8_t acc);
 
+/*
+ * 单路绝对位置模式：targetPulses 是相对【位置原点】的绝对目标脉冲数，
+ * 正负同样遵从角色方向标定；位置原点由 Emm42Robot_ResetPosToZero() 定义。
+ *
+ * 与相对模式的关键区别：targetPulses==0 是【合法且最常用】的目标（回原点），
+ * 不能像相对模式那样把 0 当成"不动"提前返回。
+ *
+ * 脉冲单位取决于驱动器细分设置：出厂 16 细分 = 3200 脉冲/圈。
+ * 反复下发新的绝对目标会覆盖上一条位置命令并重新规划，适合外环按帧刷新目标。
+ */
+void Emm42Robot_MoveAbsolute(Emm42RobotId_t id, int32_t targetPulses,
+                             uint16_t rpm, uint8_t acc);
+
+/*
+ * 把该角色电机的当前机械位置定义为新的位置原点（协议 0x0A 0x6D）。
+ * 驱动器会把当前位置角度、位置误差、脉冲数全部清零，此后绝对位置模式的
+ * 0 就等于调用本接口时电机所处的物理位置。
+ *
+ * 摆杆没有限位开关/角度传感器时，需要每次上电先人工把杆摆到目视水平，
+ * 再调用本接口，否则原点无意义（驱动器断电不保留多圈位置计数）。
+ */
+void Emm42Robot_ResetPosToZero(Emm42RobotId_t id);
+
+/*
+ * 解除堵转保护（协议 0x0E 0x52）。驱动器触发堵转保护后会拒绝执行速度/位置
+ * 命令并返回条件不满足（E2），必须先发本命令才能重新运动。
+ * 丝杆类大静摩擦负载低速顶死时容易触发，运动前发一次可清掉残留状态。
+ */
+void Emm42Robot_ClearClogProtection(Emm42RobotId_t id);
+
 /* 单路立即停止（急停）。 */
 void Emm42Robot_Stop(Emm42RobotId_t id);
 
