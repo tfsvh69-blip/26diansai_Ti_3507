@@ -25,7 +25,7 @@
 | `module/emm42/` | 张大头 Emm42_V5.0 闭环步进驱动器：`emm42_v5.c`(UART 协议层，命令组帧+回复诊断统计，经 `bsp_uart` 的 UART1 收发) + `emm42_robot.c`(角色映射层，把协议地址包成"摆杆/左轮/右轮"，本车专用) |
 | `module/nrf24l01/` | NRF24L01+ 寄存器驱动，提供带自动重传、状态轮询和超时保护的固定载荷发送接口，以及 USB 无线串口文本发送接口 |
 | `module/diff_drive/` | 四轮差速圆弧模块：根据带符号半径计算左右 RPM，并一次映射到 M1/M2、M3/M4；标称左右轮距 201 mm |
-| `docs/` | 项目上下文、任务表、接线表、AI 维护记录 |
+| `docs/` | 项目上下文、任务表、接线表、AI 维护记录、控制算法文档 |
 | `third_party/FreeRTOS/` | FreeRTOS 内核源码 |
 | `third_party/ti_driverlib/` | TI DriverLib 文件 |
 | `third_party/st_lsm6dsv16x/` | ST LSM6DSV16X 官方寄存器驱动，供 IMU 模块封装调用 |

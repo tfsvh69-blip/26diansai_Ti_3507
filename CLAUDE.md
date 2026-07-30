@@ -218,4 +218,5 @@ A23、A21、A20、A19、A18、A11、A10、A5、A6、A4、A3、A2
 | [docs/MESSAGE_LIST.md](empty/docs/MESSAGE_LIST.md) | 跨任务消息定义（当前为空） |
 | [docs/HARDWARE_WIRING.md](empty/docs/HARDWARE_WIRING.md) | 硬件接线、引脚、电气说明、排查备注 |
 | [docs/UART_DEBUG_GUIDE.md](empty/docs/UART_DEBUG_GUIDE.md) | UART 配置原则与乱码排查流程 |
+| [docs/CONTROL_ALGORITHM.md](empty/docs/CONTROL_ALGORITHM.md) | 小球闭环控制算法文档：位置模式 PD、α-β 滤波、静摩擦补偿、Emm42 协议 |
 | [docs/AI_MEMORY.md](empty/docs/AI_MEMORY.md) | 用户固定要求、重要决策、踩坑记录 |

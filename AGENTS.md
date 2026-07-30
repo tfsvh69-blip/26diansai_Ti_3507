@@ -8,7 +8,7 @@
 
 ## 项目结构
 
-工程主体在 `empty/`：`app/` 放任务、业务流程和题目状态机，题目 N 使用 `app/tasks/taskN.c`；当前 5 道题均为硬件/函数测试（非正式赛题）：题目一 `VIDEO 5S`（通过视觉协议录制 5 秒无叠加标注的正常画面）、题目二 `LINE PID`（8 路灰度 PID 循迹）、题目三 `Task 3`（经 UART1 仅控制 Emm42 ID1，低速正反各约 500ms）、题目四 `LINE 6S`（完整复用题目二循迹参数，累计前进 6.5 秒后以速度模式 0 RPM 缓停）、题目五 `Five`（低速横向停止线后 0.5 秒循迹并线性缓停，UART1 仅控制左/右轮 ID2/ID3）、题目六 `ID1 POS`（仅对 Emm42 ID1 做位置模式 API 冒烟测试：进题目自动清零定原点，再按 `T6_RETURN_ENABLE`/`T6_ABS_TEST_ENABLE` 决定单程/往返/绝对验证，当前默认正转 10 圈后停住量丝杆导程），菜单任一按键短促嘀声（约2~3ms），题目二、五自动完成时使用同一短促提示音，M1/M2 已在 BSP 全局取反标定。题目四的缓停加速度由 `T4_STOP_EMM_ACC` 传给 `Emm42Robot_VelControl()`，该接口会保留 0 RPM 速度模式帧；K4 退出和终点保护仍急停。`algo/` 放可跨题复用的纯算法（PID 控制器、角度差值/归一化），任务层只保留可调参数宏。`bsp/` 放板级与外设驱动，手写 DriverLib 初始化位于 `bsp/board/ti_msp_dl_config.c`；`module/` 放可复用设备/协议模块；`common/` 放功能开关、FreeRTOS 配置和共享消息；`docs/` 放任务、接线、UART 和架构记录。
+工程主体在 `empty/`：`app/` 放任务、业务流程和题目状态机，题目 N 使用 `app/tasks/taskN.c`；当前 5 道题均为硬件/函数测试（非正式赛题）：题目一 `VIDEO 5S`（通过视觉协议录制 5 秒无叠加标注的正常画面）、题目二 `LINE PID`（8 路灰度 PID 循迹）、题目三 `Task 3`（经 UART1 仅控制 Emm42 ID1，低速正反各约 500ms）、题目四 `LINE 6S`（完整复用题目二循迹参数，累计前进 6.5 秒后以速度模式 0 RPM 缓停）、题目五 `Five`（低速横向停止线后 0.5 秒循迹并线性缓停，UART1 仅控制左/右轮 ID2/ID3）、题目六 `ID1 POS`（仅对 Emm42 ID1 做位置模式 API 冒烟测试：进题目自动清零定原点，再按 `T6_RETURN_ENABLE`/`T6_ABS_TEST_ENABLE` 决定单程/往返/绝对验证，当前默认正转 10 圈后停住量丝杆导程），菜单任一按键短促嘀声（约2~3ms），题目二、五自动完成时使用同一短促提示音，M1/M2 已在 BSP 全局取反标定。题目四的缓停加速度由 `T4_STOP_EMM_ACC` 传给 `Emm42Robot_VelControl()`，该接口会保留 0 RPM 速度模式帧；K4 退出和终点保护仍急停。`algo/` 放可跨题复用的纯算法（PID 控制器、角度差值/归一化），任务层只保留可调参数宏。`bsp/` 放板级与外设驱动，手写 DriverLib 初始化位于 `bsp/board/ti_msp_dl_config.c`；`module/` 放可复用设备/协议模块；`common/` 放功能开关、FreeRTOS 配置和共享消息；`docs/` 放任务、接线、UART、控制算法和架构记录。
 
 `source/ti/` 与 `empty/third_party/` 属于 SDK 或第三方代码，除非任务明确涉及 SDK 或 FreeRTOS 移植，否则不要修改。
 
