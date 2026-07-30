@@ -53,9 +53,13 @@
 #define BALL_CTRL_RESET_SETTLE_MS         (60U)
 #define BALL_CTRL_ENABLE_SETTLE_MS        (180U)
 
-/* α-β 滤波：先压制像素抖动，同时保留足够的速度响应。 */
-#define BALL_CTRL_FILTER_ALPHA            (0.70F)
-#define BALL_CTRL_FILTER_BETA             (0.08F)
+/*
+ * α-β 滤波。2026-08-01 实测视觉静止噪声仅 ±2px（≈±0.8mm），属于很干净的信号，
+ * 因此不需要重度滤波——α 压得越低相位滞后越大（α=0.2 在 50fps 下约 165ms），
+ * 而球杆系统恰恰要靠提前预判来刹车，滞后是直接的失稳来源。
+ */
+#define BALL_CTRL_FILTER_ALPHA            (0.50F)
+#define BALL_CTRL_FILTER_BETA             (0.10F)
 
 /*
  * 位置模式控制律（纯 PD，无 I 项——绝对位置命令本身就能顶住静摩擦把丝杆
@@ -72,40 +76,69 @@
  * P 项才反向修正，标准欠阻尼表现），从这个小值开始加 Kv 压振荡，观察后
  * 再翻倍或减半调整，见 docs/BALL_CONTROL.md 阶段 E。
  *
- * 2026-07-31 题目六阶梯测试实测出钢球静摩擦阈值约 3200~4000 脉冲，而
- * Kx=30 时中等误差（几十~一百多像素）算出来的脉冲量远够不到这个阈值——
- * 丝杆会抬到一个不痛不痒的高度就停住，球既不前进也不回落，卡死不动。
- * 这不是"稳态误差"该用 I 项解决的问题（I 项需要时间慢慢积分才能顶过
- * 阈值，且冲破瞬间会因为多余的积分量造成明显过冲），而是静摩擦这类
- * 阈值型非线性该用的经典处理：球基本没在动时，只要算出来的量级不到
- * 阈值，直接把幅度顶到阈值（方向不变），一步打破僵局；球已经在动、
- * 有速度时不做这个夹紧，让 Kv 正常接管减速，不然会打断已经在收敛的运动。
+ * 2026-08-01 改为【库仑摩擦前馈】，替换掉此前的"卡住检测 + 满幅夹紧"：
+ *
+ *   pd  = Kx*误差 − Kv*速度      （希望作用在钢珠上的净驱动力）
+ *   cmd = pd + B*sign(v)         （补掉反抗运动的摩擦，使净力恰好等于 pd）
+ *
+ * 为什么需要前馈：命令幅值低于脱离阈值 B 时钢珠物理上纹丝不动，所以【整个
+ * 线性 PD 区间原本都是无效的】——旧参数 Kv=4.8 在 60px/s 时只算出 288 脉冲，
+ * 远低于 B=1810，Kv 从来没产生过任何制动作用，调它等于没调。
+ *
+ * 【关键：前馈跟 sign(速度)，不能跟 sign(pd)】摩擦永远反抗【运动】，所以补偿
+ * 方向由速度决定。这样净力恰好等于 pd，而且命令只在钢珠真正掉头时才翻转
+ * ——那一刻速度接近 0，有充足时间完成摆杆行程。
+ *   ⚠️ 2026-08-01 中途一度写成 sign(pd)，实测直接发散（"越冲越大、刹不住"）：
+ *   pd 在接近目标途中会反复过零，每过零一次命令就要跳 2*B=3620 脉冲；摆杆在
+ *   POS_RPM=100 下每帧只能走 107 脉冲，这一跳要 0.68 秒，于是摆杆永远在执行
+ *   0.68 秒前该给的倾角，构成正反馈。切回 sign(v) 后命令幅值也大幅下降：
+ *   球以 +v 运动、pd=-840 时命令只是 1810-840=970，摆杆略微回一点即可，
+ *   不必满幅反倾。
+ *
+ * 球接近静止时没有"运动方向"可言，此时线性过渡到按 sign(pd) 补偿，用来打破
+ * 静摩擦（过渡带宽度 = ffVelBlendPxps）。
+ *
+ * 被替换掉的旧方案（卡住检测 + 夹紧到阈值）的根本缺陷：夹紧条件是"速度低于
+ * 门限"，球一旦动起来（下一帧，约 20ms 后）夹紧立即撤销、命令掉回无效的小值，
+ * 于是球刚脱离静摩擦就失去驱动、走几个像素又粘住，表现为"在目标附近反复挣扎
+ * 却过不去"（2026-08-01 实测：停在 300 到不了 320）。
+ *
+ * 【选增益的物理依据】把命令换算成钢珠加速度：
+ *   a[px/s²] = (5/7)*g * (脉冲/400/250) * 2.441px/mm ≈ 0.171 * 脉冲
+ * 代入 ẍ = 0.171*pd 得二阶系统 ω_n = sqrt(0.171*Kx)、ζ = 0.171*Kv/(2*ω_n)。
+ * 另有两条硬约束：
+ *   摆杆每帧行程 = POS_RPM * 3200/60 * 0.02 = POS_RPM * 1.067 脉冲；
+ *   Kv 放大速度估计噪声 ≈ Kv * 10px/s 脉冲/帧（β=0.1、位置噪声±2px 实测）。
+ * 后者必须明显小于前者，否则摆杆全部行程都用来追噪声（Kv=36 + POS_RPM=100
+ * 时噪声 360 > 能力 107，实测直接失控）。
+ */
+/*
+ * Kx=12 → ω_n = sqrt(0.171*12) = 1.43 rad/s；
+ * Kv=18 → ζ = 0.171*18/(2*1.43) = 1.08（略过阻尼），噪声占用 18*10=180 脉冲/帧，
+ * 在 POS_RPM=400 的 427 脉冲/帧能力之内。
  */
 #define BALL_CTRL_OUTPUT_SIGN             (1.0F)
-#define BALL_CTRL_KX_PULSE_PER_PX         (25.0F)
-#define BALL_CTRL_KV_PULSE_PER_PXPS       (7.5F)
-#define BALL_CTRL_LEVEL_TRIM_PULSE        (0)
+#define BALL_CTRL_KX_PULSE_PER_PX         (12.0F)
+#define BALL_CTRL_KV_PULSE_PER_PXPS       (18.0F)
+
+/* 真实水平点：2026-08-01 题目六标定斜坡实测 L = -70 脉冲（≈0.04°，机械基本是正的）。 */
+#define BALL_CTRL_LEVEL_TRIM_PULSE        (-70)
 
 /*
- * 到位保持精度与 OLED 的 HOLD 判定一致。进入该范围即回水平并禁止静摩擦夹紧，
- * 避免静摩擦补偿的较大倾角把已满足精度的钢球再次推出目标区。
+ * 到位保持区：误差进入该范围即回真实水平点、不再驱动，所以它同时就是静态
+ * 精度上限。取 4px（≈1.6mm），依据是实测视觉噪声仅 ±2px，留一倍裕度。
  */
-#define BALL_CTRL_SETTLE_DEADBAND_PX      (6.0F)
-
-/* 题目六阶梯测试实测的钢球静摩擦阈值（3200~4000 脉冲），取中间值，可调。 */
-#define BALL_CTRL_STICTION_PULSE          (3600.0F)
-
-/* 判定"球基本没在动"的速度门限，低于此值才允许静摩擦夹紧介入。 */
-#define BALL_CTRL_STUCK_VELOCITY_PXPS     (6.0F)
+#define BALL_CTRL_SETTLE_DEADBAND_PX      (4.0F)
 
 /*
- * 低速状态要持续这么久才算"真的卡住"，不是正常减速路过低速的一瞬间。
- * 没有这个时间门限时，球快到目标前的正常减速（Kv 在正常刹车）也会有
- * 瞬间低速，会被误判成"卡住"进而满幅夹紧，把已经快停稳的球重新推走，
- * 形成"以为卡住→满幅踹一脚→冲过头→减速→又被当成卡住"的持续振荡
- * （2026-07-31 实测：目标附近 50px 内来回抖动、到不了）。
+ * 摩擦前馈量 = 钢珠脱离阈值，2026-08-01 题目六标定斜坡实测 B = 1810 脉冲
+ * （4.53mm 升程 / 1.04° 倾角，换更光滑导轨后比旧值 3600~4000 低了一半多）。
+ * 换导轨、换钢珠或改摆杆几何后必须用题目六重测，不要沿用。
  */
-#define BALL_CTRL_STUCK_TIME_MS           (150U)
+#define BALL_CTRL_FRICTION_FF_PULSE       (1810.0F)
+
+/* 判定钢珠"在运动"的速度门限：15px/s ≈ 6mm/s，明显高于速度估计噪声(±10px/s 量级)。 */
+#define BALL_CTRL_FF_VEL_BLEND_PXPS       (15.0F)
 
 /*
  * 位置模式运行参数。30RPM 是题目六"转10圈慢慢量距离"标定测试用的保守值，
@@ -133,7 +166,7 @@
 #define BALL_CTRL_SAFE_X_MIN_PX           (20)
 #define BALL_CTRL_SAFE_X_MAX_PX           (620)
 
-/* 菜单 K4 闭环的默认参数；任务三通过独立 profile 覆盖这些控制量。 */
+/* 模块内置默认参数（AppBallControl_RequestTarget 用）；各题目通过独立 profile 覆盖。 */
 static const AppBallControlProfile_t s_menuProfile = {
     BALL_CTRL_FILTER_ALPHA,
     BALL_CTRL_FILTER_BETA,
@@ -142,9 +175,8 @@ static const AppBallControlProfile_t s_menuProfile = {
     BALL_CTRL_KV_PULSE_PER_PXPS,
     BALL_CTRL_LEVEL_TRIM_PULSE,
     BALL_CTRL_SETTLE_DEADBAND_PX,
-    BALL_CTRL_STICTION_PULSE,
-    BALL_CTRL_STUCK_VELOCITY_PXPS,
-    BALL_CTRL_STUCK_TIME_MS,
+    BALL_CTRL_FRICTION_FF_PULSE,
+    BALL_CTRL_FF_VEL_BLEND_PXPS,
     BALL_CTRL_POS_RPM,
     BALL_CTRL_POS_ACC,
     BALL_CTRL_HOLD_POSITION_PX,
@@ -268,7 +300,6 @@ static void AppBallControlTask_Entry(void *argument)
     TickType_t stateStart = lastWake;
     TickType_t lastValidSampleTick = 0U;
     TickType_t holdStartTick = 0U;
-    TickType_t stuckStartTick = 0U;
     uint32_t seenSampleSeq = 0U;
     uint32_t consecutiveNaCount = 0U;
     uint32_t recoveryValidCount = 0U;
@@ -291,7 +322,6 @@ static void AppBallControlTask_Entry(void *argument)
             activeProfile = command.profile;
             holding = false;
             holdStartTick = 0U;
-            stuckStartTick = 0U;
 
             if (command.enable) {
                 if (state == BALL_CTRL_INTERNAL_OFF) {
@@ -368,7 +398,6 @@ static void AppBallControlTask_Entry(void *argument)
                         recoveryValidCount = 0U;
                         holding = false;
                         holdStartTick = 0U;
-                        stuckStartTick = 0U;
                         state = BALL_CTRL_INTERNAL_LOST;
                     }
                 } else if (vision.valid) {
@@ -431,33 +460,35 @@ static void AppBallControlTask_Entry(void *argument)
 
                     rawError = (float)targetPx - filter.position;
 
-                    /* 纯 PD，无 I 项。 */
-                    pulseDelta = (activeProfile.kxPulsePerPx * rawError) -
-                                 (activeProfile.kvPulsePerPxps * filter.velocity);
-
-                    if (BallControl_Abs(rawError) <= activeProfile.settleDeadbandPx) {
-                        /* 到位保持区内不再修正，也不把静摩擦夹紧误判为卡住。 */
-                        pulseDelta = 0.0F;
-                        stuckStartTick = 0U;
-                    } else if (BallControl_Abs(filter.velocity) <=
-                               activeProfile.stuckVelocityPxps) {
+                    if ((BallControl_Abs(rawError) <= activeProfile.settleDeadbandPx) &&
+                        (BallControl_Abs(filter.velocity) <= activeProfile.ffVelBlendPxps)) {
                         /*
-                         * 只有低速状态【持续够久】才算真的卡住——球正常减速接近目标
-                         * 时也会有瞬间低速，不能一测到低速就立刻满幅夹紧，否则会把
-                         * 快停稳的球重新推走，变成持续振荡。
+                         * 到位【且】基本停住才回真实水平点保持，静态精度由死区决定。
+                         * 必须同时判速度：只看误差的话，球高速穿过目标的那一刻会被
+                         * 当成"到位"而清零输出，白白放弃这一段最该刹车的窗口。
                          */
-                        if (stuckStartTick == 0U) {
-                            stuckStartTick = now;
-                        } else if (BallControl_Elapsed(now, stuckStartTick,
-                                                       activeProfile.stuckTimeMs) &&
-                                   (BallControl_Abs(pulseDelta) < activeProfile.stictionPulse)) {
-                            /* 确认卡住：直接把幅度顶到实测阈值（保留方向）打破僵局。 */
-                            pulseDelta = (pulseDelta >= 0.0F) ? activeProfile.stictionPulse
-                                                               : -activeProfile.stictionPulse;
-                        }
+                        pulseDelta = 0.0F;
                     } else {
-                        /* 球在正常移动，没有卡住，重置计时。 */
-                        stuckStartTick = 0U;
+                        /* 纯 PD，无 I 项：这是希望作用在钢珠上的净驱动力。 */
+                        float pd = (activeProfile.kxPulsePerPx * rawError) -
+                                   (activeProfile.kvPulsePerPxps * filter.velocity);
+                        float ffDir;
+
+                        /*
+                         * 库仑摩擦前馈：摩擦永远反抗【运动】，所以补偿方向由速度定，
+                         * 补上之后净驱动力恰好等于 pd。球接近静止（|v| 低于过渡带）
+                         * 时没有运动方向可言，按比例过渡到沿 pd 方向补，用于打破静
+                         * 摩擦。绝不能整体改用 sign(pd)——pd 在接近途中反复过零，会
+                         * 让命令每次都跳 2*B，超出摆杆行程能力而发散（见文件头）。
+                         */
+                        ffDir = BallControl_Clamp(filter.velocity / activeProfile.ffVelBlendPxps,
+                                                  -1.0F, 1.0F);
+                        if (BallControl_Abs(ffDir) < 1.0F) {
+                            ffDir += (1.0F - BallControl_Abs(ffDir)) *
+                                     ((pd >= 0.0F) ? 1.0F : -1.0F);
+                            ffDir = BallControl_Clamp(ffDir, -1.0F, 1.0F);
+                        }
+                        pulseDelta = (ffDir * activeProfile.frictionFfPulse) + pd;
                     }
 
                     output = (float)activeProfile.levelTrimPulse +
@@ -495,7 +526,6 @@ static void AppBallControlTask_Entry(void *argument)
                 recoveryValidCount = 0U;
                 holding = false;
                 holdStartTick = 0U;
-                stuckStartTick = 0U;
             }
             break;
 

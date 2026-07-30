@@ -77,31 +77,63 @@
  * 不会影响菜单 K4 或任务三。车辆必须等后台闭环已经按此 profile 进入实际控制后才起步。
  */
 #define T4_BALL_TARGET_X_PX                 (320)
-#define T4_BALL_FILTER_ALPHA                (0.20F)   /* 关键：降低以抗噪声，防误判到位 */
-#define T4_BALL_FILTER_BETA                 (0.05F)   /* 配合低 α，速度估计也放缓 */
-#define T4_BALL_OUTPUT_SIGN                 (1.0F)
-/* ---- 第一步：纯 P，Kv=0，只验证方向+静摩擦 ---- */
-#define T4_BALL_KX_PULSE_PER_PX             (20.0F)
-#define T4_BALL_KV_PULSE_PER_PXPS           (4.8F)    /* 先关掉速度阻尼 */
-#define T4_BALL_LEVEL_TRIM_PULSE            (30)
-#define T4_BALL_SETTLE_DEADBAND_PX          (12.0F)   /* 放宽：配合低 α 确保不误判 */
+
+/* ---- A. 机械/视觉实测常量：由标定得出，不是调参旋钮，换硬件才重测 ---- */
 /*
- * 以下三个夹紧参数原为 5000/12/80，比菜单档 s_menuProfile（app_ball_control_task.c，
- * 已实测调好）更激进：STUCK_TIME 太短、STUCK_VELOCITY 太高会把球正常减速路过的
- * 低速瞬间误判成"卡住"，进而满幅夹紧把球推走；STICTION_PULSE 超出题六阶梯测试
- * 实测的静摩擦阈值(3200~4000)上限，夹紧命令本身就是过量的猛踹。三者叠加会让
- * 摆杆在"踹一下→球刚动就被判定不卡→命令掉回小P值→球停→再判卡住"之间持续摆动，
- * 出不了原位置；过量的踹也可能把球推过安全边界触发 FAULT_EDGE 死锁。现改回菜单档
- * 已验证的数值，详见 docs/CONTROL_ALGORITHM.md §5.3/§9.2。
+ * 2026-08-01 现场标定结果（视觉：菜单页读 X；机械：题目六 T6_RAMP_TEST 斜坡）：
+ *   视觉比例  520px / 213mm = 2.441 px/mm（球心可达范围 X∈[66, 586]）
+ *   静止噪声  ±2px（±0.8mm）→ 决定死区下限，也说明不需要重滤波
+ *   脱离阈值  B = 1810 脉冲（4.53mm 升程 / 1.04° 倾角）
+ *   真实水平  L = -70 脉冲（≈0.04°，机械基本是正的）
+ * 换导轨/钢珠/摆杆几何后这四个数全部作废，必须重测，不要沿用。
  */
-#define T4_BALL_STICTION_PULSE              (4000.0F)
-#define T4_BALL_STUCK_VELOCITY_PXPS         (6.0F)
-#define T4_BALL_STUCK_TIME_MS               (150U)
-#define T4_BALL_POS_RPM                     (100U)
-#define T4_BALL_POS_ACC                     (0U)
-#define T4_BALL_HOLD_POSITION_PX            (6.0F)  /* 与死区一致 */
+#define T4_BALL_FRICTION_FF_PULSE           (1810.0F)  /* = B */
+#define T4_BALL_LEVEL_TRIM_PULSE            (-70)      /* = L */
+#define T4_BALL_FILTER_ALPHA                (0.50F)    /* 噪声仅 ±2px，无需压到 0.2 换来 165ms 滞后 */
+#define T4_BALL_FILTER_BETA                 (0.10F)
+#define T4_BALL_OUTPUT_SIGN                 (1.0F)     /* 方向已验证；越控越远才改 -1 */
+
+/* ---- B. 真正的调参旋钮 ---- */
+/*
+ * 增益有物理依据，不用瞎试。命令换算成钢珠加速度：a[px/s²] ≈ 0.171 * 脉冲
+ * （= (5/7)g / 400脉冲每mm / 250mm摆杆 * 2.441px每mm），代入得二阶系统：
+ *   ω_n = sqrt(0.171*Kx)          自然频率，决定快慢
+ *   ζ   = 0.171*Kv / (2*ω_n)      阻尼比，1.0 附近最好，<0.7 会明显过冲
+ * 当前 Kx=12 → ω_n=1.43rad/s（约 2.6s 稳定）；Kv=18 → ζ=1.08。
+ * 想更快：加大 Kx，然后按 Kv = 2*ζ*sqrt(Kx/0.171) 同步把 Kv 提上去。
+ *
+ * ⚠️ Kv 有硬上限，不能一味加大来"压振荡"：Kv 会放大速度估计噪声，产生约
+ *    Kv * 10px/s 脉冲/帧 的命令抖动（10px/s 是 β=0.1、位置噪声±2px 的实测量级），
+ *    这个值必须明显小于下面 POS_RPM 决定的摆杆每帧行程能力。
+ *    2026-08-01 实测反例：Kv=36 + POS_RPM=100 → 噪声 360 脉冲/帧 远超能力
+ *    107 脉冲/帧，摆杆全部行程都在追噪声，直接发散。
+ */
+#define T4_BALL_KX_PULSE_PER_PX             (12.0F)
+#define T4_BALL_KV_PULSE_PER_PXPS           (18.0F)
+/*
+ * 到位死区，同时就是静态精度上限：4px ≈ 1.6mm，取实测噪声 ±2px 的两倍裕度。
+ * 误差进此范围【且球基本停住】才回真实水平点、停止驱动。
+ */
+#define T4_BALL_SETTLE_DEADBAND_PX          (4.0F)
+/*
+ * 判定钢珠"在运动"的速度门限：高于它按 sign(v) 补动摩擦，低于它过渡到按
+ * sign(pd) 补静摩擦；同时是上面"到位保持"的速度条件。
+ * 15px/s ≈ 6mm/s，明显高于速度估计噪声量级(±10px/s 的一半)。
+ */
+#define T4_BALL_FF_VEL_BLEND_PXPS           (15.0F)
+
+/* ---- C. 执行器与显示 ---- */
+/*
+ * 摆杆每帧（20ms）行程能力 = POS_RPM * 3200/60 * 0.02 = POS_RPM * 1.067 脉冲。
+ * 400RPM → 427 脉冲/帧，能容纳 Kv=18 带来的 180 脉冲/帧噪声并留出控制余量。
+ * 这是上面 Kv 上限的来源，两者必须一起看。
+ * ⚠️ 本机构尚未实测过 400RPM 的上限，上车先听有无异响/失步。
+ */
+#define T4_BALL_POS_RPM                     (400U)
+#define T4_BALL_POS_ACC                     (0U)     /* 必须 0，见 app_ball_control_task.c 说明 */
+#define T4_BALL_HOLD_POSITION_PX            (6.0F)   /* 以下三项仅影响 OLED 的 B:HOLD 显示 */
 #define T4_BALL_HOLD_VELOCITY_PXPS          (10.0F)
-#define T4_BALL_HOLD_TIME_MS                (500U)   /* 延长判定，确认真正稳定 */
+#define T4_BALL_HOLD_TIME_MS                (500U)
 
 /*
  * 手动调参开关：置 1 时电机不启动，仅 BALLCTRL 保持钢球平衡；
@@ -135,9 +167,8 @@ static const AppBallControlProfile_t s_task4BallProfile = {
     T4_BALL_KV_PULSE_PER_PXPS,
     T4_BALL_LEVEL_TRIM_PULSE,
     T4_BALL_SETTLE_DEADBAND_PX,
-    T4_BALL_STICTION_PULSE,
-    T4_BALL_STUCK_VELOCITY_PXPS,
-    T4_BALL_STUCK_TIME_MS,
+    T4_BALL_FRICTION_FF_PULSE,
+    T4_BALL_FF_VEL_BLEND_PXPS,
     T4_BALL_POS_RPM,
     T4_BALL_POS_ACC,
     T4_BALL_HOLD_POSITION_PX,

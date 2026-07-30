@@ -34,11 +34,11 @@
 #define T3_STAGE1_OUTPUT_SIGN             (1.0F)
 #define T3_STAGE1_KX_PULSE_PER_PX         (27.0F)
 #define T3_STAGE1_KV_PULSE_PER_PXPS       (8.3F)
-#define T3_STAGE1_LEVEL_TRIM_PULSE        (0)
+/* 机械实测常量（2026-08-01 题目六标定斜坡），全机唯一，各题目取值应一致。 */
+#define T3_STAGE1_LEVEL_TRIM_PULSE        (-70)
 #define T3_STAGE1_SETTLE_DEADBAND_PX      (12.0F)
-#define T3_STAGE1_STICTION_PULSE          (3600.0F)
-#define T3_STAGE1_STUCK_VELOCITY_PXPS     (6.0F)
-#define T3_STAGE1_STUCK_TIME_MS           (150U)
+#define T3_STAGE1_FRICTION_FF_PULSE       (1810.0F)
+#define T3_STAGE1_FF_VEL_BLEND_PXPS       (15.0F)
 #define T3_STAGE1_POS_RPM                 (185U)
 #define T3_STAGE1_POS_ACC                 (0U)
 #define T3_STAGE1_HOLD_POSITION_PX        (10.0F)
@@ -64,9 +64,8 @@ static const AppBallControlProfile_t s_task3ForwardProfile = {
     T3_STAGE1_KV_PULSE_PER_PXPS,
     T3_STAGE1_LEVEL_TRIM_PULSE,
     T3_STAGE1_SETTLE_DEADBAND_PX,
-    T3_STAGE1_STICTION_PULSE,
-    T3_STAGE1_STUCK_VELOCITY_PXPS,
-    T3_STAGE1_STUCK_TIME_MS,
+    T3_STAGE1_FRICTION_FF_PULSE,
+    T3_STAGE1_FF_VEL_BLEND_PXPS,
     T3_STAGE1_POS_RPM,
     T3_STAGE1_POS_ACC,
     T3_STAGE1_HOLD_POSITION_PX,

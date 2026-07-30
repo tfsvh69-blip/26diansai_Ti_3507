@@ -44,7 +44,7 @@
  * 当前占位为 0（即归零后停在开关释放点，不再继续移动）。
  * 脉冲单位随驱动器细分，出厂 16 细分 = 3200 脉冲/圈。
  */
-#define LIFT_HOMING_TARGET_OFFSET_PULSES (17200)
+#define LIFT_HOMING_TARGET_OFFSET_PULSES (18400)
 
 /* ---- 机械/协议换算（与 task6 各自独立维护同一常量，不共享） ---- */
 #define LIFT_HOMING_PULSES_PER_REV      (3200U)  /* 16 细分 = 3200 脉冲/圈，须与驱动器 MStep 一致 */
