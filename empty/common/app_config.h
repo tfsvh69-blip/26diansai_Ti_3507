@@ -23,11 +23,10 @@
 #define APP_FEATURE_LASER           (0U)  /* UART2 激光测距1（RX 中断接收，供 OLED 状态栏显示，不依赖串口）【2026-07-29 临时关闭，减CPU占用，需要时改回 1】 */
 #define APP_FEATURE_VISION_LINK     (1U)  /* UART0 视觉通信：PING/PONG 在线检测、TASK/ACK 录像控制、X 位置反馈与 OLED 显示 */
 #define APP_FEATURE_LINE_TRACK      (1U)  /* 8 路灰度循迹 PB17~PB24（直接读高低电平，OLED 菜单右半第6/7行显示状态） */
-#define APP_FEATURE_RELAY           (1U)  /* 继电器 PA24 功能：板级初始化 + OLED 状态栏 R:ON/OFF 显示 + 对外接口 BspRelay_*(On/Off/Set/Toggle/IsOn) 可直接调用；不含自动切换 */
-#define APP_FEATURE_RELAY_SELFTEST  (0U)  /* 继电器自检任务(RELAYTEST)：每 2 秒自动切换吸合/断开，仅上电验证用；默认关，置 1 恢复自检 */
 #define APP_FEATURE_NRF24_TX_TEST   (0U)  /* NRF24L01+ 发射测试：每 500ms 向 USB 无线串口发送递增文本【2026-07-29 临时关闭，减CPU占用，需要时改回 1】 */
 #define APP_FEATURE_EMM42           (1U)  /* 张大头 Emm42_V5.0 闭环步进（UART1/PA17/PB5，115200）：注册回复接收中断，命令由第 5 题下发 */
-#define APP_FEATURE_BALL_CONTROL    (1U)  /* 钢球 X 位置后台闭环：K4 菜单态启停，视觉反馈驱动 ID1 */
+#define APP_FEATURE_BALL_CONTROL    (1U)  /* 钢球 X 位置后台闭环：视觉反馈驱动 ID1，由题目三/四经 profile 调用 */
+#define APP_FEATURE_LIFT_HOMING     (1U)  /* 开机 ID1 自动归零：正方向找 PA24 限位开关+回退+移动到指定相对位置，见 app/app_lift_homing.c */
 
 /*
  * Emm42 上电安全失能：复位后对 ID1/ID2/ID3 各重复发送失能帧，帧间使用约 10ms
@@ -58,6 +57,9 @@
 #if (APP_FEATURE_BALL_CONTROL != 0U) && \
     ((APP_FEATURE_VISION_LINK == 0U) || (APP_FEATURE_EMM42 == 0U))
 #error "APP_FEATURE_BALL_CONTROL 依赖 APP_FEATURE_VISION_LINK 和 APP_FEATURE_EMM42"
+#endif
+#if (APP_FEATURE_LIFT_HOMING != 0U) && (APP_FEATURE_EMM42 == 0U)
+#error "APP_FEATURE_LIFT_HOMING 依赖 APP_FEATURE_EMM42"
 #endif
 /* =================================================== */
 
@@ -118,11 +120,6 @@
 #define APP_SERVO_TEST_TASK_STACK_WORDS (configMINIMAL_STACK_SIZE * 2U)
 #define APP_SERVO_TEST_TASK_PRIORITY    (1U)
 #define APP_SERVO_TEST_PERIOD_TICKS     pdMS_TO_TICKS(20U)
-
-/* 继电器通断测试任务：只翻转一个 GPIO，栈保持最小配置；每 2 秒切换一次状态。 */
-#define APP_RELAY_TEST_TASK_STACK_WORDS (configMINIMAL_STACK_SIZE)
-#define APP_RELAY_TEST_TASK_PRIORITY    (1U)
-#define APP_RELAY_TEST_PERIOD_TICKS     pdMS_TO_TICKS(2000U)
 
 /*
  * NRF24L01+ 发射测试：上电等待模块完成复位后，每 500ms 发送一包。

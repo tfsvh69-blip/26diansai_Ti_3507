@@ -377,14 +377,14 @@ extern volatile bool g_sysClockUsingHFXT;
 #define LINE8_IOMUX                                              (IOMUX_PINCM52)
 
 /*
- * 继电器 RELAY（v1.1，接口 P1-3）：PA24，普通 GPIO 推挽输出。
- * 驱动大电流电磁铁负载；默认约定高电平=吸合(通)、低电平=断开(停)，上电默认断开。
- * ⚠️ 接线文档风险 R7：上电前高阻可能误吸合，硬件已建议加 10kΩ 下拉 + 100Ω 串联限流；
- * 代码侧亦用内部下拉 + 上电清零，把误吸合概率再压一层。PA24 不在核心板慎用引脚列表内。
+ * 归零限位开关 HOME_SWITCH（v1.2，接口 P1-3，原继电器接口已改接轻触开关）：
+ * PA24，普通 GPIO 数字输入 + 内部上拉。开关一端接 GND，按下时该引脚被拉低；
+ * 未按下时靠内部上拉读到高电平。用于 ID1（摆杆升降丝杆）开机自动归零，
+ * 见 app/app_lift_homing.c。PA24 不在核心板慎用引脚列表内。
  */
-#define RELAY_PORT                                                       (GPIOA)
-#define RELAY_PIN                                               (DL_GPIO_PIN_24)
-#define RELAY_IOMUX                                              (IOMUX_PINCM54)
+#define HOME_SWITCH_PORT                                                 (GPIOA)
+#define HOME_SWITCH_PIN                                         (DL_GPIO_PIN_24)
+#define HOME_SWITCH_IOMUX                                        (IOMUX_PINCM54)
 
 /* clang-format on */
 

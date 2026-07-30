@@ -56,8 +56,8 @@
 |---|---|---|---|
 | `LED1` | `app/app_led_task.c` | 300 ms | LED1(PB25) 心跳灯，用于判断 FreeRTOS 是否正常调度 |
 | `UART0TX` | `app/app_uart_test_task.c` | 10 ms 轮询 | UART0 接收回显，收到非换行字符返回 `UART RX OK` |
-| `UIMENU` | `app/app_ui_task.c` | 30 ms 轮询 | **OLED 题目菜单 UI**：4 键(K1上/K2下/K3确认/K4返回)选题并进入运行界面，任一按键均短促嘀声（约2~3ms），**独占 OLED 与 KEY1~4**；题目业务委托 `app_robot_core` → `app/tasks/taskN.c` 的 `OnEnter/OnLoop/OnExit`。当前 5 道题均为硬件/函数测试（非正式赛题）：task1 `VIDEO 5S` 通过视觉协议录制 5 秒无叠加标注的正常画面、task2 `LINE PID` 8 路灰度 PID 循迹、task3 `Task 3` 经 UART1 仅控制 Emm42 ID1 正反低速各约 500ms、task4 `LINE 6S` 完整复用题目二循迹并在累计前进 6.5 秒后以速度模式 0 RPM 缓停、task5 `Five` 低速横向停止线后 0.5 秒循迹并线性缓停（UART1 仅控制 ID2 左轮与 ID3 右轮）、task6 `ID1 POS` 仅对 Emm42 ID1 做**位置模式 API 冒烟测试**（进题目自动位置清零定原点 → 按 `T6_RETURN_ENABLE`/`T6_ABS_TEST_ENABLE` 决定单程/往返/绝对验证，当前默认正转 10 圈后停住量丝杆导程，OLED 题名行显示阶段与目标脉冲）。任务二、五自动完成时使用与按键完全相同的短促提示音。M1/M2 已全局取反标定 |
-| `BALLCTRL` | `app/app_ball_control_task.c` | 10 ms 轮询 | **上电默认 OFF**；菜单态 K4 启停目标 `X=320` 的钢球后台闭环，α-β 估计位置/速度后以局部 PID 控制 Emm42 ID1。I 只在新有效帧、原始误差 1~12px 且低速时按真实帧间隔累积，I 输出单独限制为 ±2RPM；目标改变、K4、DEG/LOST、跨目标、低误差、高速度、方向或边缘故障会清零 I。正常 RUN 状态不做总 RPM、软件斜率或驱动器加速度曲线限制。单次 `X,NA` 或 130ms 无有效 X 进入 `B:DEG` 并每 20ms 把命令向 0 RPM 回退 2 RPM；连续两帧 NA 或 220ms 无有效 X 才进入 `B:LOST` 急停，恢复需连续两帧有效 X。方向发散或画面边缘仍立即保护停车；不再使用软件估算行程限幅。后续题目通过 `AppBallControl_RequestTarget()` 传目标 |
+| `UIMENU` | `app/app_ui_task.c` | 30 ms 轮询 | **OLED 题目菜单 UI**：4 键(K1上/K2下/K3确认/K4返回)选题并进入运行界面，任一按键均短促嘀声（约2~3ms），**独占 OLED 与 KEY1~4**；题目业务委托 `app_robot_core` → `app/tasks/taskN.c` 的 `OnEnter/OnLoop/OnExit`。当前 5 道题均为硬件/函数测试（非正式赛题）：task1 `VIDEO 5S` 通过视觉协议录制 5 秒无叠加标注的正常画面、task2 `LINE PID` 8 路灰度 PID 循迹、task3 `Task 3` 当前进行独立第一阶段 `X=325→415±10px` 定位并低速稳定 200ms、task4 `LINE 6S` 在循迹行驶期间同步平衡钢珠至 `X=320`，并在累计前进 6.5 秒后以速度模式 0 RPM 缓停、task5 `Five` 低速横向停止线后 0.5 秒循迹并线性缓停（UART1 仅控制 ID2 左轮与 ID3 右轮）、task6 `ID1 POS` 仅对 Emm42 ID1 做**位置模式 API 冒烟测试**（进题目自动位置清零定原点 → 按 `T6_RETURN_ENABLE`/`T6_ABS_TEST_ENABLE` 决定单程/往返/绝对验证，当前默认正转 10 圈后停住量丝杆导程，OLED 题名行显示阶段与目标脉冲）。任务二、五自动完成时使用与按键完全相同的短促提示音。M1/M2 已全局取反标定 |
+| `BALLCTRL` | `app/app_ball_control_task.c` | 10 ms 轮询 | **上电默认 OFF**；题目三/四经 profile 接口启停目标 `X` 的钢球后台闭环（菜单不再提供 K4 启停入口，见下方 UI 变更说明），α-β 估计位置/速度后以局部 PID 控制 Emm42 ID1。I 只在新有效帧、原始误差 1~12px 且低速时按真实帧间隔累积，I 输出单独限制为 ±2RPM；目标改变、DEG/LOST、跨目标、低误差、高速度、方向或边缘故障会清零 I。正常 RUN 状态不做总 RPM、软件斜率或驱动器加速度曲线限制。单次 `X,NA` 或 130ms 无有效 X 进入 `B:DEG` 并每 20ms 把命令向 0 RPM 回退 2 RPM；连续两帧 NA 或 220ms 无有效 X 才进入 `B:LOST` 急停，恢复需连续两帧有效 X。方向发散或画面边缘仍立即保护停车；不再使用软件估算行程限幅。后续题目通过 `AppBallControl_RequestTargetWithProfile()` 传目标 |
 | `IMU100Hz` | `app/app_imu_uart_task.c` | 10 ms | 读取 ATK-MS6DSV 姿态 + 追加激光测距1(D1)，按 5Hz 整行输出 Roll/Pitch/Yaw/加减速度/D1 |
 | `MOTORTEST` | `app/app_motor_test_task.c` | 20 ms 轮询 | **【默认禁用】** KEY1/KEY2 让 4 个电机（各自独立接口同时下发）正/反转 2 圈测试（按键已让给 UIMENU） |
 | `SERVOSWEEP` | `app/app_servo_test_task.c` | 20 ms | **【默认禁用】4 个舵机各自独立错相摆动**（800~2200us，无按键）；单控用 `BspServo_SetPulseUs(id,us)` |
@@ -66,11 +66,17 @@
 > 激光测距1（UART2）不是任务，而是 **UART2 RX 中断**逐字节喂 `module/laser` 的 LD14 解析器；距离由 `IMU100Hz` 任务读取并随整行输出。
 > 小球检测（UART0）同样不是任务，而是 **UART0 RX 中断**逐字节喂 `module/vision` 的 `$BALL` 解析器（上位机→下位机，NMEA+XOR）；结果由 `UIMENU` 读取显示在 OLED 右侧文字面板。见 [empty/docs/MESSAGE_LIST.md](empty/docs/MESSAGE_LIST.md) 的 `$BALL` 报文小节。
 > 题目菜单 UI 见 [empty/docs/FREERTOS_TASKS.md](empty/docs/FREERTOS_TASKS.md) 的「OLED 题目菜单 UI」小节；**题目业务逻辑逐题填 [empty/app/tasks/](empty/app/tasks/) 的 `taskN.c`**（第 N 题 = `taskN.c`），题名/题数登记在 `app_robot_core.c` 的 `s_robotTasks[]`。四路步进电机为**各自独立**驱动（`bsp_motor.h`，RPM 单位、带符号定方向）。OLED 当前只能显示 ASCII（无中文字库）。
-> K4 在运行态仍表示退出当前题目；仅在菜单态切换 `BALLCTRL` 启停。题目三与后台闭环都使用 ID1，进入题目三前会先等待闭环释放 ID1。
+> K4 在运行态表示退出当前题目；菜单态不再有 K4 功能（原"启停钢球居中到 `X=320`"的调试入口已于 2026-08-01 移除，PA24 引脚已改接归零限位开关，见下方「ID1 开机自动归零」小节）。题目三与后台闭环都使用 ID1，进入题目三前会先等待闭环释放 ID1。
+
+> **题目三当前行为以此为准**：当前只进行第一阶段调参。ID1 的位置零点由开机自动归零流程建立（不再需要人工在菜单页按 K4）；题目三不清零，复用同一位置模式执行器，仅从 `X=325` 运行至 `X=415±10px` 并低速稳定 200ms，首条实际控制帧起不超过 5 秒，完成后保持 `X=415`。本阶段只调整 `task3.c` 的 `T3_STAGE1_*` 参数；后续 `415→另一目标点` 将另建 `T3_STAGE2_*` 参数组，三者互不影响。
+
+> **题目四钢珠平衡**：ID1 的位置零点同样由开机自动归零流程建立，不再需要人工在菜单页按 K4。`Task4_OnEnter()` 向 `BALLCTRL` 投递任务四独立 `T4_BALL_*` profile，目标为 `X=320`；后台确认已进入实际闭环后才允许 ID2/ID3 起步。行驶和缓停期间 ID1 均保持闭环，K4 退出时才请求停止 ID1。`T4_BALL_*` 与任务三参数互不影响。**2026-08-01 新增故障自动恢复**：`BALLCTRL` 的 `FAULT_EDGE`（球触边回水平并锁定）不会自行恢复，任务四每拍检测该状态，一旦出现就自动走一遍"停止→等 `BALLCTRL` 回到 `OFF`→重新请求"的握手（`T4_STATE_BALL_RECOVER_WAIT`），不需要用户手动退出重进；若轮子已经在跑（`s_wheelsStarted`），恢复后直接回到循迹而不重新走一遍轮子使能时序。只要仍在题目四内，就持续保证钢珠被伺服到 `X=320`，直至 K4 退出。当前 `T4_MOTORS_DISABLED_MANUAL_TEST=1`（`task4.c` 顶部开关），轮子不使能，供用手推小车模拟前进、专门调参 `T4_BALL_*`；调参完成后改回 `0` 恢复整题。
+
+> **控制参数隔离规则**：可以跨任务复用算法实现、执行器和通信接口，但**禁止共享可调控制参数**。每个任务必须在自己的 `taskN.c` 顶部定义私有参数组和 profile；即使初值参考其他任务，也必须按值复制为新参数。调整一个任务的增益、死区、滤波、静摩擦、速度或保持条件，不得改变菜单或任何其他任务的行为。新增任务时同步在 `CLAUDE.md`、`AGENTS.md` 与 `docs/` 声明其独立参数组。
 
 ### 功能总开关（按需启用外设）
 
-[empty/common/app_config.h](empty/common/app_config.h) 顶部有一组 `APP_FEATURE_*`（1=启用/0=禁用），`App_Init` 用它门控各任务创建。用开发板时把不需要的外设置 0 即可（不创建任务、不占 CPU、不刷串口；板级硬件初始化仍保留）：`APP_FEATURE_LED_HEARTBEAT / UART_ECHO / UI_MENU / PERIPH_OLED / SERVO / MOTOR / IMU / IMU_UART_LOG / LASER / BALL_VISION / LINE_TRACK / RELAY / RELAY_SELFTEST / EMM42`。**当前默认**：`UI_MENU=1`（题目菜单）；因 UI 独占 OLED 与按键，`PERIPH_OLED / SERVO / MOTOR` 默认置 0。`UART_ECHO=0`（关接收自检）、`IMU_UART_LOG=0`（IMU 不打印串口遥测——串口彻底静默；但 IMU 读取 + Yaw 快照照常运行供 OLED 状态栏）。调试时把这两个改回 1 即可恢复串口输出。`BALL_VISION=1`（UART0 RX 中断解析上位机 `$BALL` 报文，OLED 右侧文字面板显示）——它与 `UART_ECHO` 争用 UART0 RX，二者互斥（同时置 1 编译期 `#error` 拦截）。`LINE_TRACK=1`（7 路灰度循迹 PB17~PB23，OLED 菜单右半显示状态）。`EMM42=1`（张大头 Emm42_V5.0 闭环步进：UART1 板级初始化 + 注册回复接收中断，当前总线上 3 台设备（地址 1/2/3 = 摆杆高低调节/左轮/右轮），命令由题目二、题目四和题目五经 `module/emm42/emm42_robot.h` 的角色化接口 `Emm42Robot_*` 下发（内部再转发到 `emm42_v5.h` 的按地址协议接口）；它不创建任务，仅注册中断。方向/差速运动学尚未标定，见 `emm42_robot.h` 文件头说明）。继电器开关**已解耦**：`RELAY=1`（继电器 PA24 功能——板级初始化 + OLED 状态栏 `R:ON/OFF` 显示 + 对外接口 `BspRelay_*` 可直接调用），`RELAY_SELFTEST=0`（每 2s 自动切换的 `RELAYTEST` 自检任务默认关；正常运行继电器由业务代码经 `bsp_relay` 接口按需控制、不自动切换，上电自检时才置 1）。**`IMU=0`、`LASER=0`、`NRF24_TX_TEST=0`（2026-07-29 临时关闭，减少 CPU/中断占用，需要时改回 1 即可，代码逻辑未删改）**：关闭后 `IMU100Hz`/`NRF24TX` 任务不创建、UART2 激光 RX 中断不使能，OLED 状态栏 Yaw/距离显示 `---`；题目四 `LINE 6S` 不依赖 IMU，可照常测试。
+[empty/common/app_config.h](empty/common/app_config.h) 顶部有一组 `APP_FEATURE_*`（1=启用/0=禁用），`App_Init` 用它门控各任务创建。用开发板时把不需要的外设置 0 即可（不创建任务、不占 CPU、不刷串口；板级硬件初始化仍保留）：`APP_FEATURE_LED_HEARTBEAT / UART_ECHO / UI_MENU / PERIPH_OLED / SERVO / MOTOR / IMU / IMU_UART_LOG / LASER / BALL_VISION / LINE_TRACK / EMM42 / BALL_CONTROL / LIFT_HOMING`。**当前默认**：`UI_MENU=1`（题目菜单）；因 UI 独占 OLED 与按键，`PERIPH_OLED / SERVO / MOTOR` 默认置 0。`UART_ECHO=0`（关接收自检）、`IMU_UART_LOG=0`（IMU 不打印串口遥测——串口彻底静默；但 IMU 读取 + Yaw 快照照常运行供 OLED 状态栏）。调试时把这两个改回 1 即可恢复串口输出。`BALL_VISION=1`（UART0 RX 中断解析上位机 `$BALL` 报文，OLED 右侧文字面板显示）——它与 `UART_ECHO` 争用 UART0 RX，二者互斥（同时置 1 编译期 `#error` 拦截）。`LINE_TRACK=1`（7 路灰度循迹 PB17~PB23，OLED 菜单右半显示状态）。`EMM42=1`（张大头 Emm42_V5.0 闭环步进：UART1 板级初始化 + 注册回复接收中断，当前总线上 3 台设备（地址 1/2/3 = 摆杆高低调节/左轮/右轮），命令由题目二、题目四和题目五经 `module/emm42/emm42_robot.h` 的角色化接口 `Emm42Robot_*` 下发（内部再转发到 `emm42_v5.h` 的按地址协议接口）；它不创建任务，仅注册中断。方向/差速运动学尚未标定，见 `emm42_robot.h` 文件头说明）。`LIFT_HOMING=1`（2026-08-01 新增：开机 ID1 自动归零，依赖 `EMM42`，见下方「ID1 开机自动归零」小节；PA24 原继电器接口已改接归零限位开关，继电器功能与相关代码已整体移除）。**`IMU=0`、`LASER=0`、`NRF24_TX_TEST=0`（2026-07-29 临时关闭，减少 CPU/中断占用，需要时改回 1 即可，代码逻辑未删改）**：关闭后 `IMU100Hz`/`NRF24TX` 任务不创建、UART2 激光 RX 中断不使能，OLED 状态栏 Yaw/距离显示 `---`；题目四 `LINE 6S` 不依赖 IMU，可照常测试。
 
 修改或新增任务后必须同步更新 [empty/docs/FREERTOS_TASKS.md](empty/docs/FREERTOS_TASKS.md)。
 
@@ -81,18 +87,45 @@
 
 - 角色层 `module/emm42/emm42_robot.c` 统一处理 Emm42 正方向：ID1（摆杆）正方向为连杆向下，ID2（左轮）直通，ID3（右轮）取反。
 - 题目五 `Five` 仅使能并控制 ID2 左轮、ID3 右轮；沿用题目二的节拍化使能时序，两轮各等待约 180ms 后进入交替速度控制。机械安装变化时，只修改 ID1 的角色层标定表。
-- `BALLCTRL` 独立线程只控制 ID1；Emm42 协议出口用互斥量保证它与 ID2/ID3 题目线程的 UART1 整帧不交叉，并统一保留 5ms 帧间隔。ID1 正 RPM 只标定到“连杆向下”，钢球 X 的最终控制极性仍须按 `docs/BALL_CONTROL.md` 低速实机确认。
+- `BALLCTRL` 独立线程只控制 ID1；Emm42 协议出口用互斥量保证它与 ID2/ID3 题目线程的 UART1 整帧不交叉，并统一保留至少 6ms 帧间隔。ID1 正 RPM 只标定到“连杆向下”，钢球 X 的最终控制极性仍须按 `docs/BALL_CONTROL.md` 低速实机确认。
 - 左右轮差速运动学尚未实现。
+
+### ID1 开机自动归零（2026-08-01 新增）
+
+P1 接口（原继电器接口，v1.1 接线文档标注 `RELAY ← PA24`）已改接一颗轻触开关，
+一端接地，充当 ID1（摆杆升降丝杆）的归零限位开关；**继电器功能与 `bsp_relay.c/h`、
+`app_relay_test_task.c/h`、`APP_FEATURE_RELAY`/`APP_FEATURE_RELAY_SELFTEST` 已整体
+删除**，PA24 现为数字输入 + 内部上拉（`bsp/bsp_home_switch.h` 的 `BspHomeSwitch_IsPressed()`）。
+
+`App_Init()` 在 `Emm42Robot_Init()` 之后、任何任务创建之前调用
+`AppLiftHoming_RunAtBoot()`（[empty/app/app_lift_homing.c](empty/app/app_lift_homing.c)，
+由 `APP_FEATURE_LIFT_HOMING` 门控），全程用 `Delay_ms` 忙等轮询开关（调度器尚未启动，
+不会与任何任务竞争 ID1）：
+
+1. 正方向移动，直到压下限位开关；
+2. 压下的瞬间反向（负方向）退让，直到开关释放——释放点即物理归零参考点；
+3. 继续往负方向移动 `LIFT_HOMING_TARGET_OFFSET_PULSES`（当前占位为 `0`，**待实测后填入**）
+   个脉冲，到达指定的相对工作位置。
+4. **极端情况**：若开机时开关已经被压住，跳过第 1 步（不再继续往正方向顶死），
+   直接进入第 2 步的退让。
+
+归零流程只移动 ID1、不清零位置（不调用 `Emm42Robot_ResetPosToZero()`）；`BALLCTRL`
+（`hasZeroedSinceBoot`，见下节）和 `task6`（`T6_ZERO_ON_ENTER`）各自的清零逻辑不变，
+只要 ID1 在开机归零结束到它们首次清零之间没有被移动过，清零点就等于归零终点——
+这就**取代了此前"每次上电先人工把杆摆到目视水平"的步骤**，题目三/四、`task6` 文档
+中"人工置零"的描述已同步更新为"开机自动归零"。
+⚠️ 归零流程故意不加超时保护：若限位开关故障导致第 1 步永远读不到触发，调度器不会
+启动（LED1 不闪）；这是找不到物理参考点就不能继续的题中之义，不要为此加时间兜底。
 
 ### EMM42 位置模式（摆杆控制的目标形态）
 
 摆杆的正确控制量是**角度**而不是角速度：速度命令对摆杆角度是一次积分、球位置对摆杆角度又是二次积分，速度模式下整链三阶、纯 PID 极难镇定（`v2.2` 实测现象）。系统降为球杆系统标准的二阶 PD 外环：`targetPulse = LEVEL_TRIM_PULSE + SIGN*(Kx*error − Kv*velocity)`。
 
-**2026-07-31 `BALLCTRL` 已切到位置模式**（题目六 `ID1 POS` 先验证过底层 API，实测 10 圈=80mm 行程）：v1 按要求不加任何输出限幅、I 项、位置死区或方向发散检测，先看原始表现再一起调参。**位置原点只在本次上电后第一次启动时清零**（函数级 `static bool hasZeroedSinceBoot`），之后反复 K4 停/启调参沿用同一原点，重新上电才建立新原点——这是有意设计，避免调参中途摆杆停在某个倾角时被误当成新零点导致误差跨轮次累积。**单帧视觉丢失不再触发任何停止命令**：位置模式下没有新目标时电机保持在原地（结构自带安全），此前速度模式为防止 RPM 失控而加的软降速/硬急停/方向发散保护已删除——它们曾在调参过程中被正常的视觉丢帧偶发触发，打断本来平滑的运动，这正是用户反馈"移动过程中突然停止"的根因。唯一仍主动下发命令的保护是边缘保护（球真的快滚出摆杆，命令回水平并锁定）。完整设计和调参步骤见 [empty/docs/BALL_CONTROL.md](empty/docs/BALL_CONTROL.md)。
+**2026-07-31 `BALLCTRL` 已切到位置模式**（题目六 `ID1 POS` 先验证过底层 API，实测 10 圈=80mm 行程）：外环为无输出限幅、无 I 项的 PD。`BALL_CTRL_SETTLE_DEADBAND_PX=3px` 是实际到位保持区：范围内回水平并禁止静摩擦夹紧，避免其大倾角补偿把已满足精度的钢球再次推出目标区；只有超出该范围才重新驱动。**位置原点只在本次上电后第一次启动时清零**（函数级 `static bool hasZeroedSinceBoot`），之后反复进出题目三/四停/启调参沿用同一原点，重新上电才建立新原点——这是有意设计，避免调参中途摆杆停在某个倾角时被误当成新零点导致误差跨轮次累积。配合开机自动归零（见「ID1 开机自动归零」小节），本次上电后第一次启动 `BALLCTRL` 时清零的位置就是归零终点。**单帧视觉丢失不再触发任何停止命令**：位置模式下没有新目标时电机保持在原地（结构自带安全），此前速度模式为防止 RPM 失控而加的软降速/硬急停/方向发散保护已删除——它们曾在调参过程中被正常的视觉丢帧偶发触发，打断本来平滑的运动，这正是用户反馈"移动过程中突然停止"的根因。唯一仍主动下发命令的保护是边缘保护（球真的快滚出摆杆，命令回水平并锁定）。完整设计和调参步骤见 [empty/docs/BALL_CONTROL.md](empty/docs/BALL_CONTROL.md)。
 
 - 角色层已提供 `Emm42Robot_MoveAbsolute()`（绝对位置）、`Emm42Robot_ResetPosToZero()`（定原点）、`Emm42Robot_ClearClogProtection()`（解堵转保护），业务层不要直接调协议层 `Emm42_*`。
 - **`MoveAbsolute` 不能像 `MoveRelative` 那样把 `pulses==0` 当"不动"提前返回**——绝对模式下 0 是最常用的目标（回原点）。
-- **位置原点靠人工建立**：摆杆无限位开关/角度传感器，每次上电须先人工把杆摆到目视水平，再进题目六（`OnEnter` 自动发 `0x0A 0x6D` 清零）。驱动器断电不保留多圈位置计数，不能沿用上次零点；失能不丢位置。题目六里的一切位置都锚在**按 K3 进入那一刻**，反复进出会重新置零、位移累积。
+- **位置原点建立**：ID1 开机已经过 PA24 限位开关自动归零（见上方「ID1 开机自动归零」小节），不再需要人工把杆摆到目视水平；进题目六时仍会 `OnEnter` 自动发 `0x0A 0x6D` 清零一次（`T6_ZERO_ON_ENTER`），只要 ID1 自开机归零后没被移动过，清零点就等于归零终点。驱动器断电不保留多圈位置计数，不能沿用上次零点；失能不丢位置。题目六里的一切位置都锚在**按 K3 进入那一刻**，反复进出会重新置零、位移累积。
 - ⚠️ **新的位置命令会覆盖尚未走完的上一条并重新规划**。连续下发时，两帧间隔必须覆盖整段运动时间（acc=0 时理论时间 = 圈数/转速 分钟），否则表现为"命令发了却几乎没走到位"。`task6.c` 用 `T6_SEGMENT_WAIT_MS` 编译期算出并留余量；彻底的解法是读 `0x3A` bit1 到位标志。这个"覆盖"特性本身对 15Hz 外环是**好事**（每帧刷新目标即可），只有做定量运动时才需要等到位。
 - 脉冲单位随驱动器细分，出厂 16 细分 = 3200 脉冲/圈；`task6.c` 的 `T6_PULSES_PER_REV` 要与驱动器 `MStep` 菜单一致。
 - **读实时位置 `0x36` 的单位不是脉冲**，而是编码器角度（65536 = 一圈），与位置命令的 3200 脉冲/圈差 20.48 倍，做反馈时必须换算。
@@ -134,6 +167,7 @@
 | TMC 细分 MS1 | PB0 | 四路共用细分 |
 | TMC 细分 MS2 | PB1 | 四路共用细分 |
 | 按键 KEY1~4 | PA28/PA31/PA30/PA29 | 按下接地，内部上拉 |
+| ID1 归零限位开关 | PA24 | 按下接地，内部上拉；P1 接口原为继电器（v1.1 述 `RELAY ← PA24`），2026-08-01 改接轻触开关，用于开机自动归零，见 `bsp/bsp_home_switch.h` |
 | UART0 TX | PA10 | MFCLK 4MHz，115200 8N1 |
 | UART0 RX | PA11 | — |
 | 张大头 UART1 TX | PA17 | MFCLK 4MHz，115200 8N1；→ Emm42_V5.0 驱动器 RX（v1.1 排针 H7） |
@@ -198,7 +232,7 @@ A23、A21、A20、A19、A18、A11、A10、A5、A6、A4、A3、A2
 
 ### 跨模块通信
 
-`BALLCTRL` 使用长度为 1 的 FreeRTOS 覆盖队列接收启停/目标 X 命令，并通过临界区快照发布状态；定义见 [empty/docs/MESSAGE_LIST.md](empty/docs/MESSAGE_LIST.md)。后续新增有先后语义的消息仍优先使用 queue / event group / stream buffer，应用之间不要通过裸全局变量传递业务数据。
+`BALLCTRL` 使用长度为 1 的 FreeRTOS 覆盖队列接收启停/目标 X/profile 命令，并通过临界区快照发布状态；`AppBallControl_RequestTargetWithProfile()` 会按值复制调用方 profile，供任务三与菜单调参隔离。定义见 [empty/docs/MESSAGE_LIST.md](empty/docs/MESSAGE_LIST.md)。后续新增有先后语义的消息仍优先使用 queue / event group / stream buffer，应用之间不要通过裸全局变量传递业务数据。
 
 ## 修改代码后自查
 

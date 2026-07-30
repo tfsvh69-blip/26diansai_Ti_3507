@@ -16,7 +16,6 @@
 #include "bsp_buzzer.h"
 #include "bsp_key.h"
 #include "bsp_line.h"
-#include "bsp_relay.h"
 #include "laser_ld14.h"
 
 #include "OLED.h"
@@ -96,6 +95,9 @@
 /* task2 在题目表中的固定下标，用于显示其秒表计时。 */
 #define UI_TASK2_INDEX    (1U)
 
+/* task3 在题目表中的固定下标，用于显示钢珠往返定位阶段与计时。 */
+#define UI_TASK3_INDEX    (2U)
+
 /* task4 在题目表中的固定下标，用于显示其秒表计时。 */
 #define UI_TASK4_INDEX    (3U)
 
@@ -139,35 +141,17 @@ static uint32_t Ui_U32ToStr(char *dst, uint32_t value)
 }
 
 /*
- * 组装传感器状态栏文本到 buf（需 >= 32 字节）："[R:ON/OFF ]Y:<yaw> D:<dist>mm"，
- * 用于一眼判断继电器/陀螺仪/激光测距的当前状态：
- *   R    继电器逻辑状态 ON/OFF（启用 APP_FEATURE_RELAY 时才有）——放最前，保证
- *        一定完整显示，便于对照继电器实际动作核对触发极性；
+ * 组装传感器状态栏文本到 buf（需 >= 32 字节）："Y:<yaw> D:<dist>mm"，
+ * 用于一眼判断陀螺仪/激光测距的当前状态：
  *   Yaw  IMU 就绪显示带 1 位小数的度数(如 -179.9)，未就绪显示 "---"；
  *   Dist 激光收到有效帧显示 mm 数，否则显示 "---"。
- * 数据都取线程安全快照（继电器走 BspRelay_IsOn，Yaw 走 IMU 任务 getter，距离走 laser GetLatest）。
+ * 数据都取线程安全快照（Yaw 走 IMU 任务 getter，距离走 laser GetLatest）。
  */
 static void Ui_FormatStatus(char *buf)
 {
     uint32_t        idx = 0U;
     int16_t         yawCd = 0;
     LaserLd14Data_t laser;
-
-#if (APP_FEATURE_RELAY != 0U)
-    /* 继电器逻辑状态放最前，确保不被后面 Yaw/距离长度挤出屏幕。 */
-    buf[idx++] = 'R';
-    buf[idx++] = ':';
-    if (BspRelay_IsOn()) {
-        buf[idx++] = 'O';
-        buf[idx++] = 'N';
-        buf[idx++] = ' ';   /* 补一空格与 "OFF" 等宽，固定后面字段位置、避免左右跳动 */
-    } else {
-        buf[idx++] = 'O';
-        buf[idx++] = 'F';
-        buf[idx++] = 'F';
-    }
-    buf[idx++] = ' ';
-#endif
 
     buf[idx++] = 'Y';
     buf[idx++] = ':';
@@ -344,7 +328,7 @@ static void Ui_DrawMenu(void)
     OLED_Clear();
 #if (APP_FEATURE_VISION_LINK != 0U)
     /* 标题收窄到左半，给右侧视觉通信面板让位。 */
-    OLED_ShowString(0, UI_MENU_TITLE_Y, "K4=BAL", OLED_6X8);
+    OLED_ShowString(0, UI_MENU_TITLE_Y, "TASKS", OLED_6X8);
 #else
     OLED_ShowString(13, UI_MENU_TITLE_Y, "== SELECT TASK ==", OLED_6X8);
 #endif
@@ -405,6 +389,8 @@ static void Ui_DrawRun(void)
         OLED_ShowString(0, UI_RUN_NAME_Y, (char *)Task5_GetUiStatus(), OLED_6X8);
     } else if (s_sel == UI_TASK2_INDEX) {
         OLED_ShowString(0, UI_RUN_NAME_Y, (char *)Task2_GetUiStatus(), OLED_6X8);
+    } else if (s_sel == UI_TASK3_INDEX) {
+        OLED_ShowString(0, UI_RUN_NAME_Y, (char *)Task3_GetUiStatus(), OLED_6X8);
     } else if (s_sel == UI_TASK4_INDEX) {
         OLED_ShowString(0, UI_RUN_NAME_Y, (char *)Task4_GetUiStatus(), OLED_6X8);
     } else if (s_sel == UI_TASK6_INDEX) {
@@ -493,20 +479,11 @@ static void AppUiTask_Entry(void *argument)
                 dirty = true;
             }
 
-            /* K3 进入题目；K4 菜单态启停独立钢球居中线程，界面仍留在菜单。 */
+            /* K3 进入题目。 */
             if (edge[BSP_KEY_3]) {
                 state = UI_STATE_RUN;
                 RobotCore_EnterTask(s_sel);
                 Ui_DrawRun();
-#if (APP_FEATURE_BALL_CONTROL != 0U)
-            } else if (edge[BSP_KEY_4]) {
-                if (AppBallControl_IsActive()) {
-                    AppBallControl_RequestStop();
-                } else {
-                    (void)AppBallControl_RequestTarget(APP_BALL_CONTROL_CENTER_X_PX);
-                }
-                Ui_DrawVisionPanel();
-#endif
             } else if (dirty) {
                 Ui_DrawMenu();
             }
@@ -540,6 +517,12 @@ static void AppUiTask_Entry(void *argument)
                 /* 任务二每 300ms 刷新一次秒表计时。 */
                 OLED_ClearArea(0, UI_RUN_NAME_Y, 128, UI_MENU_LINE_H);
                 OLED_ShowString(0, UI_RUN_NAME_Y, (char *)Task2_GetUiStatus(), OLED_6X8);
+                OLED_UpdateArea(0, UI_RUN_NAME_Y, 128, UI_MENU_LINE_H);
+            }
+            if ((state == UI_STATE_RUN) && (s_sel == UI_TASK3_INDEX)) {
+                /* 任务三每 300ms 刷新往返定位阶段、计时和完成状态。 */
+                OLED_ClearArea(0, UI_RUN_NAME_Y, 128, UI_MENU_LINE_H);
+                OLED_ShowString(0, UI_RUN_NAME_Y, (char *)Task3_GetUiStatus(), OLED_6X8);
                 OLED_UpdateArea(0, UI_RUN_NAME_Y, 128, UI_MENU_LINE_H);
             }
             if ((state == UI_STATE_RUN) && (s_sel == UI_TASK4_INDEX)) {

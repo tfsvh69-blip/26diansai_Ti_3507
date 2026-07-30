@@ -21,6 +21,28 @@ typedef enum {
     APP_BALL_CONTROL_FAULT_EDGE
 } AppBallControlState_t;
 
+/*
+ * 钢珠位置闭环参数。调用方按值传入，控制线程会复制保存；任务三可据此使用
+ * 独立参数，菜单闭环则继续使用本模块内置的默认参数。
+ */
+typedef struct {
+    float filterAlpha;
+    float filterBeta;
+    float outputSign;
+    float kxPulsePerPx;
+    float kvPulsePerPxps;
+    int32_t levelTrimPulse;
+    float settleDeadbandPx;
+    float stictionPulse;
+    float stuckVelocityPxps;
+    uint32_t stuckTimeMs;
+    uint32_t positionRpm;
+    uint8_t positionAcc;
+    float holdPositionPx;
+    float holdVelocityPxps;
+    uint32_t holdTimeMs;
+} AppBallControlProfile_t;
+
 typedef struct {
     AppBallControlState_t state;
     int16_t targetPx;
@@ -39,6 +61,10 @@ void AppBallControlTask_Init(void);
  * targetPx 超出安全范围时返回 false。
  */
 bool AppBallControl_RequestTarget(int16_t targetPx);
+
+/* 使用指定的独立参数启动或更新目标；参数会在投递时复制。 */
+bool AppBallControl_RequestTargetWithProfile(int16_t targetPx,
+                                             const AppBallControlProfile_t *profile);
 
 /* 请求停止闭环；控制线程会先急停 ID1，再失能并回到 OFF。 */
 void AppBallControl_RequestStop(void);

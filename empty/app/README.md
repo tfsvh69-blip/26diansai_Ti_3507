@@ -39,7 +39,7 @@
 2. **上电看到的 OLED 界面是谁画的？** → `app_ui_task.c`（UIMENU）：菜单/运行两态、底部状态栏、右侧视觉通信面板。
 3. **题目业务逻辑写在哪？** → **`app/tasks/taskN.c`（第 N 题就在 taskN.c）**，每题一套状态机骨架；`app_robot_core.c` 只把它们登记进 dispatch 表，UIMENU 只管显示与按键。
 4. **树莓派发来的 X 坐标怎么进来的、显示在哪？** → UART0 RX 中断喂 `module/vision` 解析器 → `app_vision_link` 做在线/超时判定 → UIMENU 右侧面板；开关 `APP_FEATURE_VISION_LINK`。
-4.1 **怎么让钢球到指定 X？** → 调 `AppBallControl_RequestTarget(targetPx)`；上电菜单态按 K4 等价于请求 `X=320`，再次 K4 请求停止。
+4.1 **怎么让钢球到指定 X？** → 菜单默认调 `AppBallControl_RequestTarget(targetPx)`；需要独立调参的题目调 `AppBallControl_RequestTargetWithProfile(targetPx, &profile)`，profile 会在队列投递时复制。上电菜单态按 K4 等价于请求 `X=320`，再次 K4 请求停止。
 5. **陀螺仪 Yaw / 激光距离怎么显示到状态栏？** → `IMU100Hz` 临界区发布 Yaw 快照、`module/laser` 发布距离快照，UIMENU 局部低频刷底行。
 6. **怎么加一个新任务？** → 参照 `app_led_task.c`：`.c` 写 `Entry`+`Init`、`.h` 声明 `Init`，在 `app_main.c` 的 `App_Init()` 里用 `#if APP_FEATURE_xxx` 门控调用。
 7. **多个任务共用 UART0 不会冲突吗？** → `bsp_uart.c` 的递归互斥量，`BspUart0_Lock/Unlock` 保证整行原子（注意 UART0 RX 中断接收小球报文时，轮询自检 `UART_ECHO` 必须关，二者互斥有编译期护栏）。
@@ -124,7 +124,7 @@ app 层（本目录）
 底层协议接口（`module/emm42/emm42_v5.h`，只认地址，角色层内部转调这些）：`Emm42_Enable/SetSpeedRpm/VelControl/PosControl/StopNow/SyncMotion/ResetClogProtection/ResetCurPosToZero/ReadSysParams`，诊断用 `Emm42_GetTxFrameCount/GetRxByteCount/GetRxFrameCount/GetLastReply`（`GetRxByteCount()>0` 说明总线上至少有驱动器回话）。地址常量 `EMM42_ADDR_MOTOR1/2/3` + `EMM42_ADDR_BROADCAST(0)`。单路相对位置模式优先使用角色层 `Emm42Robot_MoveRelative()`；仅需绝对位置或同步多机时才绕过角色层直接调底层接口。
 
 所有接口（两层都一样）不等待驱动器回复；调度器运行后，协议出口用互斥量保证
-多线程整帧不交叉，并在每帧后 `vTaskDelay(5ms)`。仍不要在热循环里无意义重复
+多线程整帧不交叉，并在每帧后 `vTaskDelay(6ms)`。仍不要在热循环里无意义重复
 下发——题目二、四、五采用每 30ms 轮询拍最多一帧；`BALLCTRL` 正常态只在
 新视觉帧到达时更新 ID1，单次 NA 或短时断帧进入 `B:DEG` 后每 20ms 最多发送
 一帧向 0 RPM 收敛的软减速命令。

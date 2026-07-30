@@ -39,9 +39,15 @@
 #define BALL_CTRL_NA_LOST_COUNT           (2U)
 #define BALL_CTRL_VISION_TIMEOUT_MS       (220U)
 #define BALL_CTRL_RECOVERY_VALID_COUNT    (2U)
-#define BALL_CTRL_DT_MIN_SEC              (0.02F)   /* 30fps~33ms，留够余量避免虚高估计速度 */
+/*
+ * 2026-08-01 实测上位机帧率 40~60fps（真实帧间隔 16.7~25ms），故下限必须低于
+ * 16.7ms：原值 0.02(20ms) 会把 60fps 的帧间隔【往上夹】，使 dt 被高估、速度估计
+ * 系统性偏小约 20%，Kv 阻尼跟着失真。取 0.010 留一倍余量。
+ */
+#define BALL_CTRL_DT_MIN_SEC              (0.010F)
 #define BALL_CTRL_DT_MAX_SEC              (0.200F)
-#define BALL_CTRL_NOMINAL_DT_SEC          (1.0F / 30.0F) /* 尚无双帧间隔时的默认 dt，按当前视觉帧率 */
+/* 尚无双帧间隔时的默认 dt：按实测 40~60fps 取中间的 50fps。 */
+#define BALL_CTRL_NOMINAL_DT_SEC          (1.0F / 50.0F)
 
 /* 沿用题目二/三/六实测稳定的 Emm42 复位与使能等待。 */
 #define BALL_CTRL_RESET_SETTLE_MS         (60U)
@@ -77,17 +83,20 @@
  */
 #define BALL_CTRL_OUTPUT_SIGN             (1.0F)
 #define BALL_CTRL_KX_PULSE_PER_PX         (25.0F)
-#define BALL_CTRL_KV_PULSE_PER_PXPS       (9.0F)
+#define BALL_CTRL_KV_PULSE_PER_PXPS       (7.5F)
 #define BALL_CTRL_LEVEL_TRIM_PULSE        (0)
 
-/* 到目标这么近就不再强行修正，回水平即可（本身也推不动，不算白白放弃精度）。 */
-#define BALL_CTRL_SETTLE_DEADBAND_PX      (3.0F)
+/*
+ * 到位保持精度与 OLED 的 HOLD 判定一致。进入该范围即回水平并禁止静摩擦夹紧，
+ * 避免静摩擦补偿的较大倾角把已满足精度的钢球再次推出目标区。
+ */
+#define BALL_CTRL_SETTLE_DEADBAND_PX      (6.0F)
 
 /* 题目六阶梯测试实测的钢球静摩擦阈值（3200~4000 脉冲），取中间值，可调。 */
 #define BALL_CTRL_STICTION_PULSE          (3600.0F)
 
 /* 判定"球基本没在动"的速度门限，低于此值才允许静摩擦夹紧介入。 */
-#define BALL_CTRL_STUCK_VELOCITY_PXPS     (5.0F)
+#define BALL_CTRL_STUCK_VELOCITY_PXPS     (6.0F)
 
 /*
  * 低速状态要持续这么久才算"真的卡住"，不是正常减速路过低速的一瞬间。
@@ -124,6 +133,25 @@
 #define BALL_CTRL_SAFE_X_MIN_PX           (20)
 #define BALL_CTRL_SAFE_X_MAX_PX           (620)
 
+/* 菜单 K4 闭环的默认参数；任务三通过独立 profile 覆盖这些控制量。 */
+static const AppBallControlProfile_t s_menuProfile = {
+    BALL_CTRL_FILTER_ALPHA,
+    BALL_CTRL_FILTER_BETA,
+    BALL_CTRL_OUTPUT_SIGN,
+    BALL_CTRL_KX_PULSE_PER_PX,
+    BALL_CTRL_KV_PULSE_PER_PXPS,
+    BALL_CTRL_LEVEL_TRIM_PULSE,
+    BALL_CTRL_SETTLE_DEADBAND_PX,
+    BALL_CTRL_STICTION_PULSE,
+    BALL_CTRL_STUCK_VELOCITY_PXPS,
+    BALL_CTRL_STUCK_TIME_MS,
+    BALL_CTRL_POS_RPM,
+    BALL_CTRL_POS_ACC,
+    BALL_CTRL_HOLD_POSITION_PX,
+    BALL_CTRL_HOLD_VELOCITY_PXPS,
+    BALL_CTRL_HOLD_TIME_MS
+};
+
 typedef enum {
     BALL_CTRL_INTERNAL_OFF = 0,
     BALL_CTRL_INTERNAL_RESET_DISABLE,
@@ -142,6 +170,7 @@ typedef enum {
 typedef struct {
     bool enable;
     int16_t targetPx;
+    AppBallControlProfile_t profile;
 } BallControlCommand_t;
 
 static TaskHandle_t s_taskHandle;
@@ -234,6 +263,7 @@ static void AppBallControlTask_Entry(void *argument)
     BallControlCommand_t command;
     AppVisionXSample_t vision;
     AlphaBetaFilter_t filter;
+    AppBallControlProfile_t activeProfile = s_menuProfile;
     TickType_t lastWake = xTaskGetTickCount();
     TickType_t stateStart = lastWake;
     TickType_t lastValidSampleTick = 0U;
@@ -248,7 +278,7 @@ static void AppBallControlTask_Entry(void *argument)
     bool holding = false;
 
     (void)argument;
-    AlphaBetaFilter_Init(&filter, BALL_CTRL_FILTER_ALPHA, BALL_CTRL_FILTER_BETA);
+    AlphaBetaFilter_Init(&filter, activeProfile.filterAlpha, activeProfile.filterBeta);
     BallControl_Publish(state, holding, targetPx, measuredPx, &filter, commandPulse,
                         seenSampleSeq);
 
@@ -258,12 +288,15 @@ static void AppBallControlTask_Entry(void *argument)
         /* 长度为 1 的覆盖队列只保留调用方最新意图。 */
         if (xQueueReceive(s_commandQueue, &command, 0U) == pdPASS) {
             targetPx = command.targetPx;
+            activeProfile = command.profile;
             holding = false;
             holdStartTick = 0U;
             stuckStartTick = 0U;
 
             if (command.enable) {
                 if (state == BALL_CTRL_INTERNAL_OFF) {
+                    AlphaBetaFilter_Init(&filter, activeProfile.filterAlpha,
+                                         activeProfile.filterBeta);
                     AlphaBetaFilter_Reset(&filter);
                     seenSampleSeq = 0U;
                     lastValidSampleTick = 0U;
@@ -348,9 +381,11 @@ static void AppBallControlTask_Entry(void *argument)
                     if ((measuredPx <= BALL_CTRL_SAFE_X_MIN_PX) ||
                         (measuredPx >= BALL_CTRL_SAFE_X_MAX_PX)) {
                         /* 球快滚出摆杆：命令回水平，标记故障并锁定，等 K4 处理。 */
-                        Emm42Robot_MoveAbsolute(EMM42_ROBOT_LIFT, BALL_CTRL_LEVEL_TRIM_PULSE,
-                                               BALL_CTRL_POS_RPM, BALL_CTRL_POS_ACC);
-                        commandPulse = BALL_CTRL_LEVEL_TRIM_PULSE;
+                        Emm42Robot_MoveAbsolute(EMM42_ROBOT_LIFT,
+                                               activeProfile.levelTrimPulse,
+                                               activeProfile.positionRpm,
+                                               activeProfile.positionAcc);
+                        commandPulse = activeProfile.levelTrimPulse;
                         state = BALL_CTRL_INTERNAL_FAULT_EDGE;
                         break;
                     }
@@ -397,15 +432,15 @@ static void AppBallControlTask_Entry(void *argument)
                     rawError = (float)targetPx - filter.position;
 
                     /* 纯 PD，无 I 项。 */
-                    pulseDelta = (BALL_CTRL_KX_PULSE_PER_PX * rawError) -
-                                 (BALL_CTRL_KV_PULSE_PER_PXPS * filter.velocity);
+                    pulseDelta = (activeProfile.kxPulsePerPx * rawError) -
+                                 (activeProfile.kvPulsePerPxps * filter.velocity);
 
-                    if (BallControl_Abs(rawError) <= BALL_CTRL_SETTLE_DEADBAND_PX) {
-                        /* 已经足够接近目标：不强行推，回水平即可，也不算"卡住"。 */
+                    if (BallControl_Abs(rawError) <= activeProfile.settleDeadbandPx) {
+                        /* 到位保持区内不再修正，也不把静摩擦夹紧误判为卡住。 */
                         pulseDelta = 0.0F;
                         stuckStartTick = 0U;
                     } else if (BallControl_Abs(filter.velocity) <=
-                               BALL_CTRL_STUCK_VELOCITY_PXPS) {
+                               activeProfile.stuckVelocityPxps) {
                         /*
                          * 只有低速状态【持续够久】才算真的卡住——球正常减速接近目标
                          * 时也会有瞬间低速，不能一测到低速就立刻满幅夹紧，否则会把
@@ -414,31 +449,32 @@ static void AppBallControlTask_Entry(void *argument)
                         if (stuckStartTick == 0U) {
                             stuckStartTick = now;
                         } else if (BallControl_Elapsed(now, stuckStartTick,
-                                                       BALL_CTRL_STUCK_TIME_MS) &&
-                                   (BallControl_Abs(pulseDelta) < BALL_CTRL_STICTION_PULSE)) {
+                                                       activeProfile.stuckTimeMs) &&
+                                   (BallControl_Abs(pulseDelta) < activeProfile.stictionPulse)) {
                             /* 确认卡住：直接把幅度顶到实测阈值（保留方向）打破僵局。 */
-                            pulseDelta = (pulseDelta >= 0.0F) ? BALL_CTRL_STICTION_PULSE
-                                                               : -BALL_CTRL_STICTION_PULSE;
+                            pulseDelta = (pulseDelta >= 0.0F) ? activeProfile.stictionPulse
+                                                               : -activeProfile.stictionPulse;
                         }
                     } else {
                         /* 球在正常移动，没有卡住，重置计时。 */
                         stuckStartTick = 0U;
                     }
 
-                    output = (float)BALL_CTRL_LEVEL_TRIM_PULSE +
-                             (BALL_CTRL_OUTPUT_SIGN * pulseDelta);
+                    output = (float)activeProfile.levelTrimPulse +
+                             (activeProfile.outputSign * pulseDelta);
                     commandPulse = BallControl_RoundToInt32(output);
 
                     Emm42Robot_MoveAbsolute(EMM42_ROBOT_LIFT, commandPulse,
-                                           BALL_CTRL_POS_RPM, BALL_CTRL_POS_ACC);
+                                           activeProfile.positionRpm,
+                                           activeProfile.positionAcc);
                     state = BALL_CTRL_INTERNAL_ACTIVE;
 
-                    if ((BallControl_Abs(rawError) <= BALL_CTRL_HOLD_POSITION_PX) &&
-                        (BallControl_Abs(filter.velocity) <= BALL_CTRL_HOLD_VELOCITY_PXPS)) {
+                    if ((BallControl_Abs(rawError) <= activeProfile.holdPositionPx) &&
+                        (BallControl_Abs(filter.velocity) <= activeProfile.holdVelocityPxps)) {
                         if (holdStartTick == 0U) {
                             holdStartTick = now;
                         } else if (BallControl_Elapsed(now, holdStartTick,
-                                                       BALL_CTRL_HOLD_TIME_MS)) {
+                                                       activeProfile.holdTimeMs)) {
                             holding = true;
                         }
                     } else {
@@ -522,16 +558,24 @@ void AppBallControlTask_Init(void)
 
 bool AppBallControl_RequestTarget(int16_t targetPx)
 {
+    return AppBallControl_RequestTargetWithProfile(targetPx, &s_menuProfile);
+}
+
+bool AppBallControl_RequestTargetWithProfile(int16_t targetPx,
+                                             const AppBallControlProfile_t *profile)
+{
     BallControlCommand_t command;
 
-    if ((s_commandQueue == NULL) ||
+    if ((s_commandQueue == NULL) || (profile == NULL) ||
         (targetPx <= BALL_CTRL_SAFE_X_MIN_PX) ||
-        (targetPx >= BALL_CTRL_SAFE_X_MAX_PX)) {
+        (targetPx >= BALL_CTRL_SAFE_X_MAX_PX) ||
+        (profile->positionRpm == 0U)) {
         return false;
     }
 
     command.enable = true;
     command.targetPx = targetPx;
+    command.profile = *profile;
     return xQueueOverwrite(s_commandQueue, &command) == pdPASS;
 }
 
@@ -545,6 +589,7 @@ void AppBallControl_RequestStop(void)
 
     command.enable = false;
     command.targetPx = APP_BALL_CONTROL_CENTER_X_PX;
+    command.profile = s_menuProfile;
     (void)xQueueOverwrite(s_commandQueue, &command);
 }
 

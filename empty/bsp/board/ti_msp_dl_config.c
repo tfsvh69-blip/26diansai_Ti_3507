@@ -320,12 +320,12 @@ void SYSCFG_DL_GPIO_init(void)
         DL_GPIO_HYSTERESIS_ENABLE, DL_GPIO_WAKEUP_DISABLE);
 
     /*
-     * 继电器 RELAY（PA24）：推挽输出 + 内部下拉。下拉配合上电清零，降低上电瞬间
-     * 误吸合的概率（接线文档风险 R7）。驱动强度 LOW 足够（控制脚为高阻输入）。
+     * 归零限位开关 HOME_SWITCH（PA24）：数字输入 + 内部上拉 + 迟滞，与 KEY1~4 同一
+     * 配置方式。开关一端接 GND，按下=低电平；未接线/开关松开时靠内部上拉读到高电平。
      */
-    DL_GPIO_initDigitalOutputFeatures(RELAY_IOMUX,
-        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_DOWN,
-        DL_GPIO_DRIVE_STRENGTH_LOW, DL_GPIO_HIZ_DISABLE);
+    DL_GPIO_initDigitalInputFeatures(HOME_SWITCH_IOMUX,
+        DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
+        DL_GPIO_HYSTERESIS_ENABLE, DL_GPIO_WAKEUP_DISABLE);
 
     /*
      * NRF24L01+ GPIO 模拟 SPI：CE/SCK/MOSI 为推挽输出，MISO 为输入。
@@ -356,10 +356,10 @@ void SYSCFG_DL_GPIO_init(void)
      */
     DL_GPIO_setPins(GPIOA, TMC_ENN_PIN);
     DL_GPIO_clearPins(GPIOA,
-        BUZZER_PIN | LED_LED2_PIN | RELAY_PIN | NRF24_CE_PIN |
+        BUZZER_PIN | LED_LED2_PIN | NRF24_CE_PIN |
         NRF24_CSN_PIN | NRF24_SCK_PIN | NRF24_MOSI_PIN);
     DL_GPIO_enableOutput(GPIOA,
-        TMC_ENN_PIN | BUZZER_PIN | LED_LED2_PIN | RELAY_PIN |
+        TMC_ENN_PIN | BUZZER_PIN | LED_LED2_PIN |
         NRF24_CE_PIN | NRF24_SCK_PIN | NRF24_MOSI_PIN);
     DL_GPIO_disableOutput(GPIOA, NRF24_CSN_PIN);
 

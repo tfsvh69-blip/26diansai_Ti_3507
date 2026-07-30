@@ -46,6 +46,6 @@ MCU 经 UART1（PA17=TX → 驱动器 RX，PB5=RX ← 驱动器 TX）向张大�
 
 发送路径：题目状态机或 `BALLCTRL` → `module/emm42/emm42_robot.c`（角色→地址映射）→
 `emm42_v5.c` 组帧 → `BspUart1_SendBytes()` 整帧阻塞发送。协议出口用 FreeRTOS
-互斥量保证多线程整帧不交叉，并在调度器运行后每帧统一留 5ms 处理间隔；接口不等待回复。
+互斥量保证多线程整帧不交叉，并在调度器运行后每帧统一留至少 6ms 处理间隔；接口不等待回复。
 
 接收路径：UART1 RX 中断（`bsp_uart.c` 的 `UART1_IRQHandler`）逐字节喂 `Emm42_OnRxByte`，以校验字节 `0x6B` 分帧，**仅用于诊断统计**（`Emm42_GetTxFrameCount/GetRxByteCount/GetRxFrameCount/GetLastReply`），不解析字段。上板时 `Emm42_GetRxByteCount() > 0` 即可判定总线双向通。由 `APP_FEATURE_EMM42` 开关门控。

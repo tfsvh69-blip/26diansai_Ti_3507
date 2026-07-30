@@ -59,6 +59,9 @@ void Task3_OnEnter(void);
 void Task3_OnLoop(void);
 void Task3_OnExit(void);
 
+/* 取题目三钢珠往返定位的阶段与计时文本，供 OLED 运行界面显示。 */
+const char *Task3_GetUiStatus(void);
+
 /* 第 4 题 */
 void Task4_OnEnter(void);
 void Task4_OnLoop(void);

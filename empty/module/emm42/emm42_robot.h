@@ -62,7 +62,7 @@ void Emm42Robot_Enable(Emm42RobotId_t id, bool enable);
  * 单路速度模式：rpm 的正负会先经过本层角色方向标定，再转换为协议层 CW/CCW；
  * rpm==0 转成急停帧；acc 为加速度档位，0=不使用曲线立即变速。
  * 与底层 Emm42_* 系列一致：单帧下发、不等回复。协议出口会互斥并统一保留
- * 5ms 帧间隔；热循环仍不要无意义重复下发，参考各题按拍更新的写法。
+ * 6ms 帧间隔；热循环仍不要无意义重复下发，参考各题按拍更新的写法。
  */
 void Emm42Robot_SetSpeedRpm(Emm42RobotId_t id, int16_t rpm, uint8_t acc);
 
@@ -97,8 +97,10 @@ void Emm42Robot_MoveAbsolute(Emm42RobotId_t id, int32_t targetPulses,
  * 驱动器会把当前位置角度、位置误差、脉冲数全部清零，此后绝对位置模式的
  * 0 就等于调用本接口时电机所处的物理位置。
  *
- * 摆杆没有限位开关/角度传感器时，需要每次上电先人工把杆摆到目视水平，
- * 再调用本接口，否则原点无意义（驱动器断电不保留多圈位置计数）。
+ * 摆杆（ID1）已加装 PA24 归零限位开关，开机由 app/app_lift_homing.c 的
+ * AppLiftHoming_RunAtBoot() 自动完成归零，调用方（BALLCTRL/task6 等）在此基础上
+ * 再调用本接口即可建立各自的位置原点；驱动器断电不保留多圈位置计数，每次上电
+ * 都要重新归零一次。
  */
 void Emm42Robot_ResetPosToZero(Emm42RobotId_t id);
 

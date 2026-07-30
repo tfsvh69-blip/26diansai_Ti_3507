@@ -574,14 +574,14 @@
               <FilePath>..\app\app_motor_test_task.h</FilePath>
             </File>
             <File>
-              <FileName>app_relay_test_task.c</FileName>
+              <FileName>app_lift_homing.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\app\app_relay_test_task.c</FilePath>
+              <FilePath>..\app\app_lift_homing.c</FilePath>
             </File>
             <File>
-              <FileName>app_relay_test_task.h</FileName>
+              <FileName>app_lift_homing.h</FileName>
               <FileType>5</FileType>
-              <FilePath>..\app\app_relay_test_task.h</FilePath>
+              <FilePath>..\app\app_lift_homing.h</FilePath>
             </File>
             <File>
               <FileName>app_periph_test_task.c</FileName>
@@ -749,9 +749,9 @@
               <FilePath>..\bsp\bsp_line.c</FilePath>
             </File>
             <File>
-              <FileName>bsp_relay.c</FileName>
+              <FileName>bsp_home_switch.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\bsp\bsp_relay.c</FilePath>
+              <FilePath>..\bsp\bsp_home_switch.c</FilePath>
             </File>
             <File>
               <FileName>bsp_buzzer.c</FileName>

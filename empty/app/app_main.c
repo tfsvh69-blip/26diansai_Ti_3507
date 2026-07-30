@@ -7,10 +7,10 @@
 #include "app_ball_control_task.h"
 #include "app_imu_uart_task.h"
 #include "app_led_task.h"
+#include "app_lift_homing.h"
 #include "app_motor_test_task.h"
 #include "app_nrf24_tx_test_task.h"
 #include "app_periph_test_task.h"
-#include "app_relay_test_task.h"
 #include "app_robot_core.h"
 #include "app_servo_test_task.h"
 #include "app_uart_test_task.h"
@@ -114,15 +114,6 @@ void App_Init(void)
     AppMotorTestTask_Init();
 #endif
 
-#if (APP_FEATURE_RELAY_SELFTEST != 0U)
-    /*
-     * 继电器自检任务(默认关，APP_FEATURE_RELAY_SELFTEST=0)：每 2 秒自动切换继电器(PA24)
-     * 吸合/断开，仅上电验证继电器及其电磁铁负载用。正常运行不需要自动切换，继电器由业务
-     * 代码经 bsp_relay 接口(BspRelay_On/Off/Set)按需控制；OLED 状态栏仍显示当前吸合/断开态。
-     */
-    AppRelayTestTask_Init();
-#endif
-
 #if (APP_FEATURE_NRF24_TX_TEST != 0U)
     /* NRF24L01+ 发射测试：2.402GHz/2Mbps/16位CRC，每 500ms 发送递增文本。 */
     AppNrf24TxTestTask_Init();
@@ -158,10 +149,19 @@ void App_Init(void)
     App_Emm42BootDisableAll();
 #endif
 
+#if (APP_FEATURE_LIFT_HOMING != 0U)
+    /*
+     * 开机 ID1 自动归零（PA24 限位开关）：正方向找开关 → 反向退让至释放 →
+     * 移动到指定相对位置，详见 app/app_lift_homing.c。全程忙等，此时还没有
+     * 任何任务创建，不会与后续 BALLCTRL/题目三/四/六争抢 ID1。
+     */
+    AppLiftHoming_RunAtBoot();
+#endif
+
 #if (APP_FEATURE_BALL_CONTROL != 0U)
     /*
-     * 钢球位置闭环：上电保持 OFF，菜单态按 K4 后才使能 ID1 并跟踪 X=320。
-     * 独立线程通过命令队列接收目标，后续题目可复用同一接口修改目标位置。
+     * 钢球位置闭环：上电保持 OFF，题目三/四经 AppBallControl_RequestTargetWithProfile()
+     * 按需启动并跟踪各自目标。独立线程通过命令队列接收目标，题目间参数互相隔离。
      */
     AppBallControlTask_Init();
 #endif

@@ -35,9 +35,9 @@ static volatile uint8_t  s_lastReplyLen;
 
 /*
  * 独立钢球控制线程会与 UI 题目状态机并发共用 UART1。协议层用互斥量保证整帧
- * 不交叉，并在帧后统一留 5ms 给共享总线上的驱动器处理/回复。
+ * 不交叉，并在帧后统一留 6ms 给共享总线上的驱动器处理/回复。
  */
-#define EMM42_TX_FRAME_GAP_MS (5U)
+#define EMM42_TX_FRAME_GAP_MS (6U)
 static SemaphoreHandle_t s_txMutex;
 
 /*

@@ -8,6 +8,8 @@
 #include "task.h"
 
 #include "app_ball_control_task.h"
+#include "app_vision_link.h"
+#include "bsp_uart.h"
 #include "emm42_robot.h"
 
 /* ==================================================================
@@ -23,12 +25,12 @@
  *   2. T6_RETURN_ENABLE=1 时追加 -T6_TEST_REVS 圈回程，净位移应回原处；
  *   3. T6_ABS_TEST_ENABLE=1 时再追加绝对位置验证：+MOVE → 0 → -MOVE → 0，
  *      两次回 0 应停在同一物理点；
- *   4. T6_STEP_TEST_ENABLE=1 时【完全替代】上面三项，改为阶梯步长测试：
- *      从水平位置依次下发 s_stepTestPulses[] 里的小增量绝对目标，每步停留
- *      T6_STEP_TEST_DWELL_MS 观察钢球是否开始可见地滚动，然后回到水平再测
- *      下一步。用于标定"钢球在凹槽里的静摩擦阈值"——多小的倾角变化才能真的
- *      让球动起来，这与题目六前三项测的"丝杆本身能不能被位置模式驱动"是
- *      两件事：机构本身的大幅度运动早已验证过，这里测的是小增量下球的响应。
+ *   4. T6_RAMP_TEST_ENABLE=1 时【完全替代】上面三项，改为标定斜坡：极缓慢地把
+ *      绝对目标往正、负两个方向各加一次，用视觉 X 自动检测钢珠第一次开始滚动的
+ *      瞬间，实测出「脱离阈值 B」和「真实水平点 L」两个数（详见下方宏定义处）。
+ *      这与前三项测的"丝杆本身能不能被位置模式驱动"是两件事：机构的大幅度运动
+ *      早已验证过（10 圈=80mm），这里测的是钢珠自身开始响应的临界倾角。
+ *      2026-08-01 换更光滑导轨后，旧阈值作废，必须用本工具重测。
  *
  * 【所有位置都锚在"按 K3 进入本题那一刻的电机位置"上】：相对模式命令本就以当前
  * 实际位置为起点；绝对模式的原点也是进入本题时才建立的，所以不存在跨越上电或
@@ -36,8 +38,9 @@
  * 单程模式下位移会一路累积，量完记得手摇回行程中部再测下一次。
  *
  * 位置原点：进入本题时（T6_ZERO_ON_ENTER）发 0x0A 0x6D 把当前机械位置定义为 0。
- * 摆杆没有限位开关/角度传感器，所以【必须先人工把杆摆到目视水平再按 K3 进本题】；
- * 驱动器断电不保留多圈位置计数，每次上电都要重做一遍。
+ * 摆杆已加装 PA24 归零限位开关，开机由 app_lift_homing.c 的 AppLiftHoming_RunAtBoot()
+ * 自动归零，不再需要人工把杆摆到目视水平再按 K3 进本题；驱动器断电不保留多圈位置
+ * 计数，每次上电都要重做一遍。
  *
  * 手册要点（Emm_V5.0 Rev1.3）：
  *   - 位置模式帧 0xFD，相对/绝对由帧内标志区分，绝对模式的"方向"字节表示目标
@@ -70,22 +73,40 @@
 #define T6_ABS_TEST_ENABLE       (0U)     /* 相对段之后追加绝对位置模式验证 */
 
 /*
- * ---- 阶梯步长测试（静摩擦阈值标定，与上面三项互斥） ----
- * 置 1 后【完全替代】相对/绝对测试：从水平位置依次下发下方数组里的小增量
- * 绝对目标，每步等到理论运动时间走完后再停留 T6_STEP_TEST_DWELL_MS 观察
- * 钢球是否开始可见地滚动，然后回到水平再测下一步。目的是标定"钢球在凹槽
- * 里的静摩擦阈值"——摆杆倾角变化多小，球才会真的开始滚，而不是丝杆已经
- * 动了、球却纹丝不动。只测 T6_FIRST_DIR 方向；要测另一个方向就把
- * T6_FIRST_DIR 改成 -1 重新跑一遍。
+ * ---- 标定斜坡：实测「钢珠脱离阈值」+「真实水平点」（与上面三项互斥） ----
  *
- * 2026-07-31 实测 200~1200 脉冲全程无反应，且已确认进题目前摆杆确实水平
- * （排除"零点没摆平、一上来就顶到限位"），改成更大的步长（0.5~4 圈）继续测。
+ * 置 1 后【完全替代】相对/绝对测试。这是给【当前这套机械】现场量数用的工具，
+ * 目的就是不再沿用任何旧导轨留下的经验值（2026-08-01 换了更光滑的导轨后，旧的
+ * 3200~4000 脉冲阈值已经作废，继续用它会导致每次静摩擦补偿都是过量猛踹）。
+ *
+ * 原理：位置模式下，命令幅值小于「脱离阈值」时钢珠纹丝不动——丝杆动了，球不动。
+ * 所以从命令 0 开始极缓慢地把绝对目标往一个方向加，同时盯视觉 X，球第一次真的
+ * 动起来那一刻的命令值，就是这个方向的脱离阈值。
+ *
+ * 流程（全自动，只需看 OLED 读数）：
+ *   1. 抓一帧有效 X 作为起点；
+ *   2. 每 T6_RAMP_INTERVAL_MS 把绝对目标加 T6_RAMP_STEP_PULSES，直到视觉 X 相对
+ *      起点偏移超过 T6_RAMP_MOVE_THRESHOLD_PX（远大于实测 ±2px 噪声）→ 记下命令值；
+ *   3. 命令回 0，留 T6_RAMP_RECENTER_MS 让你把球放回中间；
+ *   4. 换负方向重测一次；
+ *   5. 出结果。
+ *
+ * 两个方向各测一次的意义——由 P(正向阈值) 和 N(负向阈值) 可直接算出：
+ *   脱离阈值 B = (P + N) / 2   ← 摩擦补偿量的实测依据
+ *   真实水平 L = (P - N) / 2   ← LEVEL_TRIM_PULSE 的实测依据
+ * 若机械完全对称则 P≈N、L≈0；P 和 N 差得越多说明"命令 0"离真正水平越远。
+ * 结果同时显示在 OLED 并经 UART0 打印明细（TX 空闲，视觉只占 RX，不冲突）。
+ *
+ * ⚠️ 任一方向到 T6_RAMP_MAX_PULSES 仍不动，该方向记 0（表示未测到），不会把上限
+ * 当成结果——避免又造出一个假的"实测值"。
  */
-#define T6_STEP_TEST_ENABLE      (1U)
-#define T6_STEP_TEST_COUNT       (6U)
-#define T6_STEP_TEST_DWELL_MS    (3000U)  /* 到位后【额外】观察时间，够肉眼判断球是否开始滚动 */
-static const int32_t s_stepTestPulses[T6_STEP_TEST_COUNT] =
-    {1600, 3200, 4800, 6400, 9600, 12800};
+#define T6_RAMP_TEST_ENABLE        (1U)
+#define T6_RAMP_STEP_PULSES        (20)      /* 每次增量：越小越精细但越慢（20 脉冲=0.05mm 升程） */
+#define T6_RAMP_INTERVAL_MS        (90U)     /* 增量间隔，取 UI 拍 30ms 的整数倍 */
+#define T6_RAMP_RPM                (60U)     /* 单个小增量的执行转速（20 脉冲约 6ms 走完，远小于间隔） */
+#define T6_RAMP_MAX_PULSES         (8000)    /* 安全上限，覆盖旧导轨阈值两倍还多 */
+#define T6_RAMP_MOVE_THRESHOLD_PX  (8)       /* 判定"球动了"的位移；实测静止噪声仅 ±2px */
+#define T6_RAMP_RECENTER_MS        (12000U)  /* 两方向之间留给你把球放回中间的时间 */
 
 /*
  * 每个运动段必须等到电机真正走完才能发下一帧，否则新的位置命令会【覆盖】上一条
@@ -106,7 +127,7 @@ static const int32_t s_stepTestPulses[T6_STEP_TEST_COUNT] =
 /* ---- 沿用 task2/task3 已实测的 Emm42 时序，不要往下调 ---- */
 #define T6_RESET_SETTLE_MS       (60U)
 #define T6_ENABLE_SETTLE_MS      (180U)   /* 90ms 实测约一半概率使能不生效 */
-#define T6_EMM_CMD_GAP_MS        (5U)
+#define T6_EMM_CMD_GAP_MS        (6U)
 
 /* 本题在题目表中的下标（用于运行结束时通知视觉端）。 */
 #define T6_TASK_INDEX            (5U)
@@ -125,9 +146,10 @@ typedef enum {
     T6_STATE_ABS_Z1,                /* 绝对模式：回 0 */
     T6_STATE_ABS_N,                 /* 绝对模式：-MOVE */
     T6_STATE_ABS_Z2,                /* 绝对模式：再回 0 */
-    T6_STATE_STEP_CLEAR_CLOG,       /* 阶梯测试：每步前先解一次堵转保护 */
-    T6_STATE_STEP_APPLY,            /* 阶梯测试：下发本步的绝对目标脉冲 */
-    T6_STATE_STEP_RETURN,           /* 阶梯测试：命令回到水平，为下一步做准备 */
+    T6_STATE_RAMP_START,            /* 标定斜坡：抓取起点 X */
+    T6_STATE_RAMP_UP,               /* 标定斜坡：缓慢递增命令，等球开始动 */
+    T6_STATE_RAMP_BACK,             /* 标定斜坡：命令回水平，换方向或出结果 */
+    T6_STATE_RAMP_REPORT,           /* 标定斜坡：两个方向都测完，发布结果 */
     T6_STATE_DWELL,                 /* 通用停留，到时切到 s_dwellNext */
     T6_STATE_CYCLE_END,             /* 一轮结束：循环或收尾 */
     T6_STATE_STOP,                  /* 已急停，下一拍失能 */
@@ -142,8 +164,13 @@ static TickType_t   s_stateStartTick;
 /* 任务层记账的绝对目标脉冲，仅用于 OLED 显示，不参与控制。 */
 static int32_t      s_absTarget;
 
-/* 阶梯测试当前测到第几步（s_stepTestPulses 的下标）。 */
-static uint32_t      s_stepIndex;
+/* ---- 标定斜坡的运行状态与结果 ---- */
+static int32_t       s_rampDir;          /* 当前测的方向：+1 / -1 */
+static int32_t       s_rampCmd;          /* 当前已下发的绝对命令 */
+static int16_t       s_rampStartX;       /* 本方向斜坡开始时的钢珠 X */
+static int32_t       s_rampPosBreak;     /* 正向脱离阈值（幅值），0=未测到 */
+static int32_t       s_rampNegBreak;     /* 负向脱离阈值（幅值），0=未测到 */
+static bool          s_rampReportReady;  /* 结果已就绪，OLED 持续显示 */
 
 /* OLED 一行状态文本：阶段名 + 关联脉冲数。 */
 static const char  *s_uiPhase = "IDLE";
@@ -177,22 +204,60 @@ static void Task6_EnterDwell(TickType_t now, Task6State_t next, uint32_t waitMs)
     s_state          = T6_STATE_DWELL;
 }
 
-/*
- * 阶梯测试的步长是运行时数组值（不是编译期常量），不能直接套用
- * T6_SEGMENT_WAIT_MS 那个基于 T6_TEST_REVS 的宏，改成按传入脉冲数现算：
- * 理论运动时间(ms) = 脉冲数 / 每圈脉冲数 / 转速(RPM) 换算成毫秒，
- * 加上同样的余量百分比，再叠加观察时间。步长越大，等待也要跟着变长，
- * 否则大步长会重蹈"命令被覆盖、丝杆根本没走到位"的覆辙。
- */
-static uint32_t Task6_StepWaitMs(int32_t pulses)
+#if (T6_RAMP_TEST_ENABLE != 0U)
+/* 取绝对值，供斜坡判限和结果换算使用。 */
+static int32_t Task6_Abs32(int32_t value)
 {
-    uint32_t absPulses  = (uint32_t)((pulses < 0) ? -pulses : pulses);
-    uint32_t moveTimeMs = (60000UL * absPulses) /
-                          ((uint32_t)T6_PULSES_PER_REV * (uint32_t)T6_POS_RPM);
-    uint32_t withMargin = (moveTimeMs * (100U + T6_MOVE_MARGIN_PCT)) / 100U;
-
-    return withMargin + T6_STEP_TEST_DWELL_MS;
+    return (value < 0) ? -value : value;
 }
+
+/* 把带符号整数追加到 dst[idx] 起，返回新的写入下标；limit 为可写上界。 */
+static uint32_t Task6_AppendSigned(char *dst, uint32_t idx, int32_t value, uint32_t limit)
+{
+    uint32_t magnitude;
+    char     digits[12];
+    uint32_t n = 0U;
+
+    if (idx >= limit) {
+        return idx;
+    }
+    if (value < 0) {
+        dst[idx++] = '-';
+        magnitude = (uint32_t)(-value);
+    } else {
+        magnitude = (uint32_t)value;
+    }
+    if (magnitude == 0U) {
+        if (idx < limit) {
+            dst[idx++] = '0';
+        }
+        return idx;
+    }
+    while (magnitude > 0U) {
+        digits[n++] = (char)('0' + (magnitude % 10U));
+        magnitude /= 10U;
+    }
+    while ((n > 0U) && (idx < limit)) {
+        dst[idx++] = digits[--n];
+    }
+    return idx;
+}
+
+/* 标定数据经 UART0 打印明细（TX 空闲，视觉只占 RX）；整行加锁保证不被打断。 */
+static void Task6_RampLog(const char *label, int32_t value)
+{
+    BspUart0_Lock();
+    BspUart0_SendString(label);
+    if (value < 0) {
+        BspUart0_SendByte((uint8_t)'-');
+        BspUart0_SendUint((uint32_t)(-value));
+    } else {
+        BspUart0_SendUint((uint32_t)value);
+    }
+    BspUart0_SendString("\r\n");
+    BspUart0_Unlock();
+}
+#endif /* T6_RAMP_TEST_ENABLE */
 
 /* 相对段首段之后的下一站：按开关决定是否走回程。 */
 static Task6State_t Task6_AfterFirstMove(void)
@@ -222,9 +287,14 @@ static Task6State_t Task6_AfterRelative(void)
  */
 static Task6State_t Task6_FirstMoveState(void)
 {
-#if (T6_STEP_TEST_ENABLE != 0U)
-    s_stepIndex = 0U;
-    return T6_STATE_STEP_CLEAR_CLOG;
+#if (T6_RAMP_TEST_ENABLE != 0U)
+    /* 标定斜坡固定从正方向开始，测完自动换负方向。 */
+    s_rampDir         = +1;
+    s_rampCmd         = 0;
+    s_rampPosBreak    = 0;
+    s_rampNegBreak    = 0;
+    s_rampReportReady = false;
+    return T6_STATE_RAMP_START;
 #else
     return T6_STATE_REL_A;
 #endif
@@ -243,7 +313,14 @@ void Task6_OnEnter(void)
     s_dwellMs        = T6_DWELL_MS;
     s_stateStartTick = 0U;
     s_absTarget      = 0;
-    s_stepIndex      = 0U;
+#if (T6_RAMP_TEST_ENABLE != 0U)
+    s_rampDir         = +1;
+    s_rampCmd         = 0;
+    s_rampStartX      = 0;
+    s_rampPosBreak    = 0;
+    s_rampNegBreak    = 0;
+    s_rampReportReady = false;
+#endif
     Task6_SetUi("WAIT BALL", 0, false);
 }
 
@@ -358,42 +435,104 @@ void Task6_OnLoop(void)
         Task6_EnterDwell(now, T6_STATE_CYCLE_END, T6_SEGMENT_WAIT_MS);
         break;
 
-    case T6_STATE_STEP_CLEAR_CLOG:
+#if (T6_RAMP_TEST_ENABLE != 0U)
+    case T6_STATE_RAMP_START: {
+        AppVisionXSample_t sample;
+
         /*
-         * 每步都先解一次堵转保护：如果上一步已经把丝杆顶到机械限位触发了
-         * 堵转保护，不在这里清掉的话，后面所有 MoveAbsolute 都会被驱动器
-         * 拒绝执行（返回 E2）且电机纹丝不动——表现就是"发的脉冲越来越大，
-         * 但从头到尾什么反应都没有"，容易被误判成钢球静摩擦特别大。
+         * 必须先拿到一帧有效 X 当起点，否则无从判断球有没有动。视觉没就绪就
+         * 停在本状态等（OLED 显示 NOX），不会盲目开始加命令。
          */
-        Emm42Robot_ClearClogProtection(EMM42_ROBOT_LIFT);
-        s_state = T6_STATE_STEP_APPLY;
-        break;
+        AppVisionLink_GetLatestX(&sample);
+        if (!sample.valid) {
+            Task6_SetUi((s_rampDir > 0) ? "RAMP+ NOX" : "RAMP- NOX", 0, false);
+            break;
+        }
 
-    case T6_STATE_STEP_APPLY: {
-        int32_t pulses = (int32_t)T6_FIRST_DIR * s_stepTestPulses[s_stepIndex];
-
-        Emm42Robot_MoveAbsolute(EMM42_ROBOT_LIFT, pulses, T6_POS_RPM, T6_POS_ACC);
-        s_absTarget = pulses;
-        Task6_SetUi("STEP", pulses, true);
-        Task6_EnterDwell(now, T6_STATE_STEP_RETURN, Task6_StepWaitMs(pulses));
+        /* 每个方向都从命令 0（归零点）重新起步，两个方向的读数才可比。 */
+        s_rampStartX = sample.pixel;
+        s_rampCmd    = 0;
+        Emm42Robot_MoveAbsolute(EMM42_ROBOT_LIFT, 0, T6_RAMP_RPM, T6_POS_ACC);
+        s_absTarget  = 0;
+        Task6_RampLog((s_rampDir > 0) ? "T6 RAMP+ startX=" : "T6 RAMP- startX=",
+                      (int32_t)s_rampStartX);
+        s_stateStartTick = now;
+        s_state = T6_STATE_RAMP_UP;
         break;
     }
 
-    case T6_STATE_STEP_RETURN: {
-        /* 回程距离跟去程一样远，等待时间也要按同一个步长的脉冲数现算。 */
-        uint32_t waitMs = Task6_StepWaitMs(s_stepTestPulses[s_stepIndex]);
+    case T6_STATE_RAMP_UP: {
+        AppVisionXSample_t sample;
 
-        Emm42Robot_MoveAbsolute(EMM42_ROBOT_LIFT, 0, T6_POS_RPM, T6_POS_ACC);
+        /* 先判球动没动：只用有效帧，NA/无效帧直接跳过，避免误触发。 */
+        AppVisionLink_GetLatestX(&sample);
+        if (sample.valid &&
+            (Task6_Abs32((int32_t)sample.pixel - (int32_t)s_rampStartX) >=
+             T6_RAMP_MOVE_THRESHOLD_PX)) {
+            int32_t magnitude = Task6_Abs32(s_rampCmd);
+
+            if (s_rampDir > 0) {
+                s_rampPosBreak = magnitude;
+                Task6_RampLog("T6 RAMP+ break=", magnitude);
+            } else {
+                s_rampNegBreak = magnitude;
+                Task6_RampLog("T6 RAMP- break=", magnitude);
+            }
+            s_state = T6_STATE_RAMP_BACK;
+            break;
+        }
+
+        /* 到点才加一档，加完立刻下发；单档 20 脉冲远小于间隔，不会被覆盖。 */
+        if (Task6_Elapsed(now, s_stateStartTick, T6_RAMP_INTERVAL_MS)) {
+            s_stateStartTick = now;
+            s_rampCmd += s_rampDir * (int32_t)T6_RAMP_STEP_PULSES;
+            if (Task6_Abs32(s_rampCmd) > T6_RAMP_MAX_PULSES) {
+                /* 到安全上限仍不动：本方向记 0 表示未测到，绝不把上限当结果。 */
+                if (s_rampDir > 0) {
+                    s_rampPosBreak = 0;
+                    Task6_RampLog("T6 RAMP+ NOT FOUND up to ", T6_RAMP_MAX_PULSES);
+                } else {
+                    s_rampNegBreak = 0;
+                    Task6_RampLog("T6 RAMP- NOT FOUND up to ", T6_RAMP_MAX_PULSES);
+                }
+                s_state = T6_STATE_RAMP_BACK;
+                break;
+            }
+            Emm42Robot_MoveAbsolute(EMM42_ROBOT_LIFT, s_rampCmd, T6_RAMP_RPM, T6_POS_ACC);
+            s_absTarget = s_rampCmd;
+        }
+        Task6_SetUi((s_rampDir > 0) ? "RAMP+" : "RAMP-", s_rampCmd, true);
+        break;
+    }
+
+    case T6_STATE_RAMP_BACK:
+        /* 命令回水平，别让球一直被推着滚到端点。 */
+        Emm42Robot_MoveAbsolute(EMM42_ROBOT_LIFT, 0, T6_RAMP_RPM, T6_POS_ACC);
+        s_rampCmd   = 0;
         s_absTarget = 0;
-        Task6_SetUi("STEP RET", 0, true);
-        s_stepIndex++;
-        if (s_stepIndex >= T6_STEP_TEST_COUNT) {
-            Task6_EnterDwell(now, T6_STATE_CYCLE_END, waitMs);
+        if (s_rampDir > 0) {
+            /* 正向测完，留时间把球放回中间，再自动测负向。 */
+            s_rampDir = -1;
+            Task6_SetUi("RECENTER BALL", 0, false);
+            Task6_EnterDwell(now, T6_STATE_RAMP_START, T6_RAMP_RECENTER_MS);
         } else {
-            Task6_EnterDwell(now, T6_STATE_STEP_CLEAR_CLOG, waitMs);
+            s_state = T6_STATE_RAMP_REPORT;
         }
         break;
-    }
+
+    case T6_STATE_RAMP_REPORT:
+        /* 结果交给 GetUiStatus 持续显示；串口再打一遍换算好的两个数。 */
+        s_rampReportReady = true;
+        Task6_RampLog("T6 RAMP RESULT P=", s_rampPosBreak);
+        Task6_RampLog("T6 RAMP RESULT N=", s_rampNegBreak);
+        if ((s_rampPosBreak != 0) && (s_rampNegBreak != 0)) {
+            Task6_RampLog("T6 breakaway B=", (s_rampPosBreak + s_rampNegBreak) / 2);
+            Task6_RampLog("T6 level trim L=", (s_rampPosBreak - s_rampNegBreak) / 2);
+        }
+        RobotCore_NotifyTaskFinished(T6_TASK_INDEX);
+        s_state = T6_STATE_DONE;
+        break;
+#endif /* T6_RAMP_TEST_ENABLE */
 
     case T6_STATE_DWELL:
         if (Task6_Elapsed(now, s_stateStartTick, s_dwellMs)) {
@@ -447,7 +586,11 @@ void Task6_OnExit(void)
     s_dwellMs        = T6_DWELL_MS;
     s_stateStartTick = 0U;
     s_absTarget      = 0;
-    s_stepIndex      = 0U;
+#if (T6_RAMP_TEST_ENABLE != 0U)
+    /* 不清 s_rampPosBreak/NegBreak/ReportReady：退出后结果仍可留在串口日志里核对。 */
+    s_rampDir         = +1;
+    s_rampCmd         = 0;
+#endif
     Task6_SetUi("IDLE", 0, false);
 }
 
@@ -455,6 +598,37 @@ const char *Task6_GetUiStatus(void)
 {
     uint32_t idx = 0U;
     const char *p = s_uiPhase;
+
+#if (T6_RAMP_TEST_ENABLE != 0U)
+    /*
+     * 标定结果优先显示，且一直保持在屏上直到 K4 退出，方便抄数。
+     * 两个方向都测到就直接给换算好的 B/L；有一个方向没测到就给原始 P/N，
+     * 不算平均——否则会输出一个看似合理其实无意义的"实测值"。
+     */
+    if (s_rampReportReady) {
+        if ((s_rampPosBreak != 0) && (s_rampNegBreak != 0)) {
+            s_uiStatusBuf[idx++] = 'B';
+            idx = Task6_AppendSigned(s_uiStatusBuf, idx,
+                                     (s_rampPosBreak + s_rampNegBreak) / 2,
+                                     sizeof(s_uiStatusBuf) - 1U);
+            s_uiStatusBuf[idx++] = ' ';
+            s_uiStatusBuf[idx++] = 'L';
+            idx = Task6_AppendSigned(s_uiStatusBuf, idx,
+                                     (s_rampPosBreak - s_rampNegBreak) / 2,
+                                     sizeof(s_uiStatusBuf) - 1U);
+        } else {
+            s_uiStatusBuf[idx++] = 'P';
+            idx = Task6_AppendSigned(s_uiStatusBuf, idx, s_rampPosBreak,
+                                     sizeof(s_uiStatusBuf) - 1U);
+            s_uiStatusBuf[idx++] = ' ';
+            s_uiStatusBuf[idx++] = 'N';
+            idx = Task6_AppendSigned(s_uiStatusBuf, idx, s_rampNegBreak,
+                                     sizeof(s_uiStatusBuf) - 1U);
+        }
+        s_uiStatusBuf[idx] = '\0';
+        return s_uiStatusBuf;
+    }
+#endif
 
     while ((*p != '\0') && (idx < (sizeof(s_uiStatusBuf) - 1U))) {
         s_uiStatusBuf[idx++] = *p++;

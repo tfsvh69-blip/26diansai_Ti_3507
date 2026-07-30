@@ -42,7 +42,7 @@
 #define T5_LINE_LOST_TICKS                 (20U)
 #define T5_RESET_SETTLE_TICKS              (2U)
 #define T5_ENABLE_SETTLE_TICKS             (6U)
-#define T5_EMM_CMD_GAP_MS                  (5U)
+#define T5_EMM_CMD_GAP_MS                  (6U)
 
 /* 抗抖与转弯减速参数沿用题目二。 */
 #define T5_ERROR_FILTER_ALPHA              (0.5F)
