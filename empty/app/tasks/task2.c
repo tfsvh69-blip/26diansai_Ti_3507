@@ -121,6 +121,15 @@
 #define T2_FINISH_HIT_MIN          (6U)     /* 命中路数 >= 此值视为压到终点宽线 */
 #define T2_FINISH_HIT_TICKS        (1U)     /* 连续满足以上条件的周期数，约 30ms 消抖，避免单拍噪声误停 */
 
+/*
+ * 终点线时间下限：赛道是环形，起跑线和终点线是同一根线。仅凭"武装+命中路数"
+ * 不足以保证车辆真的跑完了一整圈——如果赛道较小、武装判定得比较快，发车后
+ * 短时间内就可能再次经过这根线被误判成终点。加一层时间下限：即使武装、
+ * 命中路数都满足，也要进题目（OnEnter）后累计时间 >= 本值才真正判定到达
+ * 终点，用原始 tick 计数（不叠加 OLED 显示用的 T2_STOPWATCH_CAL_SCALE 校准系数）。
+ */
+#define T2_FINISH_MIN_ELAPSED_MS   (3000U)
+
 /* 每个 OnLoop 周期对应的毫秒数，与 T2_DT_SEC 一致，供秒表换算用。 */
 #define T2_TICK_MS                 (30U)
 
@@ -461,8 +470,9 @@ void Task2_OnLoop(void)
     }
 
     /* 终点判定：先确认已离开出发线（细线持续 T2_FINISH_ARM_TICKS 拍），
-     * 武装后再连续 T2_FINISH_HIT_TICKS 拍命中路数 >= T2_FINISH_HIT_MIN(6)
-     * 才判定到达终点，避免出发瞬间仍压在宽线上被立即误判为"跑完一圈"。 */
+     * 武装后再连续 T2_FINISH_HIT_TICKS 拍命中路数 >= T2_FINISH_HIT_MIN(6)，
+     * 且累计时间 >= T2_FINISH_MIN_ELAPSED_MS，才判定到达终点——环形赛道
+     * 起跑线=终点线，时间下限防止刚发车不久就在同一根线上被误判为跑完一圈。 */
     if (!s_finishArmed) {
         if (hitCount <= T2_FINISH_ARM_HIT_MAX) {
             s_armTicks++;
@@ -473,7 +483,8 @@ void Task2_OnLoop(void)
             s_armTicks = 0U;
         }
     } else if (s_state != T2_STATE_FINISHED) {
-        if (hitCount >= T2_FINISH_HIT_MIN) {
+        if ((hitCount >= T2_FINISH_HIT_MIN) &&
+            ((s_elapsedTicks * T2_TICK_MS) >= T2_FINISH_MIN_ELAPSED_MS)) {
             s_finishHitTicks++;
             if (s_finishHitTicks >= T2_FINISH_HIT_TICKS) {
                 s_state = T2_STATE_FINISHED;

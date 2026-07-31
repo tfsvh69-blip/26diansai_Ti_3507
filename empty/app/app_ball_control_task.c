@@ -377,12 +377,6 @@ static void AppBallControlTask_Entry(void *argument)
     int16_t measuredPx = 0;
     int32_t commandPulse = 0;
     bool holding = false;
-    /*
-     * 软件平滑状态：commandPulse 是本帧实际下发给驱动器的目标（已限速），
-     * smoothPrimed 表示它是否已经有过一个有效起点。首帧不限速直接跳到 PD 输出，
-     * 否则会从一个与电机真实位置无关的起点（如上次退出时的位置）慢慢爬。
-     */
-    bool smoothPrimed = false;
 #if (BALL_CTRL_DEBUG_LOG_ENABLE != 0U)
     uint32_t debugLogCounter = 0U;
 #endif
@@ -413,7 +407,6 @@ static void AppBallControlTask_Entry(void *argument)
                     commandPulse = 0;
                     consecutiveNaCount = 0U;
                     recoveryValidCount = 0U;
-                    smoothPrimed = false;
                     state = BALL_CTRL_INTERNAL_RESET_DISABLE;
                 }
                 /* 已运行时更新 targetPx 即可，不重做电机使能时序。 */
@@ -506,7 +499,6 @@ static void AppBallControlTask_Entry(void *argument)
                                                activeProfile.positionRpm,
                                                activeProfile.positionAcc);
                         commandPulse = activeProfile.levelTrimPulse;
-                        smoothPrimed = true;
                         state = BALL_CTRL_INTERNAL_FAULT_EDGE;
 #if (BALL_CTRL_DEBUG_LOG_ENABLE != 0U)
                         BspUart0_Lock();
@@ -599,15 +591,18 @@ static void AppBallControlTask_Entry(void *argument)
                      * 软件平滑：把 PD 算出的理想目标按每帧最大步进逼近，使驱动器
                      * 收到的是渐进推进的目标而不是阶跃。maxPulseStepPerFrame==0
                      * 时整段退化为直接下发，与历史行为完全一致。
-                     * 首帧（smoothPrimed==false）不限速：此时 commandPulse 还是上次
-                     * 退出时的残留值，与电机当前真实位置无关，从它开始爬没有意义。
+                     * 2026-08 去掉了"首帧不限速"的例外：commandPulse 在每次从 OFF
+                     * 重新启动时（含队列使能分支、STOP 分支）都会显式清零，此时
+                     * ID1 物理上也确实停在零点（ZERO 阶段之前不会下发任何移动
+                     * 命令），从 0 开始按步限速正是"复位/首次起步要慢"这个需求
+                     * 的正确起点，不再需要跳过第一帧（题目五反馈"进入闭环时曲柄
+                     * 摇杆复位过猛"后改的）。
                      */
                     {
                         int32_t idealPulse = BallControl_RoundToInt32(output);
 
-                        if (!smoothPrimed || (activeProfile.maxPulseStepPerFrame == 0U)) {
+                        if (activeProfile.maxPulseStepPerFrame == 0U) {
                             commandPulse = idealPulse;
-                            smoothPrimed = true;
                         } else {
                             int32_t maxStep = (int32_t)activeProfile.maxPulseStepPerFrame;
                             int32_t delta = idealPulse - commandPulse;
@@ -678,8 +673,6 @@ static void AppBallControlTask_Entry(void *argument)
             consecutiveNaCount = 0U;
             recoveryValidCount = 0U;
             holding = false;
-            /* 失能后电机位置不再受命令约束，下次启动首帧必须重新不限速定起点。 */
-            smoothPrimed = false;
             state = BALL_CTRL_INTERNAL_OFF;
             break;
 

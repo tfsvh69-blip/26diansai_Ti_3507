@@ -69,6 +69,15 @@
 #define T3_FINISH_HIT_MIN                  (6U)
 #define T3_FINISH_HIT_TICKS                (1U)
 
+/*
+ * 终点线时间下限：赛道是环形，起跑线和终点线是同一根线。仅凭"武装+命中路数"
+ * 不足以保证车辆真的跑完了一整圈——如果赛道较小、武装判定得比较快，发车后
+ * 短时间内就可能再次经过这根线被误判成终点。加一层时间下限：即使武装、
+ * 命中路数都满足，也要累计时间 >= 本值才真正判定到达终点，用原始 tick
+ * 计数（不叠加 OLED 显示用的 T3_STOPWATCH_CAL_SCALE 校准系数）。
+ */
+#define T3_FINISH_MIN_ELAPSED_MS           (3000U)
+
 /* 秒表与定时减速参数。 */
 #define T3_STOPWATCH_CAL_SCALE             (0.897F)
 #define T3_DECEL_START_MS                  (14500U)
@@ -588,7 +597,8 @@ void Task3_OnLoop(void)
             s_armTicks = 0U;
         }
     } else if (s_state != T3_STATE_FINISHED) {
-        if (hitCount >= T3_FINISH_HIT_MIN) {
+        if ((hitCount >= T3_FINISH_HIT_MIN) &&
+            ((s_elapsedTicks * T3_TICK_MS) >= T3_FINISH_MIN_ELAPSED_MS)) {
             s_finishHitTicks++;
             if (s_finishHitTicks >= T3_FINISH_HIT_TICKS) {
                 s_state = T3_STATE_FINISHED;

@@ -33,10 +33,18 @@
  * （期间继续循迹 PID 修正，尽量平稳停住），最后两拍发送速度模式 0 RPM 收尾。
  * ================================================================== */
 
-/* PID 增益、积分限幅与转向输出限幅：与题目四当前值一致，用户可继续独立调参。 */
-#define T5_KP                              (5.0F)
-#define T5_KI                              (0.15F)
-#define T5_KD                              (0.2F)
+/*
+ * PID 增益、积分限幅与转向输出限幅：初值与题目四当前值一致。
+ * 2026-08 实车反馈"直线巡线左右摆动得比较厉害、过弯也有震动"后第一轮retune：
+ * Kp 5.0→3.0（原值对离散 8 路灰度这种台阶式误差偏敏感，小误差就打出较大转向量，
+ * 容易在直道上来回过修正形成等幅摆动）；Kd 0.2→0.35（加大阻尼，压制摆动本身，
+ * 不像单纯降 Kp 那样牺牲太多响应速度）。这是新一轮起点值，不是已验证的最终值，
+ * 需要上车看：摆动明显减轻但过弯跟不上（切内角/冲出）→ Kp 适当调回大一点；
+ * 摆动还在→ Kp 继续往下、或 Kd 继续往上。
+ */
+#define T5_KP                              (2.2F)
+#define T5_KI                              (0.2)
+#define T5_KD                              (0.7F)
 #define T5_INTEGRAL_LIMIT                  (20.0F)
 #define T5_MAX_STEER_RPM                   (100.0F)
 
@@ -55,7 +63,7 @@
  * 结束后，从当前值原样每拍向下压到 0——用户明确要求"跟小车从零加速一样的加速度
  * 来减速"，因此加速、减速共用同一个速率，不再另开一个缓停参数。
  */
-#define T5_RAMP_RPM_PER_SEC                (24.0F)
+#define T5_RAMP_RPM_PER_SEC                (20.0F)
 
 /* 末段硬停用的驱动器曲线档位：此时软件斜坡已经把速度压到接近 0，这里只是让驱动器内部目标也归零，数值本身影响很小。 */
 #define T5_STOP_EMM_ACC                    (80U)
@@ -70,10 +78,17 @@
 #define T5_ENABLE_SETTLE_TICKS             (6U)
 #define T5_EMM_CMD_GAP_MS                  (6U)
 
-/* 误差滤波、死区和转弯减速参数：与题目二/四一致。 */
+/* 误差滤波、死区和转弯减速参数：初值与题目二/四一致。 */
 #define T5_ERROR_FILTER_ALPHA              (0.5F)
-#define T5_ERROR_DEADBAND                  (1.0F)
-#define T5_CORNER_SLOWDOWN_GAIN            (0.6F)
+/*
+ * 死区 1.0→2.0：8 路灰度加权误差最小非零台阶就是 ±1（单路偏移一档），原死区
+ * 1.0 卡在"等于 1 不算小"的边界上，这个最小台阶完全不会被过滤掉，直道上车身
+ * 只要有一丁点没对准，就会被当成需要修正的误差持续打转向量，是"直线左右
+ * 摆动"的另一个来源（跟上面 Kp 偏大是两个独立成因，一起改）。调到 2.0 后至少
+ * 单路最小偏移会被吃掉，仍然对 2 档以上的真实偏移保持响应。
+ */
+#define T5_ERROR_DEADBAND                  (2.0F)
+#define T5_CORNER_SLOWDOWN_GAIN            (0.65F)
 
 /*
  * 转向输出软件限速（RPM/秒）：题目五独有，题目二/四没有这个环节。
@@ -103,6 +118,16 @@
 #define T5_STOP_LINE_HIT_MIN               (5U)
 
 /*
+ * 终点线时间下限：赛道是环形，起跑线和终点线是同一根线。仅凭"武装+命中路数"
+ * 不足以保证车辆真的跑完了一整圈——如果赛道较小或武装判定得比较快，发车后
+ * 短时间内就可能再次经过这根线（或其他满足命中条件的黑色区域）被误判成
+ * 终点。加一层时间下限：即使武装、命中路数都满足，也要发车（第二次 K3）
+ * 后累计前进时间 >= 本值才真正判定到达终点，用原始 tick 计数（不叠加 OLED
+ * 显示用的 T5_STOPWATCH_CAL_SCALE 校准系数）。
+ */
+#define T5_FINISH_MIN_ELAPSED_MS           (3000U)
+
+/*
  * 到达终点线后"保持当前速度直直地前进"的总时长，1500ms 后才转入缓停。
  * 蜂鸣器第二次响、通知视觉端结束录像不是在这 1500ms 走完时触发，而是在
  * 其中更早的 T5_BEEP_DELAY_MS(800ms) 时刻——两者都由用户本次明确给出。
@@ -125,13 +150,26 @@
 #define T5_BALL_FILTER_ALPHA                (0.9F)
 #define T5_BALL_FILTER_BETA                 (0.2F)
 #define T5_BALL_OUTPUT_SIGN                 (-1.0F)
-#define T5_BALL_KX_PULSE_PER_PX             (1.0F)
-#define T5_BALL_KV_PULSE_PER_PXPS           (0.55F)
+#define T5_BALL_KX_PULSE_PER_PX             (1.066F)
+#define T5_BALL_KV_PULSE_PER_PXPS           (0.504F)
 #define T5_BALL_SETTLE_DEADBAND_PX          (4.0F)
 #define T5_BALL_FF_VEL_BLEND_PXPS           (15.0F)
 #define T5_BALL_POS_RPM                     (200U)
 #define T5_BALL_POS_ACC                     (240U)
-#define T5_BALL_MAX_PULSE_STEP              (0U)
+/*
+ * 软件限速：每帧最多允许下发的绝对目标变化量（脉冲），0=不限速。
+ *
+ * 2026-08 之前是 0（首帧不限速直跳到 PD 算出的目标，进入闭环时曲柄摇杆
+ * "冲"那一下很猛）。现在给非 0 值让目标从 0（ZERO 阶段的零点）开始按
+ * 每帧最多这么多脉冲逐步逼近，等效于限制起步阶段的平均加速度。
+ *
+ * 参考开机归零的 LIFT_HOMING_SEEK_RPM=5：在约 50fps（视觉帧间隔）下
+ * 等效为 5*3200/60/50 ≈ 5.3 脉冲/帧。这里取 10 留一倍余量——起步时
+ * 每帧目标只挪 10 脉冲，驱动器配合 T5_BALL_POS_ACC 在内部做曲线平滑，
+ * 整体观感跟开机归零慢速下降一致；到目标后会自然定住。调小会更慢、
+ * 调大能更快跟上球位置变化，视实车反馈现场调。
+ */
+#define T5_BALL_MAX_PULSE_STEP              (10U)
 #define T5_BALL_HOLD_POSITION_PX            (6.0F)
 #define T5_BALL_HOLD_VELOCITY_PXPS          (10.0F)
 #define T5_BALL_HOLD_TIME_MS                (500U)
@@ -786,10 +824,15 @@ void Task5_OnLoop(void)
         return;
     }
 
-    /* T5_STATE_RUN：正常循迹，武装后首次命中 >=5 路即判定到达终点。 */
+    /*
+     * T5_STATE_RUN：正常循迹，武装后首次命中 >=5 路、且发车后累计时间已
+     * >= T5_FINISH_MIN_ELAPSED_MS 才判定到达终点（环形赛道起跑线=终点线，
+     * 时间下限防止刚发车不久就在同一根线上被误判）。
+     */
     lineFound = Task5_GetLineError(&rawError, &hitCount);
 
-    if (s_finishArmed && (hitCount >= T5_STOP_LINE_HIT_MIN)) {
+    if (s_finishArmed && (hitCount >= T5_STOP_LINE_HIT_MIN) &&
+        ((s_elapsedTicks * T5_TICK_MS) >= T5_FINISH_MIN_ELAPSED_MS)) {
         s_state = T5_STATE_AFTER_LINE;
         s_afterLineElapsedMs = 0U;
         /* 记录当前平均转速，AFTER_LINE 阶段两轮都按此值直行，不再有转向修正。 */

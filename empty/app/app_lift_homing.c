@@ -56,7 +56,7 @@
  *   停得比水平【低】→ 调大；停得比水平【高】→ 调小。
  * 改这一个数即可，方向和流程不用动。
  */
-#define LIFT_HOMING_LEVEL_OFFSET_PULSES (205)
+#define LIFT_HOMING_LEVEL_OFFSET_PULSES (210)
 
 /* ---- 机械/协议换算（与 task6 各自独立维护同一常量，不共享） ---- */
 #define LIFT_HOMING_PULSES_PER_REV      (3200U)  /* 16 细分 = 3200 脉冲/圈，须与驱动器 MStep 一致 */
