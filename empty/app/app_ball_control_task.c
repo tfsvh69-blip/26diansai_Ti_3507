@@ -9,6 +9,7 @@
 #include "alpha_beta_filter.h"
 #include "app_config.h"
 #include "app_vision_link.h"
+#include "bsp_uart.h"
 #include "emm42_robot.h"
 
 /* ==================================================================
@@ -172,6 +173,17 @@
 #define BALL_CTRL_SAFE_X_MIN_PX           (20)
 #define BALL_CTRL_SAFE_X_MAX_PX           (620)
 
+/*
+ * 2026-08 临时调试开关：把每次实际算出命令的关键量打到 UART0（TX 空闲，只有
+ * 视觉占 RX，互不冲突，用法与 task6 标定斜坡的日志一致）。用来分层排查"链路通、
+ * 电机通，但球还是稳不住"这类问题——能直接看到目标/测量/滤波位置/速度/命令
+ * 脉冲/状态，不用再靠猜。排查完建议改回 0，长期开着会占一部分 CPU 和串口带宽。
+ * DIVIDER 用来降频：每隔这么多次"有新有效样本"才打印一行，避免刷屏
+ * （视觉约 15~60fps，DIVIDER=5 时输出约 3~12 行/秒，人眼能跟得上）。
+ */
+#define BALL_CTRL_DEBUG_LOG_ENABLE        (1U)
+#define BALL_CTRL_DEBUG_LOG_DIVIDER       (5U)
+
 /* 模块内置默认参数（AppBallControl_RequestTarget 用）；各题目通过独立 profile 覆盖。 */
 static const AppBallControlProfile_t s_menuProfile = {
     BALL_CTRL_FILTER_ALPHA,
@@ -244,6 +256,57 @@ static int32_t BallControl_RoundToInt32(float value)
     }
     return (int32_t)(value - 0.5F);
 }
+
+#if (BALL_CTRL_DEBUG_LOG_ENABLE != 0U)
+/*
+ * 无锁输出带符号整数（调用方已经用 BspUart0_Lock 包住整行拼接）；浮点量先四舍
+ * 五入成整数再打，串口带宽有限，小数位对排查没有额外价值。
+ */
+static void BallControl_LogSignedInt(int32_t value)
+{
+    if (value < 0) {
+        BspUart0_SendByte((uint8_t)'-');
+        BspUart0_SendUint((uint32_t)(-value));
+    } else {
+        BspUart0_SendUint((uint32_t)value);
+    }
+}
+
+static void BallControl_LogSignedFloat(float value)
+{
+    BallControl_LogSignedInt(BallControl_RoundToInt32(value));
+}
+
+/*
+ * 打一行完整诊断：新样本序号、目标/测量/滤波位置、滤波速度、误差、最终下发的
+ * 绝对脉冲、当前状态。放在“确实算出了一条新命令”的地方调用，配合
+ * BALL_CTRL_DEBUG_LOG_DIVIDER 降频，不在每一帧都打。
+ */
+static void BallControl_LogSample(uint32_t seq, int16_t targetPx, int16_t measuredPx,
+                                  const AlphaBetaFilter_t *filter, float rawError,
+                                  int32_t commandPulse, const char *stateTag)
+{
+    BspUart0_Lock();
+    BspUart0_SendString("BC seq=");
+    BspUart0_SendUint(seq);
+    BspUart0_SendString(" tgt=");
+    BspUart0_SendUint((uint32_t)targetPx);
+    BspUart0_SendString(" meas=");
+    BspUart0_SendUint((uint32_t)measuredPx);
+    BspUart0_SendString(" filt=");
+    BallControl_LogSignedFloat(filter->position);
+    BspUart0_SendString(" v=");
+    BallControl_LogSignedFloat(filter->velocity);
+    BspUart0_SendString(" err=");
+    BallControl_LogSignedFloat(rawError);
+    BspUart0_SendString(" cmd=");
+    BallControl_LogSignedInt(commandPulse);
+    BspUart0_SendString(" st=");
+    BspUart0_SendString(stateTag);
+    BspUart0_SendString("\r\n");
+    BspUart0_Unlock();
+}
+#endif /* BALL_CTRL_DEBUG_LOG_ENABLE */
 
 static AppBallControlState_t BallControl_ToPublicState(BallControlInternalState_t state,
                                                        bool holding)
@@ -320,6 +383,9 @@ static void AppBallControlTask_Entry(void *argument)
      * 否则会从一个与电机真实位置无关的起点（如上次退出时的位置）慢慢爬。
      */
     bool smoothPrimed = false;
+#if (BALL_CTRL_DEBUG_LOG_ENABLE != 0U)
+    uint32_t debugLogCounter = 0U;
+#endif
 
     (void)argument;
     AlphaBetaFilter_Init(&filter, activeProfile.filterAlpha, activeProfile.filterBeta);
@@ -413,6 +479,14 @@ static void AppBallControlTask_Entry(void *argument)
                         holding = false;
                         holdStartTick = 0U;
                         state = BALL_CTRL_INTERNAL_LOST;
+#if (BALL_CTRL_DEBUG_LOG_ENABLE != 0U)
+                        /* LOST 转换不受降频限制：这种边界事件本来就少，全打出来更有用。 */
+                        BspUart0_Lock();
+                        BspUart0_SendString("BC seq=");
+                        BspUart0_SendUint(seenSampleSeq);
+                        BspUart0_SendString(" st=LOST(consecutive NA)\r\n");
+                        BspUart0_Unlock();
+#endif
                     }
                 } else if (vision.valid) {
                     float dtSec;
@@ -434,6 +508,15 @@ static void AppBallControlTask_Entry(void *argument)
                         commandPulse = activeProfile.levelTrimPulse;
                         smoothPrimed = true;
                         state = BALL_CTRL_INTERNAL_FAULT_EDGE;
+#if (BALL_CTRL_DEBUG_LOG_ENABLE != 0U)
+                        BspUart0_Lock();
+                        BspUart0_SendString("BC seq=");
+                        BspUart0_SendUint(seenSampleSeq);
+                        BspUart0_SendString(" meas=");
+                        BspUart0_SendUint((uint32_t)measuredPx);
+                        BspUart0_SendString(" st=FAULT_EDGE\r\n");
+                        BspUart0_Unlock();
+#endif
                         break;
                     }
 
@@ -542,6 +625,17 @@ static void AppBallControlTask_Entry(void *argument)
                                            activeProfile.positionRpm,
                                            activeProfile.positionAcc);
                     state = BALL_CTRL_INTERNAL_ACTIVE;
+
+#if (BALL_CTRL_DEBUG_LOG_ENABLE != 0U)
+                    /* 降频打印，避免视觉 15~60fps 全量打印刷屏/占满带宽。 */
+                    debugLogCounter++;
+                    if (debugLogCounter >= BALL_CTRL_DEBUG_LOG_DIVIDER) {
+                        debugLogCounter = 0U;
+                        BallControl_LogSample(seenSampleSeq, targetPx, measuredPx,
+                                              &filter, rawError, commandPulse,
+                                              (pulseDelta == 0.0F) ? "HOLD" : "RUN");
+                    }
+#endif
 
                     if ((BallControl_Abs(rawError) <= activeProfile.holdPositionPx) &&
                         (BallControl_Abs(filter.velocity) <= activeProfile.holdVelocityPxps)) {

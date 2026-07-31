@@ -159,6 +159,9 @@ Nrf24TxResult_t Nrf24_SendUsbUartText(const uint8_t *text, uint8_t textLength);
 - ID1 的位置原点仍由 `BALLCTRL` 首次启动时清零建立，本题不发送位置清零命令。
 
 **题目四 `LINE 6S`**（`task4.c`）：
+- **2026-08 新增两段式手动启动**：从菜单按 K3 进题目后**什么都不动**（ID1 不闭环、轮子不使能），OLED 显示 `T4 K3=BALL`；**第一次按 K3** 启动球杆平衡（`T4_STATE_WAIT_BALL_CONTROL` → 后台接管 ID1 后进 `T4_STATE_BALL_READY`，OLED 显示 `T4 K3=GO`）；**第二次按 K3** 才走轮子使能时序并开始循迹前进、秒表开始计时。中间的等待态供操作者目视确认小球已稳住再发车。
+- 运行态 K3 的分发路径：`app_ui_task.c` 检测到 K3 按下沿 → `RobotCore_ConfirmTask()` → 题目表新增的 `onConfirm` 钩子 → `Task4_OnConfirm()`。**其余题目的 `onConfirm` 登记为 `NULL`，行为完全不变**；题目层不自行轮询按键（KEY1~4 由 UIMENU 独占并统一去抖）。
+- 秒表只统计发车之后的时间（`T4_STATE_IDLE`/`WAIT_BALL_CONTROL`/`BALL_READY` 均不计时）；到 6.5 秒缓停完成或触发终点保护时，**蜂鸣器短促响一声**（`s_finishBeeped` 保证只响一次，与按键共用 `BspBuzzer_BeepShort()`，做法同题目二），OLED 秒表定格并追加 ` DONE`。
 - 循迹 PID、入场状态机、丢线保护、终点保护、转弯减速、定时减速和所有同名参数均照搬题目二，仅使用独立的 `T4_*` 参数，便于单独调试。
 - 进入后先通过 `AppBallControl_RequestTargetWithProfile()` 投递独立 `T4_BALL_*` profile，目标固定 `X=320`；后台闭环发布 `RUNNING/HOLDING` 且已确认目标后，任务四才开始 ID2/ID3 的使能时序。因此车辆移动期间 ID1 始终由后台位置模式闭环平衡钢珠。`T4_BALL_*` 初值来自任务三第一阶段，后续只调这一组，不影响 `T3_STAGE1_*` 或菜单参数。为消除车辆扰动刚出现时的无补偿区，任务四单独将 `T4_BALL_SETTLE_DEADBAND_PX` 设为 `3px`；任务三仍保留自身的 `10px`。
 - 仅有业务差异：正常循迹累计前进 `T4_STOP_AFTER_MS=6500ms` 后，状态机分两拍给 ID2、ID3 发送速度模式 `0 RPM`，每拍只发一帧以避免共享 UART1 总线丢帧。

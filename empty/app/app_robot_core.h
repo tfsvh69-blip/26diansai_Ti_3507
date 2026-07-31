@@ -38,6 +38,14 @@ void RobotCore_LoopTask(uint32_t taskIdx);
 /* 退出题目：调该题的 onExit 钩子。 */
 void RobotCore_ExitTask(uint32_t taskIdx);
 
+/*
+ * 运行态确认键（K3）按下沿：由 UIMENU 在检测到边沿时调用，转发给该题的
+ * onConfirm 钩子。题目不自己轮询按键——KEY1~4 由 UIMENU 独占并统一去抖，
+ * 题目层重复读取会与 UI 的边沿状态打架。
+ * 未登记 onConfirm 的题目（钩子为 NULL）忽略该事件，行为不变。
+ */
+void RobotCore_ConfirmTask(uint32_t taskIdx);
+
 /* 题目状态机自动完成或进入故障安全态时调用，通知视觉端停止本次录像。 */
 void RobotCore_NotifyTaskFinished(uint32_t taskIdx);
 

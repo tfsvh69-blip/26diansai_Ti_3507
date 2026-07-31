@@ -29,19 +29,21 @@ typedef struct {
     void (*onEnter)(void);     /* 进入本题一次性初始化（app/tasks/taskN.c） */
     void (*onLoop)(void);      /* 运行态每 30ms 调用一次（状态机主体） */
     void (*onExit)(void);      /* 返回菜单时收尾（急停/失能/复位） */
+    void (*onConfirm)(void);   /* 运行态 K3 按下沿（可为 NULL，表示本题不用） */
 } RobotTask_t;
 
 /*
  * 6 道题登记表。题名可按实际赛题改成有意义的短名（如 "LINE","PARK"）。
  * 钩子实现分别在 app/tasks/task1.c ~ task6.c。
+ * onConfirm 为 NULL 的题目在运行态忽略 K3，行为与加此钩子之前完全一致。
  */
 static const RobotTask_t s_robotTasks[] = {
-    { "VIDEO 5S", Task1_OnEnter, Task1_OnLoop, Task1_OnExit },
-    { "LINE PID", Task2_OnEnter, Task2_OnLoop, Task2_OnExit },
-    { "Task 3", Task3_OnEnter, Task3_OnLoop, Task3_OnExit },
-    { "LINE 6S", Task4_OnEnter, Task4_OnLoop, Task4_OnExit },
-    { "Five", Task5_OnEnter, Task5_OnLoop, Task5_OnExit },
-    { "ID1 POS", Task6_OnEnter, Task6_OnLoop, Task6_OnExit },
+    { "VIDEO 5S", Task1_OnEnter, Task1_OnLoop, Task1_OnExit, NULL },
+    { "LINE PID", Task2_OnEnter, Task2_OnLoop, Task2_OnExit, NULL },
+    { "Task 3", Task3_OnEnter, Task3_OnLoop, Task3_OnExit, NULL },
+    { "LINE 6S", Task4_OnEnter, Task4_OnLoop, Task4_OnExit, Task4_OnConfirm },
+    { "Five", Task5_OnEnter, Task5_OnLoop, Task5_OnExit, NULL },
+    { "ID1 POS", Task6_OnEnter, Task6_OnLoop, Task6_OnExit, NULL },
 };
 
 #define ROBOT_TASK_COUNT \
@@ -105,6 +107,16 @@ void RobotCore_LoopTask(uint32_t taskIdx)
     }
     if (s_robotTasks[taskIdx].onLoop != NULL) {
         s_robotTasks[taskIdx].onLoop();
+    }
+}
+
+void RobotCore_ConfirmTask(uint32_t taskIdx)
+{
+    if (taskIdx >= ROBOT_TASK_COUNT) {
+        return;
+    }
+    if (s_robotTasks[taskIdx].onConfirm != NULL) {
+        s_robotTasks[taskIdx].onConfirm();
     }
 }
 

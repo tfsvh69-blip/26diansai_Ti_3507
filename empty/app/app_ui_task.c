@@ -494,6 +494,14 @@ static void AppUiTask_Entry(void *argument)
                 state = UI_STATE_MENU;
                 Ui_DrawMenu();
             } else {
+                /*
+                 * 运行态 K3 转发给题目（题目四用它分两步启动球杆平衡与小车）。
+                 * 先派发确认再跑 onLoop，本拍就能看到新状态；未登记 onConfirm
+                 * 的题目内部直接忽略。
+                 */
+                if (edge[BSP_KEY_3]) {
+                    RobotCore_ConfirmTask(s_sel);
+                }
                 RobotCore_LoopTask(s_sel);
             }
         }

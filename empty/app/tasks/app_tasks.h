@@ -67,6 +67,12 @@ void Task4_OnEnter(void);
 void Task4_OnLoop(void);
 void Task4_OnExit(void);
 
+/*
+ * 运行态 K3 按下沿（由 UIMENU 经 RobotCore_ConfirmTask 转发）。
+ * 题目四用它分两步启动：第一次按启动球杆平衡，第二次按小车才开始循迹前进。
+ */
+void Task4_OnConfirm(void);
+
 /* 取题目四当前秒表计时文本（6.5 秒缓停后追加" DONE"），供 OLED 运行界面显示。 */
 const char *Task4_GetUiStatus(void);
 

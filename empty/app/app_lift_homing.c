@@ -39,8 +39,8 @@
  * ================================================================== */
 
 /* ---- 运动参数（本模块私有，不与其它任务共享；纯可调，不叠加软件限幅） ---- */
-#define LIFT_HOMING_SEEK_RPM            (20)     /* 下降逼近限位开关的速度；越慢触发点越精确 */
-#define LIFT_HOMING_LIFT_RPM            (20U)    /* 触发后抬升到水平位置的速度 */
+#define LIFT_HOMING_SEEK_RPM            (5)     /* 下降逼近限位开关的速度；越慢触发点越精确 */
+#define LIFT_HOMING_LIFT_RPM            (5U)    /* 触发后抬升到水平位置的速度 */
 #define LIFT_HOMING_ACC                 (0U)     /* 加速度档位，0=不用曲线直接按设定速度跑 */
 #define LIFT_HOMING_POLL_MS             (5U)     /* 轮询限位开关的间隔 */
 #define LIFT_HOMING_STOP_SETTLE_MS      (20U)    /* 触发急停后的稳定等待，再下发抬升命令 */
@@ -56,7 +56,7 @@
  *   停得比水平【低】→ 调大；停得比水平【高】→ 调小。
  * 改这一个数即可，方向和流程不用动。
  */
-#define LIFT_HOMING_LEVEL_OFFSET_PULSES (600)
+#define LIFT_HOMING_LEVEL_OFFSET_PULSES (205)
 
 /* ---- 机械/协议换算（与 task6 各自独立维护同一常量，不共享） ---- */
 #define LIFT_HOMING_PULSES_PER_REV      (3200U)  /* 16 细分 = 3200 脉冲/圈，须与驱动器 MStep 一致 */
