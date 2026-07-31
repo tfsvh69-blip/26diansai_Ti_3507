@@ -8,29 +8,30 @@
 
 ## 项目结构
 
-工程主体在 `empty/`：`app/` 放任务、业务流程和题目状态机，题目 N 使用 `app/tasks/taskN.c`；当前 5 道题均为硬件/函数测试（非正式赛题）：题目一 `VIDEO 5S`（通过视觉协议录制 5 秒无叠加标注的正常画面）、题目二 `LINE PID`（8 路灰度 PID 循迹）、题目三 `Task 3`（当前第一阶段复用 ID1 位置模式闭环，从 `X=325` 到 `X=415±10px` 并低速稳定 200ms，首帧控制起不超过 5 秒；只调 `T3_STAGE1_*`，后续第二阶段另建参数组）、题目四 `LINE 6S`（循迹时通过独立 `T4_BALL_*` profile 同步保持钢珠 `X=320`，后台闭环就绪后才起步；累计前进 6.5 秒后以速度模式 0 RPM 缓停）、题目五 `Five`（低速横向停止线后 0.5 秒循迹并线性缓停，UART1 仅控制左/右轮 ID2/ID3）、题目六 `ID1 POS`（仅对 Emm42 ID1 做位置模式 API 冒烟测试：进题目自动清零定原点，再按 `T6_RETURN_ENABLE`/`T6_ABS_TEST_ENABLE` 决定单程/往返/绝对验证，当前默认正转 10 圈后停住量丝杆导程），菜单任一按键短促嘀声（约2~3ms），题目二、五自动完成时使用同一短促提示音，M1/M2 已在 BSP 全局取反标定。题目四的缓停加速度由 `T4_STOP_EMM_ACC` 传给 `Emm42Robot_VelControl()`，该接口会保留 0 RPM 速度模式帧；K4 退出和终点保护仍急停。`algo/` 放可跨题复用的纯算法（PID 控制器、角度差值/归一化），任务层只保留可调参数宏。`bsp/` 放板级与外设驱动，手写 DriverLib 初始化位于 `bsp/board/ti_msp_dl_config.c`；`module/` 放可复用设备/协议模块；`common/` 放功能开关、FreeRTOS 配置和共享消息；`docs/` 放任务、接线、UART、控制算法和架构记录。
+工程主体在 `empty/`：`app/` 放任务、业务流程和题目状态机，题目 N 使用 `app/tasks/taskN.c`；当前 5 道题均为硬件/函数测试（非正式赛题）：题目一 `VIDEO 5S`（通过视觉协议录制 5 秒无叠加标注的正常画面）、题目二 `LINE PID`（8 路灰度 PID 循迹）、题目三 `Task 3`（**2026-08 由题目四整体移植，是 task4 框架的完整副本**，独立 `T3_*` 参数组，原第一阶段定位业务已废弃）、题目四 `LINE 6S`（**两段式 K3 启动**：第一次 K3 启动独立 `T4_BALL_*` profile 的钢珠位置闭环并等待就绪，第二次 K3 才使能 ID2/ID3 循迹前进、录像开始、秒表开始计时；累计前进 `T4_STOP_AFTER_MS` 后以速度模式 0 RPM 缓停，`T4_STATE_TIME_STOPPED`/`FINISHED` 是真正终止态，入口即 `return`，不会被后续逻辑误拨回 `RUN`）、题目五 `Five`（**2026-08 同样改为两段式 K3 启动**，加速度/顶速参考题目四当前值；武装后循迹命中 `T5_STOP_LINE_HIT_MIN`（当前 5/8 路）即判定到达终点，两轮改为同一转速直行，维持 `T5_AFTER_LINE_MS`（当前 1500ms）后转入缓停；蜂鸣器第二次响、结束录像不等直行走完，在其中更早的 `T5_BEEP_DELAY_MS`（当前 800ms）先触发，之后再用与起步同一根软件斜坡 `T5_RAMP_RPM_PER_SEC` 对称降速到 0；另有题目二/四没有的转向输出软件限速 `T5_STEER_SLEW_RPM_PER_SEC`，抑制离散灰度台阶式转向量一拍到位导致的过弯横摆带得钢珠晃动）、题目六 `ID1 POS`（仅对 Emm42 ID1 做位置模式 API 冒烟测试：进题目自动清零定原点，再按 `T6_RETURN_ENABLE`/`T6_ABS_TEST_ENABLE` 决定单程/往返/绝对验证），菜单任一按键短促嘀声（约2~3ms），题目二、四、五自动完成时使用同一短促提示音，M1/M2 已在 BSP 全局取反标定。题目四的缓停加速度由 `T4_STOP_EMM_ACC` 传给 `Emm42Robot_VelControl()`，该接口会保留 0 RPM 速度模式帧；K4 退出和终点保护仍急停。`algo/` 放可跨题复用的纯算法（PID 控制器、角度差值/归一化、α-β 滤波），任务层只保留可调参数宏。`bsp/` 放板级与外设驱动，手写 DriverLib 初始化位于 `bsp/board/ti_msp_dl_config.c`；`module/` 放可复用设备/协议模块；`common/` 放功能开关、FreeRTOS 配置和共享消息；`docs/` 放任务、接线、UART、控制算法和架构记录。
 
 `source/ti/` 与 `empty/third_party/` 属于 SDK 或第三方代码，除非任务明确涉及 SDK 或 FreeRTOS 移植，否则不要修改。
 
 钢球位置控制使用独立 `app/app_ball_control_task.c`（`BALLCTRL`）线程：上电默认
-OFF，由题目三/四经 profile 接口按需启停（菜单已不提供 K4 启停入口，见下方
-「ID1 开机自动归零」）；运行态 K4 仍退出当前题目。线程只在约
-15Hz 的新视觉 `xSeq` 上用 α-β + 局部 PID 更新 Emm42 ID1；I 项只在新有效帧、
-原始误差 1~12px 且低速时按真实帧间隔累积，并单独限制为 ±2RPM；目标变化、
-DEG/LOST、误差过零、低误差、高速度或安全故障时必须清零 I。正常 RUN 状态不做
-最大 RPM、软件斜率或驱动器加速度曲线限制。单次 `X,NA` 或
-130ms 无有效 X 进入 `B:DEG`，每 20ms 把命令向 0 RPM 回退 2 RPM；连续两帧
-NA 或 220ms 无有效 X 才进入 `B:LOST` 急停，恢复需连续两帧有效 X。方向发散或
-画面边缘仍立即保护停车；不再使用软件估算行程限幅。后续题目可通过
-`AppBallControl_RequestTarget()` 使用菜单默认参数，或通过按值复制 profile 的
-`AppBallControl_RequestTargetWithProfile()` 使用独立参数；题目三先等待后台闭环释放
-ID1，再使用自身 `T3_STAGE1_*` profile 执行第一阶段 `325→415` 定位，绝不重置本次上电后
-第一次启动时建立的相对零点；题目四则以 `T4_BALL_*` profile 与 ID2/ID3 循迹并发保持 `X=320`。具体
-上车步骤和参数以 `empty/docs/BALL_CONTROL.md` 为准。
+OFF，由各题目经 profile 接口按需启停（菜单已不提供 K4 启停入口，见下方
+「ID1 开机自动归零」）；运行态 K4 仍退出当前题目。线程只在新视觉 `xSeq`
+到达时用 α-β + 局部 PD（**位置模式，无 I 项**）更新 Emm42 ID1 的绝对目标脉冲；
+误差进 `settleDeadbandPx` 死区【且】球基本停住才回真实水平点保持；唯一仍
+主动出手的保护是边缘保护（球快滚出摆杆，命令回水平并锁定 `FAULT_EDGE`，
+等题目自行发起"停止→等释放→重新请求"的恢复握手）。profile 另含
+`maxPulseStepPerFrame`（软件限速，把目标突变摊到多帧，0=不限速，菜单/
+题目三保持默认）。**临时调试**：`app_ball_control_task.c` 顶部
+`BALL_CTRL_DEBUG_LOG_ENABLE`（默认 0）打开后把每次算出的目标/测量/滤波
+位置/速度/命令脉冲/状态打到 UART0（TX 空闲不影响视觉 RX），排查完记得关闭。
+后续题目可通过 `AppBallControl_RequestTarget()` 使用菜单默认参数，或通过按值
+复制 profile 的 `AppBallControl_RequestTargetWithProfile()` 使用独立参数；题目三、
+四各自持有独立 `T3_*`/`T4_BALL_*` profile（题目三现为题目四框架的完整副本），
+互不影响。具体上车步骤和参数以 `empty/docs/BALL_CONTROL.md`、
+`empty/docs/CONTROL_ALGORITHM.md` §10 为准。
 
 ### ID1 开机自动归零
 
-P1 接口（原继电器接口，PA24）已改接一颗轻触开关，作为 ID1（摆杆升降丝杆）的
+P1 接口（原继电器接口，PA24）已改接一颗轻触开关，作为 ID1（摆杆曲柄摇臂）的
 归零限位开关；继电器功能与 `bsp_relay.c/h`、`app_relay_test_task.c/h`、
 `APP_FEATURE_RELAY`/`APP_FEATURE_RELAY_SELFTEST` 已整体删除。`App_Init()` 在
 `Emm42Robot_Init()` 之后、任何任务创建前调用 `app/app_lift_homing.c` 的
@@ -52,17 +53,17 @@ P1 接口（原继电器接口，PA24）已改接一颗轻触开关，作为 ID1
 
 ### EMM42 方向标定状态
 
-角色方向由 `module/emm42/emm42_robot.c` 统一处理：ID1（摆杆）正方向为连杆向下、ID2（左轮）直通、ID3（右轮）取反。题目五 `Five` 只使用 ID2/ID3 做循迹；每轮依次使能后均等待约 180ms，再开始交替下发速度帧。机械安装变化时仅更新角色层标定表。
+角色方向由 `module/emm42/emm42_robot.c` 统一处理：ID1（摆杆）正方向为**抬升摇臂**（2026-08 机构改直驱曲柄摇杆后经题目六 900 脉冲实测确认）、ID2（左轮）直通、ID3（右轮）取反。题目五 `Five` **2026-08 起同时使用 ID1 与 ID2/ID3**：ID1 由 `BALLCTRL` 按题目五私有 `T5_BALL_*` profile 闭环，第二次 K3 后才使能 ID2/ID3 做循迹；每轮依次使能后均等待约 180ms，再开始交替下发速度帧。机械安装变化时仅更新角色层标定表。
 
 `BALLCTRL` 与轮子题目会并发共用 UART1，`module/emm42/emm42_v5.c` 协议出口
-必须保留整帧互斥和至少 6ms 帧间隔。ID1 的“连杆向下”标定不能推导相机 X 的最终
-闭环极性，首次上车必须低速确认 `BALL_CTRL_OUTPUT_SIGN`，方向未确认前不得调 PID。
+必须保留整帧互斥和至少 6ms 帧间隔。ID1 的"抬升摇臂"标定不能推导相机 X 的最终
+闭环极性，各题目独立 `T*_BALL_OUTPUT_SIGN` 必须各自低速实机确认，方向未确认前不得调增益。
 
 ### EMM42 位置模式（摆杆控制的目标形态）
 
 摆杆的正确控制量是**角度**而非角速度：速度模式下"速度→角度→球位置"整链三阶，纯 PID 极难镇定（`v2.2` 实测）。外环退化成球杆系统标准的二阶 PD：`targetPulse = LEVEL_TRIM_PULSE + SIGN*(Kx*error − Kv*velocity)`。
 
-**2026-07-31 `BALLCTRL` 已切到位置模式**（先由题目六 `ID1 POS` 验证过底层 API，实测 10 圈=80mm 行程）：外环为无输出限幅、无 I 项的 PD。`BALL_CTRL_SETTLE_DEADBAND_PX=3px` 是实际到位保持区：范围内回水平并禁止静摩擦夹紧，避免其大倾角补偿把已满足精度的钢球再次推出目标区；只有超出该范围才重新驱动。**位置原点只在本次上电后第一次启动时清零**，之后反复 K4 停/启不重新清零，避免调参中途误差累积。**单帧视觉丢失不再触发任何停止命令**（位置模式下没有新目标电机保持原地，结构自带安全）；此前速度模式为防 RPM 失控加的软降速/硬急停/方向发散保护已删除——它们曾被正常调参中的偶发视觉丢帧触发，打断平滑运动，这正是"移动过程中突然停止"的根因。唯一仍主动出手的保护是边缘保护。完整设计见 `empty/docs/BALL_CONTROL.md`。
+**2026-07-31 `BALLCTRL` 已切到位置模式**（先由题目六 `ID1 POS` 验证过底层 API）：外环为无输出限幅、无 I 项的 PD。`BALL_CTRL_SETTLE_DEADBAND_PX` 是实际到位保持区：范围内回水平并停止驱动，避免已满足精度的钢球被再次推出目标区；只有超出该范围才重新驱动。**位置原点只在本次上电后第一次启动时清零**，之后反复 K4 停/启不重新清零，避免调参中途误差累积。**单帧视觉丢失不再触发任何停止命令**（位置模式下没有新目标电机保持原地，结构自带安全）；此前速度模式为防 RPM 失控加的软降速/硬急停/方向发散保护已删除。唯一仍主动出手的保护是边缘保护。**2026-08 机构改直驱曲柄摇臂后，旧丝杆机构的 `Kx/Kv/POS_RPM/POS_ACC` 标定值已全部失效**，各题目独立 profile 需要现场重新整定，方法论见 `empty/docs/CONTROL_ALGORITHM.md` §10，具体数值以各 `taskN.c`/`app_ball_control_task.c` 当前源码为准。完整设计见 `empty/docs/BALL_CONTROL.md`。
 
 角色层已提供 `Emm42Robot_MoveAbsolute()` / `Emm42Robot_ResetPosToZero()` / `Emm42Robot_ClearClogProtection()`，业务层不要直接调协议层 `Emm42_*`。**`MoveAbsolute` 不能照抄 `MoveRelative` 的 `pulses==0` 早退**——绝对模式下 0 是最常用的目标（回原点）。
 

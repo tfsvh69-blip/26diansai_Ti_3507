@@ -181,7 +181,7 @@
  * DIVIDER 用来降频：每隔这么多次"有新有效样本"才打印一行，避免刷屏
  * （视觉约 15~60fps，DIVIDER=5 时输出约 3~12 行/秒，人眼能跟得上）。
  */
-#define BALL_CTRL_DEBUG_LOG_ENABLE        (1U)
+#define BALL_CTRL_DEBUG_LOG_ENABLE        (0U)
 #define BALL_CTRL_DEBUG_LOG_DIVIDER       (5U)
 
 /* 模块内置默认参数（AppBallControl_RequestTarget 用）；各题目通过独立 profile 覆盖。 */

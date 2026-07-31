@@ -30,20 +30,23 @@ typedef struct {
     void (*onLoop)(void);      /* 运行态每 30ms 调用一次（状态机主体） */
     void (*onExit)(void);      /* 返回菜单时收尾（急停/失能/复位） */
     void (*onConfirm)(void);   /* 运行态 K3 按下沿（可为 NULL，表示本题不用） */
+    bool deferVideoStart;      /* true=进题目不自动开始录像，题目自己调 RobotCore_NotifyTaskStarted() */
 } RobotTask_t;
 
 /*
  * 6 道题登记表。题名可按实际赛题改成有意义的短名（如 "LINE","PARK"）。
  * 钩子实现分别在 app/tasks/task1.c ~ task6.c。
  * onConfirm 为 NULL 的题目在运行态忽略 K3，行为与加此钩子之前完全一致。
+ * deferVideoStart 目前题目四、五为 true——都是先启动球杆平衡，真正开始
+ * 动作要等第二次 K3 发车，录像也应该从那一刻才开始，不是进题目就开始。
  */
 static const RobotTask_t s_robotTasks[] = {
-    { "VIDEO 5S", Task1_OnEnter, Task1_OnLoop, Task1_OnExit, NULL },
-    { "LINE PID", Task2_OnEnter, Task2_OnLoop, Task2_OnExit, NULL },
-    { "Task 3", Task3_OnEnter, Task3_OnLoop, Task3_OnExit, NULL },
-    { "LINE 6S", Task4_OnEnter, Task4_OnLoop, Task4_OnExit, Task4_OnConfirm },
-    { "Five", Task5_OnEnter, Task5_OnLoop, Task5_OnExit, NULL },
-    { "ID1 POS", Task6_OnEnter, Task6_OnLoop, Task6_OnExit, NULL },
+    { "VIDEO 5S", Task1_OnEnter, Task1_OnLoop, Task1_OnExit, NULL,           false },
+    { "LINE PID", Task2_OnEnter, Task2_OnLoop, Task2_OnExit, NULL,           false },
+    { "Task 3",   Task3_OnEnter, Task3_OnLoop, Task3_OnExit, NULL,           false },
+    { "LINE 6S",  Task4_OnEnter, Task4_OnLoop, Task4_OnExit, Task4_OnConfirm, true },
+    { "Five",     Task5_OnEnter, Task5_OnLoop, Task5_OnExit, Task5_OnConfirm, true },
+    { "ID1 POS",  Task6_OnEnter, Task6_OnLoop, Task6_OnExit, NULL,           false },
 };
 
 #define ROBOT_TASK_COUNT \
@@ -86,9 +89,15 @@ void RobotCore_EnterTask(uint32_t taskIdx)
         return;
     }
 
-    /* 先通知视觉端题目开始；录像行为由通信协议按题号定义。 */
+    /*
+     * 先通知视觉端题目开始；录像行为由通信协议按题号定义。
+     * deferVideoStart 的题目跳过这里，改由题目自己在真正开始动作时调用
+     * RobotCore_NotifyTaskStarted()（例如题目四要等第二次 K3 发车）。
+     */
 #if (APP_FEATURE_VISION_LINK != 0U)
-    AppVisionLink_TaskStart((uint8_t)(taskIdx + 1U));
+    if (!s_robotTasks[taskIdx].deferVideoStart) {
+        AppVisionLink_TaskStart((uint8_t)(taskIdx + 1U));
+    }
 #endif
 
     if (s_robotTasks[taskIdx].onEnter != NULL) {
@@ -108,6 +117,17 @@ void RobotCore_LoopTask(uint32_t taskIdx)
     if (s_robotTasks[taskIdx].onLoop != NULL) {
         s_robotTasks[taskIdx].onLoop();
     }
+}
+
+void RobotCore_NotifyTaskStarted(uint32_t taskIdx)
+{
+    if (taskIdx >= ROBOT_TASK_COUNT) {
+        return;
+    }
+
+#if (APP_FEATURE_VISION_LINK != 0U)
+    AppVisionLink_TaskStart((uint8_t)(taskIdx + 1U));
+#endif
 }
 
 void RobotCore_ConfirmTask(uint32_t taskIdx)

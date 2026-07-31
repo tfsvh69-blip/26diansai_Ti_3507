@@ -56,8 +56,8 @@
 |---|---|---|---|
 | `LED1` | `app/app_led_task.c` | 300 ms | LED1(PB25) 心跳灯，用于判断 FreeRTOS 是否正常调度 |
 | `UART0TX` | `app/app_uart_test_task.c` | 10 ms 轮询 | UART0 接收回显，收到非换行字符返回 `UART RX OK` |
-| `UIMENU` | `app/app_ui_task.c` | 30 ms 轮询 | **OLED 题目菜单 UI**：4 键(K1上/K2下/K3确认/K4返回)选题并进入运行界面，任一按键均短促嘀声（约2~3ms），**独占 OLED 与 KEY1~4**；题目业务委托 `app_robot_core` → `app/tasks/taskN.c` 的 `OnEnter/OnLoop/OnExit`。当前 5 道题均为硬件/函数测试（非正式赛题）：task1 `VIDEO 5S` 通过视觉协议录制 5 秒无叠加标注的正常画面、task2 `LINE PID` 8 路灰度 PID 循迹、task3 `Task 3` 当前进行独立第一阶段 `X=325→415±10px` 定位并低速稳定 200ms、task4 `LINE 6S` 在循迹行驶期间同步平衡钢珠至 `X=320`，并在累计前进 6.5 秒后以速度模式 0 RPM 缓停、task5 `Five` 低速横向停止线后 0.5 秒循迹并线性缓停（UART1 仅控制 ID2 左轮与 ID3 右轮）、task6 `ID1 POS` 仅对 Emm42 ID1 做**位置模式 API 冒烟测试**（进题目自动位置清零定原点 → 按 `T6_RETURN_ENABLE`/`T6_ABS_TEST_ENABLE` 决定单程/往返/绝对验证，当前默认正转 10 圈后停住量丝杆导程，OLED 题名行显示阶段与目标脉冲）。任务二、五自动完成时使用与按键完全相同的短促提示音。M1/M2 已全局取反标定 |
-| `BALLCTRL` | `app/app_ball_control_task.c` | 10 ms 轮询 | **上电默认 OFF**；题目三/四经 profile 接口启停目标 `X` 的钢球后台闭环（菜单不再提供 K4 启停入口，见下方 UI 变更说明），α-β 估计位置/速度后以局部 PID 控制 Emm42 ID1。I 只在新有效帧、原始误差 1~12px 且低速时按真实帧间隔累积，I 输出单独限制为 ±2RPM；目标改变、DEG/LOST、跨目标、低误差、高速度、方向或边缘故障会清零 I。正常 RUN 状态不做总 RPM、软件斜率或驱动器加速度曲线限制。单次 `X,NA` 或 130ms 无有效 X 进入 `B:DEG` 并每 20ms 把命令向 0 RPM 回退 2 RPM；连续两帧 NA 或 220ms 无有效 X 才进入 `B:LOST` 急停，恢复需连续两帧有效 X。方向发散或画面边缘仍立即保护停车；不再使用软件估算行程限幅。后续题目通过 `AppBallControl_RequestTargetWithProfile()` 传目标 |
+| `UIMENU` | `app/app_ui_task.c` | 30 ms 轮询 | **OLED 题目菜单 UI**：4 键(K1上/K2下/K3确认/K4返回)选题并进入运行界面，任一按键均短促嘀声（约2~3ms），**独占 OLED 与 KEY1~4**；题目业务委托 `app_robot_core` → `app/tasks/taskN.c` 的 `OnEnter/OnLoop/OnExit`，运行态 K3 按下沿另经 `RobotCore_ConfirmTask()` 转发给题目的 `onConfirm` 钩子（当前题目四、五登记，其余题目为 `NULL`，行为不变）。当前 5 道题均为硬件/函数测试（非正式赛题）：task1 `VIDEO 5S` 通过视觉协议录制 5 秒无叠加标注的正常画面、task2 `LINE PID` 8 路灰度 PID 循迹、task3 `Task 3` **目前是 task4 框架的完整副本**（独立 `T3_*` 参数组，详见下方说明）、task4 `LINE 6S` **两段式 K3 启动**（第一次进球杆位置闭环、确认钢珠稳定后第二次才发车循迹），行驶期间同步保持钢珠在目标 `X`（`T4_BALL_TARGET_X_PX`），累计前进 `T4_STOP_AFTER_MS` 后缓停，具体秒数与全部调参数值以 `task4.c` 当前值为准（详见下方说明）、task5 `Five` **2026-08 同样改为两段式 K3 启动**（第一次进球杆位置闭环、确认稳定后第二次才发车循迹，加速度/顶速参考 task4 当前值），武装后循迹命中 `T5_STOP_LINE_HIT_MIN`（当前 5）路黑线即判定到达终点，随即两轮改为同一转速直直前进，维持 `T5_AFTER_LINE_MS`（当前 1500ms）后转入缓停；蜂鸣器第二次响、通知视觉端结束录像不等这段直行走完，而是在其中更早的 `T5_BEEP_DELAY_MS`（当前 800ms）先触发，之后再用与起步同一根软件斜坡 `T5_RAMP_RPM_PER_SEC` 对称降速到 0（详见下方说明）、task6 `ID1 POS` 仅对 Emm42 ID1 做**位置模式 API 冒烟测试**（进题目自动位置清零定原点 → 按 `T6_RETURN_ENABLE`/`T6_ABS_TEST_ENABLE` 决定单程/往返/绝对验证，当前默认正转 10 圈后停住量丝杆导程，OLED 题名行显示阶段与目标脉冲）。任务二、四、五自动完成时使用与按键完全相同的短促提示音。M1/M2 已全局取反标定 |
+| `BALLCTRL` | `app/app_ball_control_task.c` | 10 ms 轮询；仅在视觉新样本到达时才计算 | **上电默认 OFF**；题目经 `AppBallControl_RequestTargetWithProfile()` 传入独立 profile 启停目标 `X` 的钢球后台闭环（菜单不再提供 K4 启停入口）。**已切到位置模式**：α-β 估计位置/速度后走无 I 项的纯 PD，`targetPulse = LEVEL_TRIM_PULSE + SIGN×(Kx×error − Kv×velocity)`，每帧下发绝对位置目标，不是速度。误差进 `settleDeadbandPx` 死区【且】球基本停住才回真实水平点保持；唯一仍主动出手的保护是边缘保护（球快滚出摆杆，命令回水平并锁定 `FAULT_EDGE`，等题目自行处理）。`profile` 另含 `maxPulseStepPerFrame`（软件限速，把目标突变摊到多帧，0=不限速，菜单/题目三保持 0 不变）；`positionAcc` 每题目独立标定，见下方「EMM42 位置模式」小节的 ACC 陷阱。**临时调试用**：`app_ball_control_task.c` 顶部 `BALL_CTRL_DEBUG_LOG_ENABLE`（默认 0）打开后会把每次算出的目标/测量/滤波位置/速度/命令脉冲/状态打到 UART0（TX 空闲，不影响视觉 RX），排查完记得关掉，长期开着占 CPU 和串口带宽 |
 | `IMU100Hz` | `app/app_imu_uart_task.c` | 10 ms | 读取 ATK-MS6DSV 姿态 + 追加激光测距1(D1)，按 5Hz 整行输出 Roll/Pitch/Yaw/加减速度/D1 |
 | `MOTORTEST` | `app/app_motor_test_task.c` | 20 ms 轮询 | **【默认禁用】** KEY1/KEY2 让 4 个电机（各自独立接口同时下发）正/反转 2 圈测试（按键已让给 UIMENU） |
 | `SERVOSWEEP` | `app/app_servo_test_task.c` | 20 ms | **【默认禁用】4 个舵机各自独立错相摆动**（800~2200us，无按键）；单控用 `BspServo_SetPulseUs(id,us)` |
@@ -68,9 +68,11 @@
 > 题目菜单 UI 见 [empty/docs/FREERTOS_TASKS.md](empty/docs/FREERTOS_TASKS.md) 的「OLED 题目菜单 UI」小节；**题目业务逻辑逐题填 [empty/app/tasks/](empty/app/tasks/) 的 `taskN.c`**（第 N 题 = `taskN.c`），题名/题数登记在 `app_robot_core.c` 的 `s_robotTasks[]`。四路步进电机为**各自独立**驱动（`bsp_motor.h`，RPM 单位、带符号定方向）。OLED 当前只能显示 ASCII（无中文字库）。
 > K4 在运行态表示退出当前题目；菜单态不再有 K4 功能（原"启停钢球居中到 `X=320`"的调试入口已于 2026-08-01 移除，PA24 引脚已改接归零限位开关，见下方「ID1 开机自动归零」小节）。题目三与后台闭环都使用 ID1，进入题目三前会先等待闭环释放 ID1。
 
-> **题目三当前行为以此为准**：当前只进行第一阶段调参。ID1 的位置零点由开机自动归零流程建立（不再需要人工在菜单页按 K4）；题目三不清零，复用同一位置模式执行器，仅从 `X=325` 运行至 `X=415±10px` 并低速稳定 200ms，首条实际控制帧起不超过 5 秒，完成后保持 `X=415`。本阶段只调整 `task3.c` 的 `T3_STAGE1_*` 参数；后续 `415→另一目标点` 将另建 `T3_STAGE2_*` 参数组，三者互不影响。
+> **题目三当前行为**：2026-08 由题目四整体移植，**是 task4 框架的完整副本**（循迹 PID、两段式 K3 启动、丢线保护、终点保护、转弯/定时减速、钢珠闭环、`FAULT_EDGE` 自动恢复全部一致）。按仓库【控制参数隔离规则】，所有参数都是独立的 `T3_*` 副本，初值复制自 task4 当时的值，此后两题各调各的，互不影响。原"第一阶段 `X=325→415±10px` 定位"业务与 `T3_STAGE1_*` 参数组已废弃，不要再按旧文档描述理解本题。
 
-> **题目四钢珠平衡**：ID1 的位置零点同样由开机自动归零流程建立，不再需要人工在菜单页按 K4。`Task4_OnEnter()` 向 `BALLCTRL` 投递任务四独立 `T4_BALL_*` profile，目标为 `X=320`；后台确认已进入实际闭环后才允许 ID2/ID3 起步。行驶和缓停期间 ID1 均保持闭环，K4 退出时才请求停止 ID1。`T4_BALL_*` 与任务三参数互不影响。**2026-08-01 新增故障自动恢复**：`BALLCTRL` 的 `FAULT_EDGE`（球触边回水平并锁定）不会自行恢复，任务四每拍检测该状态，一旦出现就自动走一遍"停止→等 `BALLCTRL` 回到 `OFF`→重新请求"的握手（`T4_STATE_BALL_RECOVER_WAIT`），不需要用户手动退出重进；若轮子已经在跑（`s_wheelsStarted`），恢复后直接回到循迹而不重新走一遍轮子使能时序。只要仍在题目四内，就持续保证钢珠被伺服到 `X=320`，直至 K4 退出。当前 `T4_MOTORS_DISABLED_MANUAL_TEST=1`（`task4.c` 顶部开关），轮子不使能，供用手推小车模拟前进、专门调参 `T4_BALL_*`；调参完成后改回 `0` 恢复整题。
+> **题目四钢珠平衡 + 循迹**：ID1 的位置零点由开机自动归零流程建立，不再需要人工在菜单页按 K4。**2026-08 新增两段式 K3 启动**：进题目后什么都不动（ID1 不闭环、轮子不使能，OLED 提示按 K3）；**第一次 K3** 向 `BALLCTRL` 投递独立 `T4_BALL_*` profile 并等待后台真正进入闭环（`RUNNING`/`HOLDING`）；**第二次 K3** 才走 ID2/ID3 使能时序、开始循迹前进、秒表开始计时，且才通知视觉端开始录像（`RobotCore_NotifyTaskStarted()`，题目表 `deferVideoStart=true`，其余非本节题目仍是进题目即自动开始录像）。行驶和缓停期间 ID1 均保持闭环，K4 退出或 `T4_STATE_TIME_STOPPED`/`T4_STATE_FINISHED`（到时缓停或触线终点保护）都会通过 `RobotCore_NotifyTaskFinished()` 结束录像并响一声提示音。**`T4_STATE_TIME_STOPPED`/`T4_STATE_FINISHED` 是真正的终止态**：`OnLoop` 一进入这两个状态就在函数最前面直接 `return`，不会再被后面任何逻辑（循迹读数、终点判定、`FAULT_EDGE` 恢复握手）意外拨回 `RUN`——这是修过一次真实 bug 后的设计，`FAULT_EDGE` 恢复握手完成时会检查"本次是否已经跑完"（`s_runCompleted`），跑完了就直接停在终止态，不会误判成还要继续循迹。`T4_BALL_*`、循迹 PID、起步斜坡、缓停时长等全部参数与任务三互不影响，具体数值以 `task4.c` 当前值为准，不要以文档旧数字为准（改动频繁）。
+
+> **题目五钢珠平衡 + 循迹到终点线**：2026-08 由题目四整体框架改造而来，同样是两段式 K3 启动（第一次 K3 启动独立 `T5_BALL_*` profile 的球杆闭环并等待就绪，OLED 提示 `T5 K3=BALL`/`T5 B WAIT`/`T5 K3=GO`；第二次 K3 才使能 ID2/ID3 循迹前进、录像开始、秒表开始计时），题目表 `deferVideoStart=true`。**终点判定与题目二/四不同**：先连续 `T5_ARM_TICKS` 拍命中 `≤T5_ARM_HIT_MAX` 路细线武装，武装后单拍命中 `≥T5_STOP_LINE_HIT_MIN`（当前 5，即 8 路里的 5 路，非题目二/四系的 6 路）即判定到达终点，立即把左右轮命令改成判定那一刻的平均转速（两轮同值，即"保持当前速度直直地前进"，不再有转向修正），维持 `T5_AFTER_LINE_MS`（当前 1500ms）后转入缓停。蜂鸣器第二次响、结束本次录像不等这 1500ms 走完，而是在其中更早的 `T5_BEEP_DELAY_MS`（当前 800ms）先触发（`s_finishBeeped` 保证只响一次）——录像/计分只覆盖到终点线+800ms，之后车辆仍按同一转速再直行到满 1500ms 才开始减速，给机械留裕量。1500ms 结束后用**与起步同一根** `T5_RAMP_RPM_PER_SEC` 软件斜坡反向线性降速到 0（期间继续循迹 PID 修正，尽量平稳停住）——用户明确要求缓停加速度与起步加速度对称，因此不像题目五旧版本那样另用一个固定时长的减速参数。行驶、终点保持和缓停期间 ID1 均保持闭环，`FAULT_EDGE` 自动恢复握手与「本次是否已经跑完」（`s_runCompleted`）判断逻辑均与题目四一致。**转向输出软件限速** `T5_STEER_SLEW_RPM_PER_SEC`（题目二/四没有，题目五独有）：PID 算出的转向量只作为目标，实际下发的 `s_appliedSteerRpm` 每拍最多向目标靠近 `本值×T5_DT_SEC`，把离散灰度传感器命中路数切换带来的台阶式转向量摊成渐变，抑制过弯瞬间大幅横摆把摆杆上的钢珠带得晃动（2026-08 实车反馈"Kp 偏大导致过弯横摆、球被甩"后新增，起点值待现场调）。`T5_BALL_*`、`T5_STOP_LINE_HIT_MIN`、`T5_AFTER_LINE_MS`、`T5_BEEP_DELAY_MS`、`T5_RAMP_RPM_PER_SEC`、`T5_STEER_SLEW_RPM_PER_SEC`、循迹 PID 等全部参数与题目四/二互不影响，具体数值以 `task5.c` 当前值为准。
 
 > **控制参数隔离规则**：可以跨任务复用算法实现、执行器和通信接口，但**禁止共享可调控制参数**。每个任务必须在自己的 `taskN.c` 顶部定义私有参数组和 profile；即使初值参考其他任务，也必须按值复制为新参数。调整一个任务的增益、死区、滤波、静摩擦、速度或保持条件，不得改变菜单或任何其他任务的行为。新增任务时同步在 `CLAUDE.md`、`AGENTS.md` 与 `docs/` 声明其独立参数组。
 
@@ -85,15 +87,15 @@
 
 ### EMM42 方向标定状态
 
-- 角色层 `module/emm42/emm42_robot.c` 统一处理 Emm42 正方向：ID1（摆杆）正方向为连杆向下，ID2（左轮）直通，ID3（右轮）取反。
-- 题目五 `Five` 仅使能并控制 ID2 左轮、ID3 右轮；沿用题目二的节拍化使能时序，两轮各等待约 180ms 后进入交替速度控制。机械安装变化时，只修改 ID1 的角色层标定表。
-- `BALLCTRL` 独立线程只控制 ID1；Emm42 协议出口用互斥量保证它与 ID2/ID3 题目线程的 UART1 整帧不交叉，并统一保留至少 6ms 帧间隔。ID1 正 RPM 只标定到“连杆向下”，钢球 X 的最终控制极性仍须按 `docs/BALL_CONTROL.md` 低速实机确认。
+- 角色层 `module/emm42/emm42_robot.c` 统一处理 Emm42 正方向：ID1（摆杆）正方向为**抬升摇臂**（2026-08 机构改直驱曲柄摇杆后经题目六 900 脉冲实测确认，取代旧丝杆机构"连杆向下"的说法），ID2（左轮）直通，ID3（右轮）取反。
+- 题目五 `Five` **2026-08 起同时使用 ID1 与 ID2/ID3**：第二次 K3 后才使能 ID2 左轮、ID3 右轮，沿用题目二的节拍化使能时序，两轮各等待约 180ms 后进入交替速度控制；ID1 由 `BALLCTRL` 独立线程按题目五私有 `T5_BALL_*` profile 闭环，不经这套使能时序。机械安装变化时，只修改 ID1 的角色层标定表。
+- `BALLCTRL` 独立线程只控制 ID1；Emm42 协议出口用互斥量保证它与 ID2/ID3 题目线程的 UART1 整帧不交叉，并统一保留至少 6ms 帧间隔。ID1 正 RPM 已标定到"抬升摇臂"，钢球 X 的最终控制极性（各题目 `T*_BALL_OUTPUT_SIGN`）仍需各自低速实机确认。
 - 左右轮差速运动学尚未实现。
 
 ### ID1 开机自动归零（2026-08-01 新增）
 
 P1 接口（原继电器接口，v1.1 接线文档标注 `RELAY ← PA24`）已改接一颗轻触开关，
-一端接地，充当 ID1（摆杆升降丝杆）的归零限位开关；**继电器功能与 `bsp_relay.c/h`、
+一端接地，充当 ID1（摆杆曲柄摇臂）的归零限位开关；**继电器功能与 `bsp_relay.c/h`、
 `app_relay_test_task.c/h`、`APP_FEATURE_RELAY`/`APP_FEATURE_RELAY_SELFTEST` 已整体
 删除**，PA24 现为数字输入 + 内部上拉（`bsp/bsp_home_switch.h` 的 `BspHomeSwitch_IsPressed()`）。
 
@@ -125,7 +127,7 @@ P1 接口（原继电器接口，v1.1 接线文档标注 `RELAY ← PA24`）已�
 
 摆杆的正确控制量是**角度**而不是角速度：速度命令对摆杆角度是一次积分、球位置对摆杆角度又是二次积分，速度模式下整链三阶、纯 PID 极难镇定（`v2.2` 实测现象）。系统降为球杆系统标准的二阶 PD 外环：`targetPulse = LEVEL_TRIM_PULSE + SIGN*(Kx*error − Kv*velocity)`。
 
-**2026-07-31 `BALLCTRL` 已切到位置模式**（题目六 `ID1 POS` 先验证过底层 API，实测 10 圈=80mm 行程）：外环为无输出限幅、无 I 项的 PD。`BALL_CTRL_SETTLE_DEADBAND_PX=3px` 是实际到位保持区：范围内回水平并禁止静摩擦夹紧，避免其大倾角补偿把已满足精度的钢球再次推出目标区；只有超出该范围才重新驱动。**位置原点只在本次上电后第一次启动时清零**（函数级 `static bool hasZeroedSinceBoot`），之后反复进出题目三/四停/启调参沿用同一原点，重新上电才建立新原点——这是有意设计，避免调参中途摆杆停在某个倾角时被误当成新零点导致误差跨轮次累积。配合开机自动归零（见「ID1 开机自动归零」小节），本次上电后第一次启动 `BALLCTRL` 时清零的位置就是归零终点。**单帧视觉丢失不再触发任何停止命令**：位置模式下没有新目标时电机保持在原地（结构自带安全），此前速度模式为防止 RPM 失控而加的软降速/硬急停/方向发散保护已删除——它们曾在调参过程中被正常的视觉丢帧偶发触发，打断本来平滑的运动，这正是用户反馈"移动过程中突然停止"的根因。唯一仍主动下发命令的保护是边缘保护（球真的快滚出摆杆，命令回水平并锁定）。完整设计和调参步骤见 [empty/docs/BALL_CONTROL.md](empty/docs/BALL_CONTROL.md)。
+**2026-07-31 `BALLCTRL` 已切到位置模式**（题目六 `ID1 POS` 先验证过底层 API）：外环为无输出限幅、无 I 项的 PD。`BALL_CTRL_SETTLE_DEADBAND_PX` 是实际到位保持区：范围内回水平并停止驱动，避免已满足精度的钢球被再次推出目标区；只有超出该范围才重新驱动。**位置原点只在本次上电后第一次启动时清零**（函数级 `static bool hasZeroedSinceBoot`），之后反复进出各题目停/启调参沿用同一原点，重新上电才建立新原点——这是有意设计，避免调参中途摆杆停在某个倾角时被误当成新零点导致误差跨轮次累积。配合开机自动归零（见「ID1 开机自动归零」小节），本次上电后第一次启动 `BALLCTRL` 时清零的位置就是归零终点。**单帧视觉丢失不再触发任何停止命令**：位置模式下没有新目标时电机保持在原地（结构自带安全），此前速度模式为防止 RPM 失控而加的软降速/硬急停/方向发散保护已删除。唯一仍主动下发命令的保护是边缘保护（球真的快滚出摆杆，命令回水平并锁定）。**2026-08 机构改直驱曲柄摇臂后，`Kx/Kv/POS_RPM/POS_ACC` 等旧丝杆机构标定值已全部失效**，各题目独立 profile 需要现场重新整定，方法论见 [empty/docs/CONTROL_ALGORITHM.md](empty/docs/CONTROL_ALGORITHM.md) §10；具体数值以各 `taskN.c`/`app_ball_control_task.c` 当前源码为准，不要照抄本文档任何历史数字。完整设计见 [empty/docs/BALL_CONTROL.md](empty/docs/BALL_CONTROL.md)。
 
 - 角色层已提供 `Emm42Robot_MoveAbsolute()`（绝对位置）、`Emm42Robot_ResetPosToZero()`（定原点）、`Emm42Robot_ClearClogProtection()`（解堵转保护），业务层不要直接调协议层 `Emm42_*`。
 - **`MoveAbsolute` 不能像 `MoveRelative` 那样把 `pulses==0` 当"不动"提前返回**——绝对模式下 0 是最常用的目标（回原点）。

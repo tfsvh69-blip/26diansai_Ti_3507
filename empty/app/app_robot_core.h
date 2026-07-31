@@ -46,6 +46,14 @@ void RobotCore_ExitTask(uint32_t taskIdx);
  */
 void RobotCore_ConfirmTask(uint32_t taskIdx);
 
+/*
+ * 供"延迟开始录像"的题目在真正开始动作时主动调用（例如题目四要等第二次 K3
+ * 让小车发车才开始录像，而不是第一次进题目就开始）。只有题目表里
+ * deferVideoStart=true 的题目需要调用本接口；其余题目仍由 RobotCore_EnterTask()
+ * 自动发送录像开始，不需要也不应该调用本接口（会导致 run_id 重复递增）。
+ */
+void RobotCore_NotifyTaskStarted(uint32_t taskIdx);
+
 /* 题目状态机自动完成或进入故障安全态时调用，通知视觉端停止本次录像。 */
 void RobotCore_NotifyTaskFinished(uint32_t taskIdx);
 

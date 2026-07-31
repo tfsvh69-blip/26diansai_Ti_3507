@@ -81,6 +81,12 @@ void Task5_OnEnter(void);
 void Task5_OnLoop(void);
 void Task5_OnExit(void);
 
+/*
+ * 运行态 K3 按下沿（由 UIMENU 经 RobotCore_ConfirmTask 转发）。
+ * 题目五用它分两步启动：第一次按启动球杆平衡，第二次按小车才开始循迹前进。
+ */
+void Task5_OnConfirm(void);
+
 /* 取题目五当前秒表与循迹/停车流程的 ASCII 状态文本，停车后定格并追加 "DONE"。 */
 const char *Task5_GetUiStatus(void);
 

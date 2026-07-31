@@ -31,8 +31,12 @@
 #define T4_INTEGRAL_LIMIT                  (20.0F)
 #define T4_MAX_STEER_RPM                   (100.0F)
 
-/* 基础速度和单轮安全范围。 */
-#define T4_BASE_RPM                        (80.0F)
+/*
+ * 基础速度和单轮安全范围。
+ * 2026-08 "整体速度提高但加速度别太快"：80→150。这个值必须跟下面
+ * T4_START_RAMP_RPM_PER_SEC 一起看，爬满全速时间=本值÷斜坡值，见那边说明。
+ */
+#define T4_BASE_RPM                        (100.0F)
 #define T4_MIN_WHEEL_RPM                   (5.0F)
 #define T4_MAX_WHEEL_RPM                   (230.0F)
 
@@ -71,21 +75,31 @@
  *   调大（留够爬升时间），当前两个宏定义处互相都有算好的换算提醒。
  * 只限制【上升】，不限制转弯/定时减速的下降；爬到 T4_BASE_RPM 后自动失效，
  * 之后的转弯减速恢复不受影响。
+ *
+ * 2026-08 配合 T4_BASE_RPM 80→150 一起调："整体速度提高、加速度不能太快、
+ * 总时长仍是 7.5 秒、要求整车非常平稳"——这四点必须联立着算，不能只改一个：
+ *   若斜坡仍用 10，爬满 150RPM 要 15 秒，比 7.5 秒还长一倍，全程都在加速，
+ *   跟"整体速度提高"的诉求矛盾（根本到不了新速度，只是把旧问题挪到更高的
+ *   目标值上重演）。改成 40：爬满时间 = 150÷40 = 3.75 秒，7.5 秒里前一半
+ *   爬坡、后一半能稳定巡航在满速，且 40RPM/s 仍只是驱动器自身最快曲线
+ *   （acc=5，约 1.4 秒到 110RPM，等效约 78RPM/s）的一半左右，比阶跃平缓得多。
+ *   还要更平稳可以继续调小（比如 25~30），代价是巡航时间进一步缩短。
  */
-#define T4_START_RAMP_RPM_PER_SEC          (10.0F)
+#define T4_START_RAMP_RPM_PER_SEC          (24.0F)
 
 /*
  * 缓停参数：T4_STOP_AFTER_MS 固定本题开始缓停的时间；
  * T4_STOP_EMM_ACC 由使用者按实车需要传给速度模式 0 RPM 帧。
  * 数值越小减速越平缓，越大越接近立即停；可直接修改后重新烧录。
  *
- * ⚠️ 2026-08 改到 7.5 秒：要和 T4_START_RAMP_RPM_PER_SEC 一起看——
- * 当前 T4_BASE_RPM(80) ÷ T4_START_RAMP_RPM_PER_SEC(10) = 8 秒才能爬满全速，
- * 比这里的 7.5 秒还长，意味着全程都在加速，从没跑到过 80RPM。如果这不是你要的
- * 效果（想要有一段稳定全速巡航），要么把 T4_STOP_AFTER_MS 再调大到 8 秒以上，
- * 要么把 T4_START_RAMP_RPM_PER_SEC 调大让爬坡更快，两者按需二选一或都调。
+ * 2026-08 在当前状态基础上多跑 800ms：7500→8300。当前
+ * T4_BASE_RPM(110)÷T4_START_RAMP_RPM_PER_SEC(25)=4.4 秒爬满，小于 8.3 秒，
+ * 留了约 3.9 秒稳定全速巡航，延长这 800ms 期间小车仍是正常循迹（这段时间
+ * 只是把 RUN 状态多留一会，PID/循迹逻辑本身不区分"早一点停"还是"晚一点停"）。
+ * 改上面 T4_BASE_RPM 或 T4_START_RAMP_RPM_PER_SEC 任意一个都要回来重新核对
+ * 这个关系，避免又变回爬不满的状态。
  */
-#define T4_STOP_AFTER_MS                   (7500U)
+#define T4_STOP_AFTER_MS                   (8300U)
 #define T4_STOP_EMM_ACC                    (80U)
 
 /* UIMENU 固定控制周期。 */
@@ -144,16 +158,32 @@
  *     现场微调，不需要专门标定步骤。
  * 视觉比例、静止噪声与传动机构无关，继续沿用旧值。
  */
-#define T4_BALL_FRICTION_FF_PULSE           (5.0F)     /* 2026-08 隔离测试：50 时目标点附近持续等幅抖动，
-                                                            疑似前馈踹一脚→速度超阈值→踹一脚的自激循环，
-                                                            先退回 0 验证是不是它，见下方说明 */
+/*
+ * 2026-08 隔离测试：50 时目标点附近持续等幅抖动，疑似前馈踹一脚→速度超阈值→
+ * 踹一脚的自激循环，退回 0 验证过是它。
+ *
+ * 2026-08 二次复现：5 这个小值同样会导致"球已到位、电机仍来回颤抖"——球静止
+ * 在目标附近时，pd=Kx×err−Kv×v 的符号完全由视觉噪声决定，每帧随机翻正负，
+ * ffDir 在 |v| 很小时几乎等于 sign(pd)，于是前馈跟着每帧在 +5/-5 脉冲之间跳，
+ * 球位移很小（肉眼看着"到位"）但电机是被直接驱动的，抖动很明显。
+ * 现在 Kx=1.0 且 LEVEL_TRIM 已反推收敛，纯 PD 大概率已经够用，不再需要前馈
+ * 顶过静摩擦。退回 0；如果又出现"球离目标一截距离完全僵住不动"才重新按
+ * 现象表小步试大，不要直接抄旧值。
+ */
+#define T4_BALL_FRICTION_FF_PULSE           (0.0F)
 /*
  * 2026-08 振荡（α/β 问题）解决后，实测稳态误差稳定卡在 err≈37（球停在
  * meas≈313，够不到目标 350），说明水平点假设有偏差。按公式反推：
  *   LEVEL_TRIM_new = LEVEL_TRIM_current + SIGN×Kx×err = 0 + (-1)×1.0×37 = -37
  * 若改完这个误差没有消失反而变大/变号，说明符号搞反了，改回 +37 试。
+ *
+ * 2026-08 acc 提到 240 响应变好后，用同一公式再反推一次：改完 -37 残差没有
+ * 消失，只是从 37 缩小到平均约 17（说明方向和量级都对，只是当时修正量不够，
+ * 不是又出现了新问题）。继续按同一公式收敛：
+ *   LEVEL_TRIM_new = -37 + (-1)×1.0×17 = -54
+ * 这套反推是线性、可迭代的，一次不够就再来一次，2~3 次内会收敛到很小。
  */
-#define T4_BALL_LEVEL_TRIM_PULSE            (-37)
+#define T4_BALL_LEVEL_TRIM_PULSE            (-54)
 /*
  * 2026-08 实测教训：α=1.0（预测完全不用，每帧直接采信测量）配合 β=0.80
  * 导致剧烈振荡——β 越大，"测量-预测残差"里的噪声被放大进速度估计的比例越高：
@@ -190,8 +220,17 @@
  *   球剧烈振荡/越振越猛/摆杆动作剧烈有异响 → Kx 过大，退回更小值重新找临界点；
  *   Kv 加到很大仍压不住振荡 → 大概率是 Kx 选大了，回去减小 Kx 而不是无限加 Kv。
  */
+/*
+ * 2026-08 稳态误差（LEVEL_TRIM）解决后，实测现象是"贴近目标但在附近持续振荡、
+ * 不衰减、也不发散"——对应上面表格第二条："目标附近来回振荡→固定住 Kx，
+ * 加 Kv 压振荡"。Kx=1.0 先不动，Kv 从 0.5 加到 1.0（先翻倍试，观察振荡幅度是
+ * 缩小还是没变化）：
+ *   继续缩小 → 方向对了，还需要接着加；
+ *   没什么变化甚至更猛 → 说明 Kv 已经在放大速度噪声而不是提供阻尼，按现象表
+ *     第四条回去减小 Kx 重新找临界点，不要无限加 Kv。
+ */
 #define T4_BALL_KX_PULSE_PER_PX             (1.0F)     /* 新机构保守起点，按上面现象表逐步增大 */
-#define T4_BALL_KV_PULSE_PER_PXPS           (0.5F)     /* 先关掉抑制，只调纯 P */
+#define T4_BALL_KV_PULSE_PER_PXPS           (0.55F)
 /*
  * 到位死区，同时就是静态精度上限：4px ≈ 1.6mm，取实测噪声 ±2px 的两倍裕度。
  * 误差进此范围【且球基本停住】才回真实水平点、停止驱动。
@@ -337,6 +376,14 @@ static uint32_t     s_elapsedTicks;
 static uint32_t     s_runTicks;
 static bool         s_ballControlRequested;
 static bool         s_wheelsStarted;   /* 轮子是否已经完成过一次使能起步（钢珠故障恢复后据此跳过重复使能） */
+/*
+ * 本次任务是否已经跑完（到达 TIME_STOPPED 或 FINISHED 至少一次）。
+ * 一旦置位就不再复位，直到 OnEnter/OnExit——防止跑完之后 BALLCTRL 仍在
+ * 后台伺服钢珠、若此时球触边触发 FAULT_EDGE 故障恢复，恢复握手完成后单看
+ * s_wheelsStarted 会把状态机误判回 T4_STATE_RUN，导致秒表重新计时、轮子
+ * 收到一帧残留的非零速度命令。见 WAIT_BALL_CONTROL 分支的判断顺序。
+ */
+static bool         s_runCompleted;
 /*
  * 两段式启动标志，由 Task4_OnConfirm()（运行态 K3 按下沿）置位、OnLoop 消费：
  *   s_startBallRequested —— 第一次 K3，启动球杆平衡；
@@ -532,6 +579,7 @@ void Task4_OnEnter(void)
     s_startCarRequested  = false;
     s_finishBeeped      = false;
     s_rampBaseRpm       = 0.0F;
+    s_runCompleted      = false;
 }
 
 void Task4_OnLoop(void)
@@ -600,7 +648,15 @@ void Task4_OnLoop(void)
             (ballStatus.targetPx == T4_BALL_TARGET_X_PX) &&
             ((ballStatus.state == APP_BALL_CONTROL_RUNNING) ||
              (ballStatus.state == APP_BALL_CONTROL_HOLDING))) {
-            if (s_wheelsStarted) {
+            if (s_runCompleted) {
+                /*
+                 * 本次任务本来就已经跑完了（缓停或终点保护都已发生过）——
+                 * BALLCTRL 停车后仍在后台伺服钢珠，球触边引发的 FAULT_EDGE
+                 * 恢复握手不能把状态机复活成 RUN，否则秒表会重新计时、还会
+                 * 给轮子发一帧残留的非零速度命令。直接停在"已完成"，不碰轮子。
+                 */
+                s_state = T4_STATE_TIME_STOPPED;
+            } else if (s_wheelsStarted) {
                 /* 钢珠故障恢复场景：轮子早已在跑，直接回到循迹，不重新走使能时序。 */
                 s_state = T4_STATE_RUN;
             } else {
@@ -625,6 +681,14 @@ void Task4_OnLoop(void)
             s_wheelsStarted = true;
             /* 起步斜坡从 0 重新爬，保证每次发车都是缓慢加速。 */
             s_rampBaseRpm = 0.0F;
+            /*
+             * 本题 deferVideoStart=true（app_robot_core.c 题目表），进题目时
+             * 不会自动开始录像；真正发车（小车即将开始动作）的这一刻才通知
+             * 视觉端开始，对应"第二次按键才开始录制"。结束仍由
+             * RobotCore_NotifyTaskFinished(3U) 在缓停/终点保护触发蜂鸣器时调用，
+             * 未受本次改动影响。
+             */
+            RobotCore_NotifyTaskStarted(3U);
             s_state = T4_STATE_RESET_DISABLE;
         }
         return;
@@ -694,6 +758,7 @@ void Task4_OnLoop(void)
         s_leftRpm = 0.0F;
         s_rightRpm = 0.0F;
         s_state = T4_STATE_TIME_STOPPED;
+        s_runCompleted = true;
         /* 到点缓停：与按键共用同一短促提示音，只响一次（本状态每拍都会进）。 */
         if (!s_finishBeeped) {
             s_finishBeeped = true;
@@ -703,6 +768,17 @@ void Task4_OnLoop(void)
         return;
     }
     if (s_state == T4_STATE_FINISHED) {
+        return;
+    }
+    /*
+     * 2026-08 修复"OLED 计时器不停"：TIME_STOPPED 之前没有像 FINISHED 这样在
+     * 入口直接 return，会继续往下穿过循迹读数、终点判定这些逻辑——虽然靠零散
+     * 的 if 挡住了轮子和 RUN，但挡得不彻底（比如终点判定完全没检查当前状态，
+     * 停车后如果车身正好压在满足终点条件的线型上，会把 TIME_STOPPED 悄悄
+     * 拨成 FINISHED）。跟 FINISHED 一样在这里直接截断，彻底停止响应，是最
+     * 可靠的写法，不用逐条枚举后面每个分支该不该管 TIME_STOPPED。
+     */
+    if (s_state == T4_STATE_TIME_STOPPED) {
         return;
     }
 
@@ -725,8 +801,9 @@ void Task4_OnLoop(void)
             Pid_Reset(&s_pid);
         }
         /*
-         * 0 RPM 缓停期间仍持续采样和更新 PID，避免状态机锁死后丢失循迹状态；
-         * 但不能重新切回 RUN 并下发非零速度，否则会覆盖驱动器正在执行的 0 RPM 曲线。
+         * TIME_STOPPED 现在会在函数入口就直接 return（见上方），不会执行到这里，
+         * 这个判断留着仅作防御——即使以后有新路径意外带着 TIME_STOPPED 走到此处，
+         * 也不会被这里误切回 RUN、覆盖驱动器正在执行的 0 RPM 曲线。
          */
         if (s_state != T4_STATE_TIME_STOPPED) {
             s_state = T4_STATE_RUN;
@@ -760,6 +837,7 @@ void Task4_OnLoop(void)
             s_finishHitTicks++;
             if (s_finishHitTicks >= T4_FINISH_HIT_TICKS) {
                 s_state = T4_STATE_FINISHED;
+                s_runCompleted = true;
             }
         } else {
             s_finishHitTicks = 0U;
@@ -853,4 +931,5 @@ void Task4_OnExit(void)
     s_startCarRequested = false;
     s_finishBeeped = false;
     s_rampBaseRpm = 0.0F;
+    s_runCompleted = false;
 }
