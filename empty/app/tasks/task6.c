@@ -25,7 +25,7 @@
 
 /* ---- 题目六私有循迹参数：初值按值复制自任务五，后续独立调节。 ---- */
 #define T6_KP                              (2.4F)
-#define T6_KI                              (0.2F)
+#define T6_KI                              (0.25F)
 #define T6_KD                              (0.7F)
 #define T6_INTEGRAL_LIMIT                  (20.0F)
 #define T6_MAX_STEER_RPM                   (100.0F)
@@ -66,12 +66,12 @@
 
 /* ---- 手动标定后的钢珠闭环 profile，参数完全归任务六所有。 ---- */
 #define T6_BALL_FRICTION_FF_PULSE          (0.0F)
-#define T6_BALL_LEVEL_TRIM_PULSE           (0)
+#define T6_BALL_LEVEL_TRIM_PULSE           (-50)
 #define T6_BALL_FILTER_ALPHA               (0.9F)
 #define T6_BALL_FILTER_BETA                (0.2F)
 #define T6_BALL_OUTPUT_SIGN                (-1.0F)
-#define T6_BALL_KX_PULSE_PER_PX            (1.066F)
-#define T6_BALL_KV_PULSE_PER_PXPS          (0.504F)
+#define T6_BALL_KX_PULSE_PER_PX            (1.13F)
+#define T6_BALL_KV_PULSE_PER_PXPS          (0.5F)
 #define T6_BALL_SETTLE_DEADBAND_PX         (4.0F)
 #define T6_BALL_FF_VEL_BLEND_PXPS          (15.0F)
 #define T6_BALL_POS_RPM                    (200U)
@@ -80,6 +80,14 @@
 #define T6_BALL_HOLD_POSITION_PX           (6.0F)
 #define T6_BALL_HOLD_VELOCITY_PXPS         (10.0F)
 #define T6_BALL_HOLD_TIME_MS               (500U)
+
+/*
+ * 起步加速度前馈：ID1 正脉冲为抬升。该偏置只在轮速爬升阶段临时叠加到
+ * T6_BALL_LEVEL_TRIM_PULSE，不是巡线 PID 或钢珠位置 PD 的增益。
+ */
+#define T6_START_ACCEL_LIFT_PULSES         (30)
+#define T6_START_ACCEL_LIFT_RAMP_IN_MS     (200U)
+#define T6_START_ACCEL_LIFT_RAMP_OUT_MS    (400U)
 
 typedef enum {
     T6_STATE_WAIT_BALL_RELEASE = 0,
@@ -137,7 +145,10 @@ static uint32_t s_lineLostTicks;
 static uint32_t s_armTicks;
 static uint32_t s_elapsedTicks;
 static uint32_t s_afterLineElapsedMs;
+static uint32_t s_startLiftRampInElapsedMs;
+static uint32_t s_startLiftRampOutElapsedMs;
 static int16_t s_targetX;
+static int32_t s_startLiftOffsetPulse;
 static bool s_sendLeftNext;
 static bool s_finishArmed;
 static bool s_lineStopped;
@@ -147,13 +158,84 @@ static bool s_ballControlRequested;
 static bool s_wheelsStarted;
 static bool s_runCompleted;
 static bool s_finishBeeped;
+static bool s_startLiftRampOut;
+static bool s_startLiftCompensationDone;
 static char s_uiStatusBuf[24];
+static char s_phaseStatusBuf[16];
 
 static float Task6_Clamp(float value, float minValue, float maxValue)
 {
     if (value < minValue) return minValue;
     if (value > maxValue) return maxValue;
     return value;
+}
+
+static int32_t Task6_ScaleStartLift(uint32_t elapsedMs, uint32_t durationMs)
+{
+    if ((durationMs == 0U) || (elapsedMs >= durationMs)) {
+        return T6_START_ACCEL_LIFT_PULSES;
+    }
+    return (int32_t)(((uint32_t)T6_START_ACCEL_LIFT_PULSES * elapsedMs +
+                      (durationMs / 2U)) / durationMs);
+}
+
+static void Task6_SetStartLiftOffset(int32_t offsetPulse)
+{
+    if (offsetPulse == s_startLiftOffsetPulse) {
+        return;
+    }
+    s_startLiftOffsetPulse = offsetPulse;
+    AppBallControl_SetLevelTrimOffset(offsetPulse);
+}
+
+static void Task6_ResetStartLiftCompensation(void)
+{
+    s_startLiftRampInElapsedMs = 0U;
+    s_startLiftRampOutElapsedMs = 0U;
+    s_startLiftRampOut = false;
+    s_startLiftCompensationDone = false;
+    Task6_SetStartLiftOffset(0);
+}
+
+static void Task6_CancelStartLiftCompensation(void)
+{
+    Task6_ResetStartLiftCompensation();
+    s_startLiftCompensationDone = true;
+}
+
+static void Task6_UpdateStartLiftCompensation(void)
+{
+    int32_t offsetPulse;
+
+    if (s_startLiftCompensationDone) {
+        return;
+    }
+
+    if (s_startLiftRampOut) {
+        s_startLiftRampOutElapsedMs += T6_TICK_MS;
+        if (s_startLiftRampOutElapsedMs >= T6_START_ACCEL_LIFT_RAMP_OUT_MS) {
+            Task6_SetStartLiftOffset(0);
+            s_startLiftCompensationDone = true;
+            return;
+        }
+        offsetPulse = T6_START_ACCEL_LIFT_PULSES -
+                      Task6_ScaleStartLift(s_startLiftRampOutElapsedMs,
+                                           T6_START_ACCEL_LIFT_RAMP_OUT_MS);
+        Task6_SetStartLiftOffset(offsetPulse);
+        return;
+    }
+
+    if (s_startLiftRampInElapsedMs < T6_START_ACCEL_LIFT_RAMP_IN_MS) {
+        s_startLiftRampInElapsedMs += T6_TICK_MS;
+    }
+    offsetPulse = Task6_ScaleStartLift(s_startLiftRampInElapsedMs,
+                                       T6_START_ACCEL_LIFT_RAMP_IN_MS);
+    Task6_SetStartLiftOffset(offsetPulse);
+
+    if (s_rampBaseRpm >= T6_BASE_RPM) {
+        s_startLiftRampOut = true;
+        s_startLiftRampOutElapsedMs = 0U;
+    }
 }
 
 static void Task6_ClampWheelPair(float *leftRpm, float *rightRpm)
@@ -253,6 +335,7 @@ static void Task6_ApplyTracking(void)
     float right;
 
     if (s_lineStopped) {
+        Task6_CancelStartLiftCompensation();
         s_leftRpm = 0.0F;
         s_rightRpm = 0.0F;
         Task6_ApplyWheelRpm(s_leftRpm, s_rightRpm);
@@ -264,6 +347,7 @@ static void Task6_ApplyTracking(void)
     if (s_state == T6_STATE_RUN) {
         s_rampBaseRpm += T6_RAMP_RPM_PER_SEC * T6_DT_SEC;
         if (s_rampBaseRpm > T6_BASE_RPM) s_rampBaseRpm = T6_BASE_RPM;
+        Task6_UpdateStartLiftCompensation();
     }
     if (baseRpm > s_rampBaseRpm) baseRpm = s_rampBaseRpm;
     left = baseRpm + s_appliedSteerRpm;
@@ -277,6 +361,60 @@ static void Task6_ApplyTracking(void)
 static uint32_t Task6_GetElapsedMs(void)
 {
     return (uint32_t)((float)(s_elapsedTicks * T6_TICK_MS) * T6_STOPWATCH_CAL_SCALE);
+}
+
+static void Task6_FormatRemaining(const char *prefix, uint32_t elapsedMs)
+{
+    uint32_t remainingMs;
+    uint32_t tenths;
+    uint32_t idx = 0U;
+
+    if (elapsedMs >= T6_AFTER_LINE_MS) {
+        remainingMs = 0U;
+    } else {
+        remainingMs = T6_AFTER_LINE_MS - elapsedMs;
+    }
+    tenths = (remainingMs + 99U) / 100U;
+
+    while (*prefix != '\0') {
+        s_phaseStatusBuf[idx++] = *prefix++;
+    }
+    s_phaseStatusBuf[idx++] = (char)('0' + ((tenths / 10U) % 10U));
+    s_phaseStatusBuf[idx++] = '.';
+    s_phaseStatusBuf[idx++] = (char)('0' + (tenths % 10U));
+    s_phaseStatusBuf[idx++] = 's';
+    s_phaseStatusBuf[idx] = '\0';
+}
+
+static const char *Task6_GetPhaseStatus(void)
+{
+    switch (s_state) {
+    case T6_STATE_RUN:
+        if (s_lineStopped) {
+            return "LOST";
+        }
+        return s_finishArmed ? "LINE" : "ARM";
+
+    case T6_STATE_AFTER_LINE:
+        Task6_FormatRemaining("GO:", s_afterLineElapsedMs);
+        return s_phaseStatusBuf;
+
+    case T6_STATE_DECEL:
+        if (s_lineStopped) {
+            return "LOST";
+        }
+        return "DEC";
+
+    case T6_STATE_STOP_LEFT:
+    case T6_STATE_STOP_RIGHT:
+        return "STOP";
+
+    case T6_STATE_FINISHED:
+        return "DONE";
+
+    default:
+        return "INIT";
+    }
 }
 
 void Task6_OnConfirm(void)
@@ -293,10 +431,13 @@ void Task6_OnEnter(void)
     s_filteredError = s_rampBaseRpm = s_straightRpm = 0.0F;
     s_sentLeftRpm = s_sentRightRpm = 0;
     s_settleTicks = s_lineLostTicks = s_armTicks = s_elapsedTicks = s_afterLineElapsedMs = 0U;
+    s_startLiftRampInElapsedMs = s_startLiftRampOutElapsedMs = 0U;
     s_targetX = 0;
+    s_startLiftOffsetPulse = 0;
     s_sendLeftNext = true;
     s_finishArmed = s_lineStopped = s_captureRequested = s_startCarRequested = false;
     s_ballControlRequested = s_wheelsStarted = s_runCompleted = s_finishBeeped = false;
+    s_startLiftRampOut = s_startLiftCompensationDone = false;
 }
 
 void Task6_OnLoop(void)
@@ -373,6 +514,7 @@ void Task6_OnLoop(void)
     if ((s_state != T6_STATE_WAIT_BALL_CONTROL) &&
         (s_state != T6_STATE_BALL_RECOVER_WAIT) &&
         (ballStatus.state == APP_BALL_CONTROL_FAULT_EDGE)) {
+        Task6_CancelStartLiftCompensation();
         AppBallControl_RequestStop();
         s_ballControlRequested = false;
         s_state = T6_STATE_BALL_RECOVER_WAIT;
@@ -426,6 +568,7 @@ void Task6_OnLoop(void)
             s_startCarRequested = false;
             s_wheelsStarted = true;
             s_rampBaseRpm = 0.0F;
+            Task6_ResetStartLiftCompensation();
             RobotCore_NotifyTaskStarted(5U);
             s_state = T6_STATE_RESET_DISABLE;
         }
@@ -467,6 +610,7 @@ void Task6_OnLoop(void)
         s_state = T6_STATE_RUN;
     }
     if (s_state == T6_STATE_STOP_LEFT) {
+        Task6_CancelStartLiftCompensation();
         Emm42Robot_VelControl(EMM42_ROBOT_WHEEL_L, 0, T6_STOP_EMM_ACC);
         s_state = T6_STATE_STOP_RIGHT;
         return;
@@ -507,6 +651,7 @@ void Task6_OnLoop(void)
     lineFound = Task6_GetLineError(&rawError, &hitCount);
     if (s_finishArmed && (hitCount >= T6_STOP_LINE_HIT_MIN) &&
         ((s_elapsedTicks * T6_TICK_MS) >= T6_FINISH_MIN_ELAPSED_MS)) {
+        Task6_CancelStartLiftCompensation();
         s_straightRpm = (s_leftRpm + s_rightRpm) * 0.5F;
         s_afterLineElapsedMs = 0U;
         s_lastSteerRpm = s_appliedSteerRpm = 0.0F;
@@ -525,6 +670,7 @@ void Task6_OnLoop(void)
 
 void Task6_OnExit(void)
 {
+    Task6_CancelStartLiftCompensation();
     Emm42Robot_Stop(EMM42_ROBOT_WHEEL_L);
     vTaskDelay(pdMS_TO_TICKS(T6_EMM_CMD_GAP_MS));
     Emm42Robot_Stop(EMM42_ROBOT_WHEEL_R);
@@ -541,23 +687,48 @@ void Task6_OnExit(void)
 
 const char *Task6_GetUiStatus(void)
 {
-    uint32_t elapsed = Task6_GetElapsedMs();
-    uint32_t sec = elapsed / 1000U;
-    uint32_t tenth = (elapsed / 100U) % 10U;
+    const char *phase;
+    uint32_t totalMs;
+    uint32_t secWhole;
+    uint32_t tenths;
+    uint32_t idx = 0U;
+    uint32_t n = 0U;
+    uint32_t value;
+    char digits[10];
 
     if (s_state <= T6_STATE_HOME_LIFT_WAIT) return "T6 HOME";
     if (s_state == T6_STATE_MANUAL_TARGET) return s_captureRequested ? "T6 NO BALL" : "T6 SET BALL";
     if ((s_state == T6_STATE_CAPTURE_ENABLE) || (s_state == T6_STATE_CAPTURE_ENABLE_WAIT) ||
-        (s_state == T6_STATE_CAPTURE_ZERO) || (s_state == T6_STATE_WAIT_BALL_CONTROL)) return "T6 B WAIT";
+         (s_state == T6_STATE_CAPTURE_ZERO) || (s_state == T6_STATE_WAIT_BALL_CONTROL)) return "T6 B WAIT";
     if (s_state == T6_STATE_BALL_READY) return "T6 K3=GO";
     if (s_state == T6_STATE_BALL_RECOVER_WAIT) return "T6 B RECOV";
-    if (s_state == T6_STATE_AFTER_LINE) return "T6 GO";
-    if (s_state == T6_STATE_DECEL) return "T6 DEC";
-    if (s_state == T6_STATE_FINISHED) return "T6 DONE";
-    s_uiStatusBuf[0] = 'T'; s_uiStatusBuf[1] = ':';
-    s_uiStatusBuf[2] = (char)('0' + ((sec / 10U) % 10U));
-    s_uiStatusBuf[3] = (char)('0' + (sec % 10U));
-    s_uiStatusBuf[4] = '.'; s_uiStatusBuf[5] = (char)('0' + tenth);
-    s_uiStatusBuf[6] = 's'; s_uiStatusBuf[7] = s_finishArmed ? 'L' : 'A'; s_uiStatusBuf[8] = '\0';
+
+    phase = Task6_GetPhaseStatus();
+    totalMs = Task6_GetElapsedMs();
+    secWhole = totalMs / 1000U;
+    tenths = (totalMs / 100U) % 10U;
+    value = secWhole;
+
+    s_uiStatusBuf[idx++] = 'T';
+    s_uiStatusBuf[idx++] = ':';
+    if (value == 0U) {
+        s_uiStatusBuf[idx++] = '0';
+    } else {
+        while (value > 0U) {
+            digits[n++] = (char)('0' + (value % 10U));
+            value /= 10U;
+        }
+        while (n > 0U) {
+            s_uiStatusBuf[idx++] = digits[--n];
+        }
+    }
+    s_uiStatusBuf[idx++] = '.';
+    s_uiStatusBuf[idx++] = (char)('0' + tenths);
+    s_uiStatusBuf[idx++] = 's';
+    s_uiStatusBuf[idx++] = ' ';
+    while ((*phase != '\0') && (idx < (sizeof(s_uiStatusBuf) - 1U))) {
+        s_uiStatusBuf[idx++] = *phase++;
+    }
+    s_uiStatusBuf[idx] = '\0';
     return s_uiStatusBuf;
 }

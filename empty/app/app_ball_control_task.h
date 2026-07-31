@@ -8,8 +8,8 @@
 extern "C" {
 #endif
 
-/* 上电后默认居中的相机水平像素坐标。 */
-#define APP_BALL_CONTROL_CENTER_X_PX (320)
+/* 菜单 K4 单点验证与默认闭环使用的相机目标水平像素坐标。 */
+#define APP_BALL_CONTROL_CENTER_X_PX (350)
 
 typedef enum {
     APP_BALL_CONTROL_OFF = 0,
@@ -23,7 +23,7 @@ typedef enum {
 
 /*
  * 钢珠位置闭环参数。调用方按值传入，控制线程会复制保存；任务三可据此使用
- * 独立参数，菜单闭环则继续使用本模块内置的默认参数。
+ * 独立参数，菜单 K4 的 X=350 单点验证则继续使用本模块内置的默认参数。
  */
 typedef struct {
     float filterAlpha;
@@ -91,6 +91,13 @@ bool AppBallControl_RequestTarget(int16_t targetPx);
 /* 使用指定的独立参数启动或更新目标；参数会在投递时复制。 */
 bool AppBallControl_RequestTargetWithProfile(int16_t targetPx,
                                              const AppBallControlProfile_t *profile);
+
+/*
+ * 临时叠加到当前 profile 水平点的偏置。正值沿 ID1 正方向抬升摇臂；仅改变
+ * 最终位置命令的水平基准，不改变 PD、滤波或目标像素。新建/停止闭环和边缘
+ * 故障都会自动清零，调用方无需直接操作 ID1。
+ */
+void AppBallControl_SetLevelTrimOffset(int32_t offsetPulse);
 
 /* 请求停止闭环；控制线程会先急停 ID1，再失能并回到 OFF。 */
 void AppBallControl_RequestStop(void);

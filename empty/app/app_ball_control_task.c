@@ -227,6 +227,7 @@ typedef struct {
 static TaskHandle_t s_taskHandle;
 static QueueHandle_t s_commandQueue;
 static AppBallControlStatus_t s_publicStatus;
+static int32_t s_levelTrimOffsetPulse;
 
 static float BallControl_Abs(float value)
 {
@@ -255,6 +256,16 @@ static int32_t BallControl_RoundToInt32(float value)
         return (int32_t)(value + 0.5F);
     }
     return (int32_t)(value - 0.5F);
+}
+
+static int32_t BallControl_GetLevelTrimOffset(void)
+{
+    int32_t offsetPulse;
+
+    taskENTER_CRITICAL();
+    offsetPulse = s_levelTrimOffsetPulse;
+    taskEXIT_CRITICAL();
+    return offsetPulse;
 }
 
 #if (BALL_CTRL_DEBUG_LOG_ENABLE != 0U)
@@ -493,6 +504,7 @@ static void AppBallControlTask_Entry(void *argument)
                     float rawError;
                     float pulseDelta;
                     float output;
+                    int32_t effectiveLevelTrimPulse;
 
                     measuredPx = vision.pixel;
                     if ((measuredPx <= BALL_CTRL_SAFE_X_MIN_PX) ||
@@ -501,6 +513,7 @@ static void AppBallControlTask_Entry(void *argument)
                          * 球快滚出摆杆：命令回水平，标记故障并锁定，等 K4 处理。
                          * 安全动作【不走软件平滑限速】，必须立即到位。
                          */
+                        AppBallControl_SetLevelTrimOffset(0);
                         Emm42Robot_MoveAbsolute(EMM42_ROBOT_LIFT,
                                                activeProfile.levelTrimPulse,
                                                activeProfile.positionRpm,
@@ -592,8 +605,10 @@ static void AppBallControlTask_Entry(void *argument)
                         pulseDelta = (ffDir * activeProfile.frictionFfPulse) + pd;
                     }
 
-                    output = (float)activeProfile.levelTrimPulse +
-                             (activeProfile.outputSign * pulseDelta);
+                    effectiveLevelTrimPulse = activeProfile.levelTrimPulse +
+                                              BallControl_GetLevelTrimOffset();
+                    output = (float)effectiveLevelTrimPulse +
+                              (activeProfile.outputSign * pulseDelta);
 
                     /*
                      * 软件平滑：把 PD 算出的理想目标按每帧最大步进逼近，使驱动器
@@ -715,6 +730,7 @@ void AppBallControlTask_Init(void)
     s_publicStatus.velocityPxPerSec = 0.0F;
     s_publicStatus.commandPulse = 0;
     s_publicStatus.sampleSeq = 0U;
+    s_levelTrimOffsetPulse = 0;
 
     ret = xTaskCreate(AppBallControlTask_Entry,
                       "BALLCTRL",
@@ -745,7 +761,15 @@ bool AppBallControl_RequestTargetWithProfile(int16_t targetPx,
     command.enable = true;
     command.targetPx = targetPx;
     command.profile = *profile;
+    AppBallControl_SetLevelTrimOffset(0);
     return xQueueOverwrite(s_commandQueue, &command) == pdPASS;
+}
+
+void AppBallControl_SetLevelTrimOffset(int32_t offsetPulse)
+{
+    taskENTER_CRITICAL();
+    s_levelTrimOffsetPulse = offsetPulse;
+    taskEXIT_CRITICAL();
 }
 
 void AppBallControl_RequestStop(void)
@@ -756,6 +780,7 @@ void AppBallControl_RequestStop(void)
         return;
     }
 
+    AppBallControl_SetLevelTrimOffset(0);
     command.enable = false;
     command.targetPx = APP_BALL_CONTROL_CENTER_X_PX;
     command.profile = s_menuProfile;

@@ -12,10 +12,10 @@
 
 MCU 复位或重新上电后保持原有 OLED 菜单界面，ID1 处于失能状态；开机会先经
 `app/app_lift_homing.c` 的 `AppLiftHoming_RunAtBoot()` 自动归零（见
-`CLAUDE.md`「ID1 开机自动归零」），不再需要人工把杆摆到目视水平。**菜单已不
-提供 K4 启停入口**（2026-08-01 移除，PA24 原继电器接口已改接归零限位开关）；
-`BALLCTRL` 改由题目三、题目四各自的 `OnEnter` 经 `AppBallControl_RequestTargetWithProfile()`
-按需启动；题目三使用中心等待目标及独立的左右摆动目标，
+`CLAUDE.md`「ID1 开机自动归零」），不再需要人工把杆摆到目视水平。菜单态首次按 K4
+使用模块默认 `BALL_CTRL_*` 参数请求 `X=350` 单点验证，右侧 OLED 的 `X:` 与 `B:` 分别
+反馈实测位置与闭环状态；闭环运行时再次按 K4 安全停止。题目三、题目四仍各自的 `OnEnter`
+经 `AppBallControl_RequestTargetWithProfile()` 按需启动独立 profile；题目三使用中心等待目标及独立的左右摆动目标，
 题目四使用 `T4_BALL_TARGET_X_PX`，均通过 UART1 **位置模式**控制 Emm42 ID1 摆杆曲柄摇臂
 机构；题目退出时请求安全停止、急停并失能 ID1。
 
@@ -47,7 +47,7 @@ ID2/ID3 循迹的同时，经 `BALLCTRL` 控制 ID1 保持钢珠位置。题目�
 
 | 使用场景 | 私有参数组 | 调参影响范围 |
 |---|---|---|
-| 模块内置默认 profile（`AppBallControl_RequestTarget()` 用，当前无调用方） | `BALL_CTRL_*` | 无（菜单 K4 快捷键已移除，暂无题目使用） |
+| 菜单 K4 单点验证的默认 profile（`AppBallControl_RequestTarget()` 用） | `BALL_CTRL_*` | 仅菜单 X=350 验证 |
 | 任务三左右摆球 | `T3_BALL_*` | 仅任务三 |
 | 任务四行驶平衡 | `T4_BALL_*` | 仅任务四 |
 
@@ -55,7 +55,15 @@ ID2/ID3 循迹的同时，经 `BALLCTRL` 控制 ID1 保持钢珠位置。题目�
 `AppBallControlProfile_t`，通过 `AppBallControl_RequestTargetWithProfile()` 按值投递；不得
 引用或修改其他任务的参数宏。
 
-### 1.2 题目四：两段式启动 + 行驶中的钢珠平衡
+### 1.2 题目六：启动加速度抬升前馈
+
+题目六第二次 K3 后，轮子从 0 RPM 以 `T6_RAMP_RPM_PER_SEC` 爬升时，通过
+`AppBallControl_SetLevelTrimOffset()` 临时叠加任务六私有的 `+40` 脉冲抬升偏置：前
+150 ms 平滑抬升，加速段保持，达到 `T6_BASE_RPM` 后在 300 ms 内回到 0。该量用于抵消
+小车启动加速度扰球，是前馈而非巡线 PID 或钢珠位置 PD 的 P/I/D 参数；仅影响
+`task6.c`，停止闭环或触发 `FAULT_EDGE` 时自动清零并回到 profile 原水平点。
+
+### 1.3 题目四：两段式启动 + 行驶中的钢珠平衡
 
 ID1 位置零点由开机自动归零流程建立（见 `CLAUDE.md`「ID1 开机自动归零」），不再需要
 人工在菜单页按 K4。**2026-08 新增两段式 K3 启动**：进题目先什么都不动（ID1 不闭环、
@@ -85,7 +93,7 @@ profile 和目标 `T4_BALL_TARGET_X_PX`，并等待后台进入 `RUNNING`/`HOLDI
 滤波/摩擦前馈/水平点/执行器参数数值以 `task4.c` 当前源码为准，调参方法论见
 [CONTROL_ALGORITHM.md](CONTROL_ALGORITHM.md) §10。
 
-### 1.3 题目三：左右摆球
+### 1.4 题目三：左右摆球
 
 `task3.c` 进题后先用 PA24 限位开关完成 ID1 回零并抬升到水平附近，ID2/ID3 仅使能为
 0 RPM。`T3_BALL_CENTER_X_PX` 只用于 K3 前的中心保持；

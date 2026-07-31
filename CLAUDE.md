@@ -57,7 +57,7 @@
 | `LED1` | `app/app_led_task.c` | 300 ms | LED1(PB25) 心跳灯，用于判断 FreeRTOS 是否正常调度 |
 | `UART0TX` | `app/app_uart_test_task.c` | 10 ms 轮询 | UART0 接收回显，收到非换行字符返回 `UART RX OK` |
 | `UIMENU` | `app/app_ui_task.c` | 30 ms 轮询 | **OLED 题目菜单 UI**：4 键(K1上/K2下/K3确认/K4返回)选题并进入运行界面，任一按键均短促嘀声（约2~3ms），**独占 OLED 与 KEY1~4**；题目业务委托 `app_robot_core` → `app/tasks/taskN.c` 的 `OnEnter/OnLoop/OnExit`，运行态 K3 按下沿另经 `RobotCore_ConfirmTask()` 转发给题目的 `onConfirm` 钩子（当前题目三、四、五登记，其余题目为 `NULL`）。当前 5 道题均为硬件/函数测试（非正式赛题）：task1 `VIDEO 5S` 通过视觉协议录制 5 秒无叠加标注的正常画面、task2 `LINE PID` 8 路灰度 PID 循迹、task3 `BALL SWING` 先让 ID1 限位回零并抬升，随后自动以 X=350 启动钢球闭环并等待 K3；按键后才启动单次左右摆球，ID2/ID3 只使能并保持 0 RPM（独立 `T3_*`/`T3_BALL_*` 参数组，详见下方说明）、task4 `LINE 6S` **两段式 K3 启动**（第一次进球杆位置闭环、确认钢珠稳定后第二次才发车循迹），行驶期间同步保持钢珠在目标 `X`（`T4_BALL_TARGET_X_PX`），累计前进 `T4_STOP_AFTER_MS` 后缓停，具体秒数与全部调参数值以 `task4.c` 当前值为准（详见下方说明）、task5 `Five` **2026-08 同样改为两段式 K3 启动**（第一次进球杆位置闭环、确认稳定后第二次才发车循迹，加速度/顶速参考 task4 当前值），武装后循迹命中 `T5_STOP_LINE_HIT_MIN`（当前 5）路黑线即判定到达终点，随即两轮改为同一转速直直前进，维持 `T5_AFTER_LINE_MS`（当前 1500ms）后转入缓停；蜂鸣器第二次响、通知视觉端结束录像不等这段直行走完，而是在其中更早的 `T5_BEEP_DELAY_MS`（当前 800ms）先触发，之后再用与起步同一根软件斜坡 `T5_RAMP_RPM_PER_SEC` 对称降速到 0（详见下方说明）、task6 `ID1 POS` 仅对 Emm42 ID1 做**位置模式 API 冒烟测试**（进题目自动位置清零定原点 → 按 `T6_RETURN_ENABLE`/`T6_ABS_TEST_ENABLE` 决定单程/往返/绝对验证，当前默认正转 10 圈后停住量丝杆导程，OLED 题名行显示阶段与目标脉冲）。任务二、四、五自动完成时使用与按键完全相同的短促提示音。M1/M2 已全局取反标定 |
-| `BALLCTRL` | `app/app_ball_control_task.c` | 10 ms 轮询；仅在视觉新样本到达时才计算 | **上电默认 OFF**；题目经 `AppBallControl_RequestTargetWithProfile()` 传入独立 profile 启停目标 `X` 的钢球后台闭环（菜单不再提供 K4 启停入口）。**已切到位置模式**：α-β 估计位置/速度后走无 I 项的纯 PD，`targetPulse = LEVEL_TRIM_PULSE + SIGN×(Kx×error − Kv×velocity)`，每帧下发绝对位置目标，不是速度。误差进 `settleDeadbandPx` 死区【且】球基本停住才回真实水平点保持；唯一仍主动出手的保护是边缘保护（球快滚出摆杆，命令回水平并锁定 `FAULT_EDGE`，等题目自行处理）。`profile` 另含 `maxPulseStepPerFrame`（软件限速，把目标突变摊到多帧，0=不限速，菜单/题目三保持 0 不变）；`positionAcc` 每题目独立标定，见下方「EMM42 位置模式」小节的 ACC 陷阱。**临时调试用**：`app_ball_control_task.c` 顶部 `BALL_CTRL_DEBUG_LOG_ENABLE`（默认 0）打开后会把每次算出的目标/测量/滤波位置/速度/命令脉冲/状态打到 UART0（TX 空闲，不影响视觉 RX），排查完记得关掉，长期开着占 CPU 和串口带宽 |
+| `BALLCTRL` | `app/app_ball_control_task.c` | 10 ms 轮询；仅在视觉新样本到达时才计算 | **上电默认 OFF**；菜单态 K4 用模块默认 `BALL_CTRL_*` 参数启动目标 `X=350` 的单点验证，右侧 OLED 的 `X:`/`B:` 分别反馈实测位置与闭环状态，再按 K4 安全停止；题目经 `AppBallControl_RequestTargetWithProfile()` 传入独立 profile 启停各自目标 `X`。**已切到位置模式**：α-β 估计位置/速度后走无 I 项的纯 PD，`targetPulse = LEVEL_TRIM_PULSE + SIGN×(Kx×error − Kv×velocity)`，每帧下发绝对位置目标，不是速度。误差进 `settleDeadbandPx` 死区【且】球基本停住才回真实水平点保持；唯一仍主动出手的保护是边缘保护（球快滚出摆杆，命令回水平并锁定 `FAULT_EDGE`，等题目自行处理）。`profile` 另含 `maxPulseStepPerFrame`（软件限速，把目标突变摊到多帧，0=不限速，菜单/题目三保持 0 不变）；`positionAcc` 每题目独立标定，见下方「EMM42 位置模式」小节的 ACC 陷阱。**临时调试用**：`app_ball_control_task.c` 顶部 `BALL_CTRL_DEBUG_LOG_ENABLE`（默认 0）打开后会把每次算出的目标/测量/滤波位置/速度/命令脉冲/状态打到 UART0（TX 空闲，不影响视觉 RX），排查完记得关掉，长期开着占 CPU 和串口带宽 |
 | `IMU100Hz` | `app/app_imu_uart_task.c` | 10 ms | 读取 ATK-MS6DSV 姿态 + 追加激光测距1(D1)，按 5Hz 整行输出 Roll/Pitch/Yaw/加减速度/D1 |
 | `MOTORTEST` | `app/app_motor_test_task.c` | 20 ms 轮询 | **【默认禁用】** KEY1/KEY2 让 4 个电机（各自独立接口同时下发）正/反转 2 圈测试（按键已让给 UIMENU） |
 | `SERVOSWEEP` | `app/app_servo_test_task.c` | 20 ms | **【默认禁用】4 个舵机各自独立错相摆动**（800~2200us，无按键）；单控用 `BspServo_SetPulseUs(id,us)` |
@@ -66,7 +66,7 @@
 > 激光测距1（UART2）不是任务，而是 **UART2 RX 中断**逐字节喂 `module/laser` 的 LD14 解析器；距离由 `IMU100Hz` 任务读取并随整行输出。
 > 小球检测（UART0）同样不是任务，而是 **UART0 RX 中断**逐字节喂 `module/vision` 的 `$BALL` 解析器（上位机→下位机，NMEA+XOR）；结果由 `UIMENU` 读取显示在 OLED 右侧文字面板。见 [empty/docs/MESSAGE_LIST.md](empty/docs/MESSAGE_LIST.md) 的 `$BALL` 报文小节。
 > 题目菜单 UI 见 [empty/docs/FREERTOS_TASKS.md](empty/docs/FREERTOS_TASKS.md) 的「OLED 题目菜单 UI」小节；**题目业务逻辑逐题填 [empty/app/tasks/](empty/app/tasks/) 的 `taskN.c`**（第 N 题 = `taskN.c`），题名/题数登记在 `app_robot_core.c` 的 `s_robotTasks[]`。四路步进电机为**各自独立**驱动（`bsp_motor.h`，RPM 单位、带符号定方向）。OLED 当前只能显示 ASCII（无中文字库）。
-> K4 在运行态表示退出当前题目；菜单态不再有 K4 功能（原"启停钢球居中到 `X=320`"的调试入口已于 2026-08-01 移除，PA24 引脚已改接归零限位开关，见下方「ID1 开机自动归零」小节）。题目三与后台闭环都使用 ID1，进入题目三前会先等待闭环释放 ID1。
+> K4 在运行态表示退出当前题目；菜单态首次按下启动使用默认 `BALL_CTRL_*` 参数的 `X=350` 单点验证，OLED 右侧 `X:`/`B:` 反馈实测位置与闭环状态，闭环运行时再次按下安全停止。题目三与后台闭环都使用 ID1，进入题目三前会先等待闭环释放 ID1。
 
 > **题目三当前行为**：`BALL SWING` 不执行循迹。进入后等待 `BALLCTRL` 释放 ID1，按“失能→限位回零→抬升”完成非阻塞归零；随后自动请求 X=350 的钢球闭环并等待 K3，期间持续保持中心目标。K3 后 ID2/ID3 依次使能并保持 0 RPM。`T3_BALL_CENTER_X_PX=350` 仅用于 K3 前的中心保持；K3 后按 `T3_BALL_LEFT_TARGET_X_PX=230`→`T3_BALL_MIDDLE_TARGET_X_PX=380`→`T3_BALL_FINAL_TARGET_X_PX=450` 三段执行。前两段首次进入各自到达带即切下一段；最终段测量达到 `T3_BALL_FINAL_GUARD_X_PX=500` 时重新投递最终目标回拉，按位置误差≤6 px、速度≤10 px/s 持续 `T3_BALL_FINAL_HOLD_TIME_MS=200ms` 后短鸣并等待 K4。`FAULT_EDGE` 走停止、等待 OFF、按当前阶段重新请求的恢复握手；K4 停止并失能 ID1、ID2、ID3。所有 `T3_*`/`T3_BALL_*` 参数仅影响本题。
 
@@ -248,6 +248,14 @@ A23、A21、A20、A19、A18、A11、A10、A5、A6、A4、A3、A2
 4. 是否新增了未记录的任务、消息、模式或硬件接线？
 5. 是否需要更新 `docs/` 下的 `FREERTOS_TASKS.md`、`MESSAGE_LIST.md`、`HARDWARE_WIRING.md`？
 6. 关键代码是否写了必要的中文注释？
+
+## 题目六启动加速度抬升前馈
+
+题目六在第二次 K3 后以 `T6_START_ACCEL_LIFT_*` 叠加独立的 ID1 水平点临时偏置：当前为
+正方向 `+40` 脉冲，150 ms 平滑抬升，覆盖轮速爬升段，达到巡航后 300 ms 平滑撤回。偏置
+必须经线程安全的 `AppBallControl_SetLevelTrimOffset()` 交给 `BALLCTRL`，不能直接下发相对
+位置命令；它是抵消起步加速度扰球的前馈，不是任何 PID 增益。新建/停止闭环和边缘故障会
+自动清零；任务六还会在丢线停车、终点和退出时主动清零，其他题目不得调用或复用该参数组。
 
 ## 维护文档索引
 

@@ -22,9 +22,9 @@
 
 /* ---- 中心等待目标与左右摆动目标：左右目标可独立按实际物理位置标定。 ---- */
 #define T3_BALL_CENTER_X_PX               (350)  /* 进题回零抬升后、等待 K3 时持续保持的中心位置。 */
-#define T3_BALL_LEFT_TARGET_X_PX          (225)  /* K3 后的第 1 段目标；首次进入到达带后切第 2 段。 */
-#define T3_BALL_MIDDLE_TARGET_X_PX        (350)  /* 第 2 段目标；首次进入到达带后切最终段。 */
-#define T3_BALL_FINAL_TARGET_X_PX         (465)  /* 第 3 段最终目标；满足稳定条件后鸣叫并结束。 */
+#define T3_BALL_LEFT_TARGET_X_PX          (240)  /* K3 后的第 1 段目标；首次进入到达带后切第 2 段。 */
+#define T3_BALL_MIDDLE_TARGET_X_PX        (360)  /* 第 2 段目标；首次进入到达带后切最终段。 */
+#define T3_BALL_FINAL_TARGET_X_PX         (470)  /* 第 3 段最终目标；满足稳定条件后鸣叫并结束。 */
 #define T3_BALL_LEFT_ARRIVAL_BAND_PX      (30)   /* 第 1 段到达带半宽：230±20，即 210~250 即切第 2 段。 */
 #define T3_BALL_MIDDLE_ARRIVAL_BAND_PX    (10)    /* 第 2 段到达带半宽：380±6，即 374~386 即切最终段。 */
 #define T3_BALL_FINAL_GUARD_X_PX          (550)  /* 最终段右侧保护线：测量值达到此处立即重投 450 回拉。 */

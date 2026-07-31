@@ -39,7 +39,7 @@
 2. **上电看到的 OLED 界面是谁画的？** → `app_ui_task.c`（UIMENU）：菜单/运行两态、底部状态栏、右侧视觉通信面板。
 3. **题目业务逻辑写在哪？** → **`app/tasks/taskN.c`（第 N 题就在 taskN.c）**，每题一套状态机骨架；`app_robot_core.c` 只把它们登记进 dispatch 表，UIMENU 只管显示与按键。
 4. **树莓派发来的 X 坐标怎么进来的、显示在哪？** → UART0 RX 中断喂 `module/vision` 解析器 → `app_vision_link` 做在线/超时判定 → UIMENU 右侧面板；开关 `APP_FEATURE_VISION_LINK`。
-4.1 **怎么让钢球到指定 X？** → 菜单默认调 `AppBallControl_RequestTarget(targetPx)`；需要独立调参的题目调 `AppBallControl_RequestTargetWithProfile(targetPx, &profile)`，profile 会在队列投递时复制。上电菜单态按 K4 等价于请求 `X=320`，再次 K4 请求停止。
+4.1 **怎么让钢球到指定 X？** → 菜单默认调 `AppBallControl_RequestTarget(targetPx)`；需要独立调参的题目调 `AppBallControl_RequestTargetWithProfile(targetPx, &profile)`，profile 会在队列投递时复制。上电菜单态按 K4 等价于请求 `X=350` 单点验证，OLED 右侧 `X:` 和 `B:` 分别反馈实测位置与闭环状态；再次 K4 请求停止。
 5. **陀螺仪 Yaw / 激光距离怎么显示到状态栏？** → `IMU100Hz` 临界区发布 Yaw 快照、`module/laser` 发布距离快照，UIMENU 局部低频刷底行。
 6. **怎么加一个新任务？** → 参照 `app_led_task.c`：`.c` 写 `Entry`+`Init`、`.h` 声明 `Init`，在 `app_main.c` 的 `App_Init()` 里用 `#if APP_FEATURE_xxx` 门控调用。
 7. **多个任务共用 UART0 不会冲突吗？** → `bsp_uart.c` 的递归互斥量，`BspUart0_Lock/Unlock` 保证整行原子（注意 UART0 RX 中断接收小球报文时，轮询自检 `UART_ECHO` 必须关，二者互斥有编译期护栏）。

@@ -28,7 +28,7 @@
  *   RUN  运行态：进入所选题目的运行界面，周期调用该题业务钩子。
  *
  * 按键（KEY1~4 = PA28/PA31/PA30/PA29，按下接地）：
- *   K1 上移   K2 下移   K3 确认进入   K4 运行态返回/菜单态启停钢球居中
+ *   K1 上移   K2 下移   K3 确认进入   K4 运行态返回/菜单态启停 X=350 单点验证
  *
  * 刷屏策略：软件 I2C 整屏刷约 50ms，故采用「事件驱动」——只有按键改变了
  * 选中项或状态时才重绘 + OLED_Update；平时任务只是轻量轮询按键，不刷屏，
@@ -328,7 +328,11 @@ static void Ui_DrawMenu(void)
     OLED_Clear();
 #if (APP_FEATURE_VISION_LINK != 0U)
     /* 标题收窄到左半，给右侧视觉通信面板让位。 */
+#if (APP_FEATURE_BALL_CONTROL != 0U)
+    OLED_ShowString(0, UI_MENU_TITLE_Y, "K4:X350", OLED_6X8);
+#else
     OLED_ShowString(0, UI_MENU_TITLE_Y, "TASKS", OLED_6X8);
+#endif
 #else
     OLED_ShowString(13, UI_MENU_TITLE_Y, "== SELECT TASK ==", OLED_6X8);
 #endif
@@ -479,6 +483,24 @@ static void AppUiTask_Entry(void *argument)
                 dirty = true;
             }
 
+#if (APP_FEATURE_BALL_CONTROL != 0U)
+            /*
+             * 菜单态 K4 是独立的单点验证：首次请求 X=350，闭环运行时再次按下
+             * 则安全停止。状态与实测 X 由右侧 VISION 面板的 B:/X: 字段反馈。
+             */
+            if (edge[BSP_KEY_4]) {
+                AppBallControlStatus_t ballStatus;
+
+                AppBallControl_GetStatus(&ballStatus);
+                if (ballStatus.state == APP_BALL_CONTROL_OFF) {
+                    (void)AppBallControl_RequestTarget(APP_BALL_CONTROL_CENTER_X_PX);
+                } else {
+                    AppBallControl_RequestStop();
+                }
+                dirty = true;
+            }
+#endif
+
             /* K3 进入题目。 */
             if (edge[BSP_KEY_3]) {
                 state = UI_STATE_RUN;
@@ -540,7 +562,7 @@ static void AppUiTask_Entry(void *argument)
                 OLED_UpdateArea(0, UI_RUN_NAME_Y, 128, UI_MENU_LINE_H);
             }
             if ((state == UI_STATE_RUN) && (s_sel == UI_TASK6_INDEX)) {
-                /* 任务六每 300ms 刷新一次位置模式测试阶段（串口静默时的唯一反馈）。 */
+                /* 任务六每 300ms 刷新一次秒表与循迹/停车流程状态。 */
                 OLED_ClearArea(0, UI_RUN_NAME_Y, 128, UI_MENU_LINE_H);
                 OLED_ShowString(0, UI_RUN_NAME_Y, (char *)Task6_GetUiStatus(), OLED_6X8);
                 OLED_UpdateArea(0, UI_RUN_NAME_Y, 128, UI_MENU_LINE_H);
