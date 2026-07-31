@@ -157,6 +157,12 @@
 #define BALL_CTRL_POS_RPM                 (200U)
 #define BALL_CTRL_POS_ACC                 (0U)
 
+/*
+ * 菜单默认闭环不启用软件平滑（0=不限速），保持历史行为不变；各题目按需在
+ * 自己的 profile 里给非 0 值。含义与注意事项见 app_ball_control_task.h。
+ */
+#define BALL_CTRL_MAX_PULSE_STEP          (0U)
+
 /* 中心保持判定，仅用于 OLED 显示 HOLDING/RUNNING，不影响任何控制动作。 */
 #define BALL_CTRL_HOLD_POSITION_PX        (5.0F)
 #define BALL_CTRL_HOLD_VELOCITY_PXPS      (10.0F)
@@ -179,6 +185,7 @@ static const AppBallControlProfile_t s_menuProfile = {
     BALL_CTRL_FF_VEL_BLEND_PXPS,
     BALL_CTRL_POS_RPM,
     BALL_CTRL_POS_ACC,
+    BALL_CTRL_MAX_PULSE_STEP,
     BALL_CTRL_HOLD_POSITION_PX,
     BALL_CTRL_HOLD_VELOCITY_PXPS,
     BALL_CTRL_HOLD_TIME_MS
@@ -307,6 +314,12 @@ static void AppBallControlTask_Entry(void *argument)
     int16_t measuredPx = 0;
     int32_t commandPulse = 0;
     bool holding = false;
+    /*
+     * 软件平滑状态：commandPulse 是本帧实际下发给驱动器的目标（已限速），
+     * smoothPrimed 表示它是否已经有过一个有效起点。首帧不限速直接跳到 PD 输出，
+     * 否则会从一个与电机真实位置无关的起点（如上次退出时的位置）慢慢爬。
+     */
+    bool smoothPrimed = false;
 
     (void)argument;
     AlphaBetaFilter_Init(&filter, activeProfile.filterAlpha, activeProfile.filterBeta);
@@ -334,6 +347,7 @@ static void AppBallControlTask_Entry(void *argument)
                     commandPulse = 0;
                     consecutiveNaCount = 0U;
                     recoveryValidCount = 0U;
+                    smoothPrimed = false;
                     state = BALL_CTRL_INTERNAL_RESET_DISABLE;
                 }
                 /* 已运行时更新 targetPx 即可，不重做电机使能时序。 */
@@ -409,12 +423,16 @@ static void AppBallControlTask_Entry(void *argument)
                     measuredPx = vision.pixel;
                     if ((measuredPx <= BALL_CTRL_SAFE_X_MIN_PX) ||
                         (measuredPx >= BALL_CTRL_SAFE_X_MAX_PX)) {
-                        /* 球快滚出摆杆：命令回水平，标记故障并锁定，等 K4 处理。 */
+                        /*
+                         * 球快滚出摆杆：命令回水平，标记故障并锁定，等 K4 处理。
+                         * 安全动作【不走软件平滑限速】，必须立即到位。
+                         */
                         Emm42Robot_MoveAbsolute(EMM42_ROBOT_LIFT,
                                                activeProfile.levelTrimPulse,
                                                activeProfile.positionRpm,
                                                activeProfile.positionAcc);
                         commandPulse = activeProfile.levelTrimPulse;
+                        smoothPrimed = true;
                         state = BALL_CTRL_INTERNAL_FAULT_EDGE;
                         break;
                     }
@@ -493,7 +511,32 @@ static void AppBallControlTask_Entry(void *argument)
 
                     output = (float)activeProfile.levelTrimPulse +
                              (activeProfile.outputSign * pulseDelta);
-                    commandPulse = BallControl_RoundToInt32(output);
+
+                    /*
+                     * 软件平滑：把 PD 算出的理想目标按每帧最大步进逼近，使驱动器
+                     * 收到的是渐进推进的目标而不是阶跃。maxPulseStepPerFrame==0
+                     * 时整段退化为直接下发，与历史行为完全一致。
+                     * 首帧（smoothPrimed==false）不限速：此时 commandPulse 还是上次
+                     * 退出时的残留值，与电机当前真实位置无关，从它开始爬没有意义。
+                     */
+                    {
+                        int32_t idealPulse = BallControl_RoundToInt32(output);
+
+                        if (!smoothPrimed || (activeProfile.maxPulseStepPerFrame == 0U)) {
+                            commandPulse = idealPulse;
+                            smoothPrimed = true;
+                        } else {
+                            int32_t maxStep = (int32_t)activeProfile.maxPulseStepPerFrame;
+                            int32_t delta = idealPulse - commandPulse;
+
+                            if (delta > maxStep) {
+                                delta = maxStep;
+                            } else if (delta < -maxStep) {
+                                delta = -maxStep;
+                            }
+                            commandPulse += delta;
+                        }
+                    }
 
                     Emm42Robot_MoveAbsolute(EMM42_ROBOT_LIFT, commandPulse,
                                            activeProfile.positionRpm,
@@ -541,6 +584,8 @@ static void AppBallControlTask_Entry(void *argument)
             consecutiveNaCount = 0U;
             recoveryValidCount = 0U;
             holding = false;
+            /* 失能后电机位置不再受命令约束，下次启动首帧必须重新不限速定起点。 */
+            smoothPrimed = false;
             state = BALL_CTRL_INTERNAL_OFF;
             break;
 

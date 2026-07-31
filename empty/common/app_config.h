@@ -26,7 +26,10 @@
 #define APP_FEATURE_NRF24_TX_TEST   (0U)  /* NRF24L01+ 发射测试：每 500ms 向 USB 无线串口发送递增文本【2026-07-29 临时关闭，减CPU占用，需要时改回 1】 */
 #define APP_FEATURE_EMM42           (1U)  /* 张大头 Emm42_V5.0 闭环步进（UART1/PA17/PB5，115200）：注册回复接收中断，命令由第 5 题下发 */
 #define APP_FEATURE_BALL_CONTROL    (1U)  /* 钢球 X 位置后台闭环：视觉反馈驱动 ID1，由题目三/四经 profile 调用 */
-#define APP_FEATURE_LIFT_HOMING     (1U)  /* 开机 ID1 自动归零：正方向找 PA24 限位开关+回退+移动到指定相对位置，见 app/app_lift_homing.c */
+#define APP_FEATURE_LIFT_HOMING     (1U)  /* 开机 ID1 自动归零：下降找 PA24 限位开关 → 抬升 LIFT_HOMING_LEVEL_OFFSET_PULSES
+                                              到摆杆水平位置，见 app/app_lift_homing.c。
+                                              2026-08 已按直驱曲柄摇杆机构重写方向与流程并重新启用；抬升脉冲数当前是
+                                              80° 的目测估算值（711），需实测修正，首次上电请守在电源旁。 */
 
 /*
  * Emm42 上电安全失能：复位后对 ID1/ID2/ID3 各重复发送失能帧，帧间使用约 10ms

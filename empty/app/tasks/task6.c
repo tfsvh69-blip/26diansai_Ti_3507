@@ -56,8 +56,15 @@
 
 /* ---- 机械/协议换算（改驱动器细分要同步改这里） ---- */
 #define T6_PULSES_PER_REV        (3200)   /* 16 细分 = 3200 脉冲/圈 */
-#define T6_TEST_REVS             (10)     /* 每段转几圈 */
-#define T6_MOVE_PULSES           ((int32_t)T6_TEST_REVS * (int32_t)T6_PULSES_PER_REV)
+#define T6_TEST_REVS             (10)     /* 圈数模式用（丝杆行程标定），与下面直接脉冲模式二选一 */
+/*
+ * 2026-08 机构变更为直驱摇臂后的方向/小角度测试：直接指定脉冲数，不再从
+ * T6_TEST_REVS 按圈数换算——900 脉冲 = 900/3200*360 ≈ 101°电机转角，注意这已经
+ * 略超过摇臂预期的 ~90°可用范围，第一次测试时人在旁盯着，看到连杆顶死/异响
+ * 立刻断电，不要等它自己走完。想恢复旧的"按圈数测丝杆行程"用法，换回：
+ *   ((int32_t)T6_TEST_REVS * (int32_t)T6_PULSES_PER_REV)
+ */
+#define T6_MOVE_PULSES           (900)
 
 /* ---- 运动参数（纯可调，不叠加任何软件限幅或斜坡） ---- */
 #define T6_POS_RPM               (30U)    /* 位置模式运行速度上限（RPM） */
@@ -100,7 +107,7 @@
  * ⚠️ 任一方向到 T6_RAMP_MAX_PULSES 仍不动，该方向记 0（表示未测到），不会把上限
  * 当成结果——避免又造出一个假的"实测值"。
  */
-#define T6_RAMP_TEST_ENABLE        (1U)
+#define T6_RAMP_TEST_ENABLE        (0U)     /* 2026-08 临时关闭：先做直驱摇臂方向/角度测试，用不到钢珠标定斜坡 */
 #define T6_RAMP_STEP_PULSES        (20)      /* 每次增量：越小越精细但越慢（20 脉冲=0.05mm 升程） */
 #define T6_RAMP_INTERVAL_MS        (90U)     /* 增量间隔，取 UI 拍 30ms 的整数倍 */
 #define T6_RAMP_RPM                (60U)     /* 单个小增量的执行转速（20 脉冲约 6ms 走完，远小于间隔） */
@@ -120,7 +127,10 @@
 #error "T6_POS_RPM 不能为 0，位置模式速度为 0 时驱动器不执行"
 #endif
 #define T6_MOVE_MARGIN_PCT       (30U)
-#define T6_MOVE_TIME_MS          ((60000UL * (uint32_t)(T6_TEST_REVS)) / (uint32_t)(T6_POS_RPM))
+/* 由 T6_MOVE_PULSES 直接换算理论运动时间，不再依赖 T6_TEST_REVS（见上方说明）。 */
+#define T6_MOVE_TIME_MS          ((60000UL * (uint32_t)(((T6_MOVE_PULSES) < 0) ? \
+                                  -(T6_MOVE_PULSES) : (T6_MOVE_PULSES))) / \
+                                  ((uint32_t)(T6_PULSES_PER_REV) * (uint32_t)(T6_POS_RPM)))
 #define T6_SEGMENT_WAIT_MS       (((T6_MOVE_TIME_MS) * (100U + T6_MOVE_MARGIN_PCT) / 100U) + \
                                   (uint32_t)(T6_DWELL_MS))
 

@@ -50,6 +50,20 @@ typedef struct {
     float ffVelBlendPxps;
     uint32_t positionRpm;
     uint8_t positionAcc;
+    /*
+     * 软件平滑：每帧实际下发的绝对目标相对上一帧最多允许变化多少脉冲。
+     * 0 = 不限速（PD 算出多少就发多少，历史行为，菜单闭环与题目三沿用）。
+     *
+     * 作用是把 PD 输出的目标【突变】摊到连续多帧上，让驱动器收到的目标是渐进
+     * 推进而不是阶跃，抑制目标跳变带来的机械冲击；对小车行驶中球位置被持续
+     * 扰动的场景尤其有用。
+     *
+     * ⚠️ 它【不能】解决"摆杆走一下停一下"：那是驱动器把每条绝对位置命令都
+     * 规划成"加速→减速→精确停住"的点到点运动，帧间隔内走得完就会停一下；
+     * 限速只会让每帧增量更小、更容易走完，反而加重该现象。遇到分段感应该去
+     * 查静摩擦（frictionFfPulse）和 Kx，不要指望本参数。
+     */
+    uint32_t maxPulseStepPerFrame;
     float holdPositionPx;       /* 以下三项仅影响 OLED 的 HOLD 显示，对控制无影响 */
     float holdVelocityPxps;
     uint32_t holdTimeMs;

@@ -151,11 +151,12 @@ Nrf24TxResult_t Nrf24_SendUsbUartText(const uint8_t *text, uint8_t textLength);
 - 秒表计时：`s_elapsedTicks` 从 `Task2_OnEnter()` 起每拍（30ms）累加，到 `T2_STATE_FINISHED` 后停止累加（定格）；`Task2_GetUiStatus()` 输出 `"T:12.3s"`（终点后追加 `" DONE"`），在 `app_ui_task.c` 里复用 task5 的 `UI_RUN_NAME_Y` 显示位（`UI_TASK2_INDEX`），每 `APP_UI_STATUS_DIVIDER`（约300ms）刷新一次，运行界面首次绘制也会立即显示 `T:0.0s`。显示毫秒数会乘一个 `T2_STOPWATCH_CAL_SCALE` 校准系数——实测计时比真实时间偏快（怀疑跟 FreeRTOS tick 依赖的主频跟工程假设的 80MHz 有偏差有关，根因未定位，见 `AI_MEMORY.md`），先用系数硬补偿；如果实测偏差比例继续变化，按"新系数 = 当前系数 × (最新实测秒数/最新显示秒数)"滚动修正即可，不用每次从 1.0 重新推导。
 - K4 退出时对 ID2/ID3 先急停再失能（轮子无重力负载，失能不会溜车，比保持力矩更省电安全）；ID1 摆杆不属于本题，不下发任何命令。K4 退出与终点急停这两处需要背靠背给两轮下发命令，帧间用 `vTaskDelay(T2_EMM_CMD_GAP_MS)` 隔开，避免共享 UART1 总线互相干扰丢帧（emm42_v5.h 协议层明确要求连续下发需自行留间隔）。
 
-**题目三 `Task 3` 第一阶段**（`task3.c`）：
-- 只经 `BALLCTRL` 使用 UART1 的 `EMM42_ROBOT_LIFT`（地址 1）；不会向 ID2、ID3 或四路 STEP/DIR 电机发送命令，也不直接调用协议层。
-- ID1 的位置原点由开机自动归零流程建立（见「ID1 开机自动归零」章节），不再需要人工在菜单页按 K4。进题后先请求 `BALLCTRL` 停止并等待其释放 ID1，再以自身 profile 重新启动；任务三本身不发送位置清零命令，清零仍由 `BALLCTRL` 首次启动时完成。
-- 状态机以独立 `T3_STAGE1_*` profile 下发 `X=415`，滤波位置进入 `415±10px` 且低速连续 200ms 即完成。到位死区同为 10px，进入验收范围即停止微调，避免在目标附近反复推球。
-- 总时长从后台首条实际位置控制帧开始计，超过 5 秒或触发边缘故障即停止、失能并显示 `T3 TIMEOUT`；成功时保持 ID1 使能及 `X=415` 目标，K4 退出才急停失能。后续第二阶段另建 `T3_STAGE2_*` 参数组。
+**题目三 `Task 3`**（`task3.c`，2026-08 由题目四整体移植）：
+- **当前是题目四框架的完整副本**：循迹 PID、入场使能时序、丢线保护、终点保护、转弯减速、定时减速、钢珠闭环启停与 `FAULT_EDGE` 自动恢复握手，全部与 `task4.c` 一致。原「第一阶段 `X=325→415±10px` 定位」逻辑与 `T3_STAGE1_*` 参数组已被替换。
+- **参数完全隔离**：所有参数都是本题私有的 `T3_*` 副本（`T3_KP/T3_BASE_RPM/T3_BALL_*` 等），初值虽复制自题目四，但此后两题各调各的，互不影响；符合仓库的「控制参数隔离规则」。
+- 钢珠目标为 `T3_BALL_TARGET_X_PX=350`（新曲柄摇杆机构中心点）；进题后先经 `AppBallControl_RequestTargetWithProfile()` 投递 `T3_BALL_*` profile，后台闭环确认 `RUNNING/HOLDING` 后才开始 ID2/ID3 使能时序。
+- **手动调参开关 `T3_MOTORS_DISABLED_MANUAL_TEST`**（当前置 `1`）：轮子不使能，只让 `BALLCTRL` 保持钢球在目标位置，OLED 显示 `T3 MANUAL`；改回 `0` 才执行完整循迹+缓停流程。
+- ID1 的位置原点仍由 `BALLCTRL` 首次启动时清零建立，本题不发送位置清零命令。
 
 **题目四 `LINE 6S`**（`task4.c`）：
 - 循迹 PID、入场状态机、丢线保护、终点保护、转弯减速、定时减速和所有同名参数均照搬题目二，仅使用独立的 `T4_*` 参数，便于单独调试。

@@ -34,12 +34,14 @@ P1 接口（原继电器接口，PA24）已改接一颗轻触开关，作为 ID1
 归零限位开关；继电器功能与 `bsp_relay.c/h`、`app_relay_test_task.c/h`、
 `APP_FEATURE_RELAY`/`APP_FEATURE_RELAY_SELFTEST` 已整体删除。`App_Init()` 在
 `Emm42Robot_Init()` 之后、任何任务创建前调用 `app/app_lift_homing.c` 的
-`AppLiftHoming_RunAtBoot()`（`APP_FEATURE_LIFT_HOMING` 门控）：正方向移动直到压下
-限位开关 → 压下瞬间反向退让至开关释放（物理归零参考点）→ 继续负方向移动
-`LIFT_HOMING_TARGET_OFFSET_PULSES`（占位值，待实测填入）个脉冲到达工作位置；若
-开机时开关已被压住则跳过第一步直接退让。全程在调度器启动前忙等，不与任何任务
-争抢 ID1；不清零位置，`BALLCTRL`/`task6` 各自的清零逻辑不变，取代了此前"每次
-上电先人工把杆摆到目视水平"的步骤。
+`AppLiftHoming_RunAtBoot()`（`APP_FEATURE_LIFT_HOMING` 门控）。**2026-08 改为直驱
+曲柄摇杆后已重写**（正脉冲 = 抬升，题目六实测）：下降（负方向）直到压下限位开关
+（即归零参考点）→ 急停 → 抬升（正方向）`LIFT_HOMING_LEVEL_OFFSET_PULSES` 个脉冲
+到摆杆水平位置（3200 脉冲 = 360°，当前 `711` ≈ 80° 为目测估算值，待实测修正）；若
+开机时开关已被压住则跳过下降直接抬升。全程在调度器启动前忙等，不与任何任务
+争抢 ID1；不清零位置，`BALLCTRL`/`task6` 各自的清零逻辑不变，因此归零终点就是各
+题目 `LEVEL_TRIM_PULSE=0` 的物理水平基准，取代了此前"每次上电先人工把杆摆到目视
+水平"的步骤。故意不加超时保护，开关故障会永久忙等、调度器不启动。
 
 ### 控制参数隔离
 
