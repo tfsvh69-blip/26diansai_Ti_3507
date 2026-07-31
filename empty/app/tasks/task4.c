@@ -24,15 +24,10 @@
  * 里的数字为准（历史上改过好几次）。
  * ================================================================== */
 
-/*
- * PID 增益、积分限幅与转向输出限幅。
- * 2026-08 题目五在实车上把巡线 PID 从这里的旧值（5.0/0.15/0.2）继续调到
- * 2.2/0.2/0.7 解决了"直线左右摆动、过弯震动"的问题，现按值复制回题目四
- * 作为新起点——两题参数仍是独立副本，符合仓库【控制参数隔离规则】。
- */
-#define T4_KP                              (2.2F)
-#define T4_KI                              (0.2F)
-#define T4_KD                              (0.7F)
+/* PID 增益、积分限幅与转向输出限幅。 */
+#define T4_KP                              (5.0F)
+#define T4_KI                              (0.15F)
+#define T4_KD                              (0.2F)
 #define T4_INTEGRAL_LIMIT                  (20.0F)
 #define T4_MAX_STEER_RPM                   (100.0F)
 
@@ -117,16 +112,10 @@
 #define T4_ENABLE_SETTLE_TICKS             (6U)
 #define T4_EMM_CMD_GAP_MS                  (6U)
 
-/*
- * 误差滤波、死区和转弯减速参数。
- * 死区 1.0→2.0、转弯减速增益 0.6→0.65：随上面 Kp/Kd 一起从题目五移植过来，
- * 8 路灰度加权误差最小非零台阶正好是 ±1，原死区 1.0 卡在"等于1不算小"的
- * 边界上完全过滤不掉这个最小台阶，是直线摆动的独立成因之一，详见题目五的
- * 调参记录。
- */
+/* 误差滤波、死区和转弯减速参数。 */
 #define T4_ERROR_FILTER_ALPHA              (0.5F)
-#define T4_ERROR_DEADBAND                  (2.0F)
-#define T4_CORNER_SLOWDOWN_GAIN            (0.65F)
+#define T4_ERROR_DEADBAND                  (1.0F)
+#define T4_CORNER_SLOWDOWN_GAIN            (0.6F)
 #define T4_MIN_BASE_RPM                    (10.0F)
 
 /* 终点保护参数，与任务二一致。 */
