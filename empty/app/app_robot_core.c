@@ -43,10 +43,10 @@ typedef struct {
 static const RobotTask_t s_robotTasks[] = {
     { "VIDEO 5S", Task1_OnEnter, Task1_OnLoop, Task1_OnExit, NULL,           false },
     { "LINE PID", Task2_OnEnter, Task2_OnLoop, Task2_OnExit, NULL,           false },
-    { "Task 3",   Task3_OnEnter, Task3_OnLoop, Task3_OnExit, NULL,           false },
+    { "BALL SWING", Task3_OnEnter, Task3_OnLoop, Task3_OnExit, Task3_OnConfirm, false },
     { "LINE 6S",  Task4_OnEnter, Task4_OnLoop, Task4_OnExit, Task4_OnConfirm, true },
     { "Five",     Task5_OnEnter, Task5_OnLoop, Task5_OnExit, Task5_OnConfirm, true },
-    { "ID1 POS",  Task6_OnEnter, Task6_OnLoop, Task6_OnExit, NULL,           false },
+    { "ID1 POS",  Task6_OnEnter, Task6_OnLoop, Task6_OnExit, Task6_OnConfirm, true  },
 };
 
 #define ROBOT_TASK_COUNT \

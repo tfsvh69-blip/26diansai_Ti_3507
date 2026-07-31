@@ -42,7 +42,7 @@
  * 需要上车看：摆动明显减轻但过弯跟不上（切内角/冲出）→ Kp 适当调回大一点；
  * 摆动还在→ Kp 继续往下、或 Kd 继续往上。
  */
-#define T5_KP                              (2.2F)
+#define T5_KP                              (2.4F)
 #define T5_KI                              (0.2)
 #define T5_KD                              (0.7F)
 #define T5_INTEGRAL_LIMIT                  (20.0F)

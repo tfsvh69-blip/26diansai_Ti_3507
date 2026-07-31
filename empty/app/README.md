@@ -19,7 +19,7 @@
 | **3** | [`app_led_task.c`](app_led_task.c) | 最简单的任务：每 300ms 翻转 PB25 心跳灯 | 入门理解 FreeRTOS 任务的最简写法 |
 | **4** | [`app_ui_task.c`](app_ui_task.c) | **当前主界面 UIMENU**：4 键选题/运行状态机、底部传感器状态栏(Yaw/激光)、右侧小球检测文字面板；事件驱动整屏刷 + 局部低频刷 | 现在上电看到的就是它；理解 OLED 独占与分区刷新 |
 | **5** | [`app_robot_core.c`](app_robot_core.c) / [`.h`](app_robot_core.h) | 6 道题的 **dispatch 表**：登记每题 `OnEnter/OnLoop/OnExit` 钩子，被 UIMENU 在运行态调用 | 题目业务与 UI 解耦；**只登记不写业务** |
-| **5.1** | [`tasks/app_tasks.h`](tasks/app_tasks.h) + [`tasks/task1.c`](tasks/task1.c) … [`task6.c`](tasks/task6.c) | **各题业务代码就在这里**：第 N 题 = `taskN.c`；task1 通过视觉通信录制 5 秒无叠加标注的正常画面，task2 为 8 路灰度 PID 循迹，task3 经 UART1 仅控制 Emm42 ID1 正反方向各约 500ms，task4 完整复用任务二并在前进 6.5 秒后缓停，task5 为横线后 0.5 秒循迹并线性缓停且显示校准秒表，task6 `ID1 POS` 为 Emm42 ID1 位置模式 API 冒烟测试（清零定原点 → 相对 ±3 圈往返 → 绝对 +MOVE/0/−MOVE/0） | 写赛题状态机只改这里；`app_tasks.h` 顶部有“怎么填 + 能调哪些底层接口”说明 |
+| **5.1** | [`tasks/app_tasks.h`](tasks/app_tasks.h) + [`tasks/task1.c`](tasks/task1.c) … [`task6.c`](tasks/task6.c) | **各题业务代码就在这里**：第 N 题 = `taskN.c`；task1 通过视觉通信录制 5 秒无叠加标注的正常画面，task2 为 8 路灰度 PID 循迹，task3 为 ID1 限位回零并抬升后自动以 X=350 启动闭环、等待 K3 再启动的 230→380→450 三段摆球（ID2/ID3 仅零速使能），task4 完整复用任务二并在前进 6.5 秒后缓停，task5 为横线后 0.5 秒循迹并线性缓停且显示校准秒表，task6 `ID1 POS` 为 Emm42 ID1 位置模式 API 冒烟测试（清零定原点 → 相对 ±3 圈往返 → 绝对 +MOVE/0/−MOVE/0） | 写赛题状态机只改这里；`app_tasks.h` 顶部有“怎么填 + 能调哪些底层接口”说明 |
 | **6** | [`app_imu_uart_task.c`](app_imu_uart_task.c) | IMU 姿态：GPIO 软件 I2C → LSM6DSV16X → SFLP 融合欧拉角；发布线程安全 **Yaw 快照** 供 OLED；串口遥测默认静默 | 最复杂的任务：I2C 超时/总线恢复、FIFO、打印节流、非阻塞重试 |
 | **7** | [`app_uart_test_task.c`](app_uart_test_task.c) | UART0 接收回显自检（**默认禁用**，`APP_FEATURE_UART_ECHO=0`） | 理解串口多任务共享的递归互斥量模式；注意它与小球接收互斥 |
 | **8** | [`app_motor_test_task.c`](app_motor_test_task.c) | 四电机定圈旋转（**默认禁用**，按键让给 UIMENU） | "任务发令→bsp+ISR 执行→自动停表"的分层模型 |

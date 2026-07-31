@@ -59,7 +59,10 @@ void Task3_OnEnter(void);
 void Task3_OnLoop(void);
 void Task3_OnExit(void);
 
-/* 取题目三钢珠往返定位的阶段与计时文本，供 OLED 运行界面显示。 */
+/* 运行态 K3 按下沿：限位回零并抬升完成后启动单次左右摆球。 */
+void Task3_OnConfirm(void);
+
+/* 取题目三回零、中心闭环等待与左右摆球阶段文本，供 OLED 运行界面显示。 */
 const char *Task3_GetUiStatus(void);
 
 /* 第 4 题 */
@@ -95,7 +98,10 @@ void Task6_OnEnter(void);
 void Task6_OnLoop(void);
 void Task6_OnExit(void);
 
-/* 取题目六 ID1 位置模式测试的当前阶段文本（如 "ABS +9600"），供 OLED 运行界面显示。 */
+/* 运行态 K3 按下沿：首次锁定当前钢珠位置，第二次启动循迹。 */
+void Task6_OnConfirm(void);
+
+/* 取题目六归零、手动定点与循迹流程的 ASCII 状态文本，供 OLED 运行界面显示。 */
 const char *Task6_GetUiStatus(void);
 
 #ifdef __cplusplus

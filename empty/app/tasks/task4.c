@@ -25,9 +25,9 @@
  * ================================================================== */
 
 /* PID 增益、积分限幅与转向输出限幅。 */
-#define T4_KP                              (5.0F)
-#define T4_KI                              (0.15F)
-#define T4_KD                              (0.2F)
+#define T4_KP                              (2.4F)
+#define T4_KI                              (0.2F)
+#define T4_KD                              (0.7F)
 #define T4_INTEGRAL_LIMIT                  (20.0F)
 #define T4_MAX_STEER_RPM                   (100.0F)
 
@@ -36,7 +36,7 @@
  * 2026-08 "整体速度提高但加速度别太快"：80→150。这个值必须跟下面
  * T4_START_RAMP_RPM_PER_SEC 一起看，爬满全速时间=本值÷斜坡值，见那边说明。
  */
-#define T4_BASE_RPM                        (100.0F)
+#define T4_BASE_RPM                        (110.0F)
 #define T4_MIN_WHEEL_RPM                   (5.0F)
 #define T4_MAX_WHEEL_RPM                   (230.0F)
 
@@ -114,9 +114,12 @@
 
 /* 误差滤波、死区和转弯减速参数。 */
 #define T4_ERROR_FILTER_ALPHA              (0.5F)
-#define T4_ERROR_DEADBAND                  (1.0F)
-#define T4_CORNER_SLOWDOWN_GAIN            (0.6F)
+#define T4_ERROR_DEADBAND                  (2.0F)
+#define T4_CORNER_SLOWDOWN_GAIN            (0.65F)
 #define T4_MIN_BASE_RPM                    (10.0F)
+
+/* 转向输出限速：将离散灰度带来的 PID 阶跃摊成渐变，减小过弯横摆。 */
+#define T4_STEER_SLEW_RPM_PER_SEC          (250.0F)
 
 /* 终点保护参数，与任务二一致。 */
 #define T4_FINISH_ARM_HIT_MAX              (3U)
@@ -131,8 +134,8 @@
 #define T4_DECEL_MIN_RPM                   (10.0F)
 
 /*
- * 任务四钢珠平衡参数。算法与任务三第一阶段相同，但参数只归任务四所有，后续调车时
- * 不会影响菜单 K4 或任务三。车辆必须等后台闭环已经按此 profile 进入实际控制后才起步。
+ * 任务四钢珠平衡参数。参数只归任务四所有，后续调车时不会影响菜单或任务三的摆球效果。
+ * 车辆必须等后台闭环已经按此 profile 进入实际控制后才起步。
  */
 #define T4_BALL_TARGET_X_PX                 (350)      /* 2026-08 新曲柄摇杆机构实测中心点，替换旧值 320 */
 
@@ -367,6 +370,7 @@ static const AppBallControlProfile_t s_task4BallProfile = {
 static Task4State_t s_state;
 static Pid_t        s_pid;
 static float        s_lastSteerRpm;
+static float        s_appliedSteerRpm; /* 经转向限速后实际参与左右轮差速的转向量 */
 static float        s_leftRpm;
 static float        s_rightRpm;
 static float        s_filteredError;
@@ -484,6 +488,46 @@ static bool Task4_GetLineError(float *error, uint32_t *hitCountOut)
     return true;
 }
 
+/* 采用任务五同款循迹控制：有效线数据更新 PID，转向输出再经过每拍限速。 */
+static void Task4_UpdateTracking(bool lineFound, float rawError)
+{
+    if (lineFound) {
+        if (s_state == T4_STATE_STOP) {
+            s_filteredError = rawError;
+            Pid_Reset(&s_pid);
+        } else {
+            s_filteredError += T4_ERROR_FILTER_ALPHA * (rawError - s_filteredError);
+        }
+
+        s_lineLostTicks = 0U;
+        s_state = T4_STATE_RUN;
+        {
+            float pidError = s_filteredError;
+            if ((pidError > -T4_ERROR_DEADBAND) && (pidError < T4_ERROR_DEADBAND)) {
+                pidError = 0.0F;
+            }
+            s_lastSteerRpm = Pid_Update(&s_pid, pidError, T4_DT_SEC);
+        }
+    } else {
+        s_lineLostTicks++;
+        if (s_lineLostTicks >= T4_LINE_LOST_TICKS) {
+            s_state = T4_STATE_STOP;
+        }
+    }
+
+    {
+        float maxDelta = T4_STEER_SLEW_RPM_PER_SEC * T4_DT_SEC;
+        float delta = s_lastSteerRpm - s_appliedSteerRpm;
+
+        if (delta > maxDelta) {
+            delta = maxDelta;
+        } else if (delta < -maxDelta) {
+            delta = -maxDelta;
+        }
+        s_appliedSteerRpm += delta;
+    }
+}
+
 static uint32_t Task4_GetElapsedMs(void)
 {
     return (uint32_t)((float)(s_elapsedTicks * T4_TICK_MS) * T4_STOPWATCH_CAL_SCALE);
@@ -566,6 +610,7 @@ void Task4_OnEnter(void)
     /* 进题目只做复位，什么都不动，等第一次 K3。 */
     s_state             = T4_STATE_IDLE;
     s_lastSteerRpm      = 0.0F;
+    s_appliedSteerRpm   = 0.0F;
     s_leftRpm           = 0.0F;
     s_rightRpm          = 0.0F;
     s_filteredError     = 0.0F;
@@ -591,6 +636,7 @@ void Task4_OnEnter(void)
 void Task4_OnLoop(void)
 {
     float rawError;
+    bool lineFound;
     float targetLeftRpm;
     float targetRightRpm;
     uint32_t hitCount;
@@ -797,37 +843,8 @@ void Task4_OnLoop(void)
         }
     }
 
-    if (Task4_GetLineError(&rawError, &hitCount)) {
-        if (s_state == T4_STATE_STOP) {
-            s_filteredError = rawError;
-        } else {
-            s_filteredError += T4_ERROR_FILTER_ALPHA * (rawError - s_filteredError);
-        }
-        if (s_state == T4_STATE_STOP) {
-            Pid_Reset(&s_pid);
-        }
-        /*
-         * TIME_STOPPED 现在会在函数入口就直接 return（见上方），不会执行到这里，
-         * 这个判断留着仅作防御——即使以后有新路径意外带着 TIME_STOPPED 走到此处，
-         * 也不会被这里误切回 RUN、覆盖驱动器正在执行的 0 RPM 曲线。
-         */
-        if (s_state != T4_STATE_TIME_STOPPED) {
-            s_state = T4_STATE_RUN;
-        }
-        s_lineLostTicks = 0U;
-        {
-            float pidError = s_filteredError;
-            if ((pidError > -T4_ERROR_DEADBAND) && (pidError < T4_ERROR_DEADBAND)) {
-                pidError = 0.0F;
-            }
-            s_lastSteerRpm = Pid_Update(&s_pid, pidError, T4_DT_SEC);
-        }
-    } else {
-        s_lineLostTicks++;
-        if (s_lineLostTicks >= T4_LINE_LOST_TICKS) {
-            s_state = T4_STATE_STOP;
-        }
-    }
+    lineFound = Task4_GetLineError(&rawError, &hitCount);
+    Task4_UpdateTracking(lineFound, rawError);
 
     if (!s_finishArmed) {
         if (hitCount <= T4_FINISH_ARM_HIT_MAX) {
@@ -867,7 +884,7 @@ void Task4_OnLoop(void)
     }
 
     if (s_state == T4_STATE_RUN) {
-        float steerAbs = (s_lastSteerRpm >= 0.0F) ? s_lastSteerRpm : -s_lastSteerRpm;
+        float steerAbs = (s_appliedSteerRpm >= 0.0F) ? s_appliedSteerRpm : -s_appliedSteerRpm;
         float dynBaseRpm = T4_BASE_RPM - T4_CORNER_SLOWDOWN_GAIN * steerAbs;
         dynBaseRpm = Task4_Clamp(dynBaseRpm, T4_MIN_BASE_RPM, T4_BASE_RPM);
         {
@@ -894,8 +911,8 @@ void Task4_OnLoop(void)
         if (dynBaseRpm > s_rampBaseRpm) {
             dynBaseRpm = s_rampBaseRpm;
         }
-        targetLeftRpm = dynBaseRpm + s_lastSteerRpm;
-        targetRightRpm = dynBaseRpm - s_lastSteerRpm;
+        targetLeftRpm = dynBaseRpm + s_appliedSteerRpm;
+        targetRightRpm = dynBaseRpm - s_appliedSteerRpm;
         Task4_ClampWheelPair(&targetLeftRpm, &targetRightRpm);
     } else {
         targetLeftRpm = 0.0F;
@@ -926,6 +943,8 @@ void Task4_OnExit(void)
     Pid_Reset(&s_pid);
     /* 回到未启动态：下次进题目仍需重新按两次 K3。 */
     s_state = T4_STATE_IDLE;
+    s_lastSteerRpm = 0.0F;
+    s_appliedSteerRpm = 0.0F;
     s_finishArmed = false;
     s_armTicks = 0U;
     s_finishHitTicks = 0U;

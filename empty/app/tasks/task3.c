@@ -7,211 +7,99 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
-#include "pid.h"
 #include "app_ball_control_task.h"
-#include "bsp_line.h"
+#include "bsp_buzzer.h"
+#include "bsp_home_switch.h"
 #include "emm42_robot.h"
 
 /* ==================================================================
- * 第 3 题：钢珠平衡 + 循迹框架（2026-08 由第 4 题整体移植）
+ * 题目 3：左右摆球。
  *
- * 本题当前是第 4 题框架的完整副本：循迹、入场、丢线保护、终点保护、定时减速
- * 与钢珠闭环流程全部一致，行驶期间通过 BALLCTRL 同时控制 ID1 把钢珠保持在
- * T3_BALL_TARGET_X_PX。
- *
- * ⚠️ 按仓库的【控制参数隔离规则】，下面所有参数都是本题私有的 T3_* 副本：
- * 初值虽然复制自第 4 题，但此后两题各调各的，改这里【不会】影响第 4 题，
- * 反之亦然。后续本题分化出自己的业务逻辑时，直接改本文件即可。
+ * 进题后先让 ID1 触碰 PA24 归零限位，再抬升到水平附近；随后自动以 X=350
+ * 启动钢球闭环并等待 K3。确认后 ID2/ID3 仅使能并保持 0 RPM，钢珠开始单次
+ * 摆向左侧，再摆向右侧。
  * ================================================================== */
 
-/* PID 增益、积分限幅与转向输出限幅。 */
-#define T3_KP                              (5.0F)
-#define T3_KI                              (0.15F)
-#define T3_KD                              (0.2F)
-#define T3_INTEGRAL_LIMIT                  (20.0F)
-#define T3_MAX_STEER_RPM                   (100.0F)
+/* ---- 中心等待目标与左右摆动目标：左右目标可独立按实际物理位置标定。 ---- */
+#define T3_BALL_CENTER_X_PX               (350)  /* 进题回零抬升后、等待 K3 时持续保持的中心位置。 */
+#define T3_BALL_LEFT_TARGET_X_PX          (225)  /* K3 后的第 1 段目标；首次进入到达带后切第 2 段。 */
+#define T3_BALL_MIDDLE_TARGET_X_PX        (350)  /* 第 2 段目标；首次进入到达带后切最终段。 */
+#define T3_BALL_FINAL_TARGET_X_PX         (465)  /* 第 3 段最终目标；满足稳定条件后鸣叫并结束。 */
+#define T3_BALL_LEFT_ARRIVAL_BAND_PX      (30)   /* 第 1 段到达带半宽：230±20，即 210~250 即切第 2 段。 */
+#define T3_BALL_MIDDLE_ARRIVAL_BAND_PX    (10)    /* 第 2 段到达带半宽：380±6，即 374~386 即切最终段。 */
+#define T3_BALL_FINAL_GUARD_X_PX          (550)  /* 最终段右侧保护线：测量值达到此处立即重投 450 回拉。 */
+#define T3_BALL_FINAL_HOLD_TIME_MS        (80U) /* 最终点的位置、速度均合格后，连续保持多久才算完成。 */
 
-/* 基础速度和单轮安全范围。 */
-#define T3_BASE_RPM                        (110.0F)
-#define T3_MIN_WHEEL_RPM                   (5.0F)
-#define T3_MAX_WHEEL_RPM                   (230.0F)
-
-/* 正常循迹速度模式加速度档位。 */
-#define T3_EMM_ACC                         (120U)
-
-/*
- * 缓停参数：T3_STOP_AFTER_MS 固定本题开始缓停的时间；
- * T3_STOP_EMM_ACC 由使用者按实车需要传给速度模式 0 RPM 帧。
- * 数值越小减速越平缓，越大越接近立即停；可直接修改后重新烧录。
- */
-#define T3_STOP_AFTER_MS                   (6500U)
-#define T3_STOP_EMM_ACC                    (80U)
-
-/* UIMENU 固定控制周期。 */
-#define T3_DT_SEC                          (0.03F)
-#define T3_TICK_MS                         (30U)
-
-/* 丢线、入场和共享 UART1 总线时序参数。 */
-#define T3_LINE_LOST_TICKS                 (20U)
-#define T3_RESET_SETTLE_TICKS              (2U)
-#define T3_ENABLE_SETTLE_TICKS             (6U)
-#define T3_EMM_CMD_GAP_MS                  (6U)
-
-/* 误差滤波、死区和转弯减速参数。 */
-#define T3_ERROR_FILTER_ALPHA              (0.5F)
-#define T3_ERROR_DEADBAND                  (1.0F)
-#define T3_CORNER_SLOWDOWN_GAIN            (0.6F)
-#define T3_MIN_BASE_RPM                    (10.0F)
-
-/* 终点保护参数。 */
-#define T3_FINISH_ARM_HIT_MAX              (3U)
-#define T3_FINISH_ARM_TICKS                (15U)
-#define T3_FINISH_HIT_MIN                  (6U)
-#define T3_FINISH_HIT_TICKS                (1U)
+/* ---- 本题独立的限位回零与轮子使能参数。 ---- */
+#define T3_HOME_SEEK_RPM                  (5)    /* 找限位开关的速度；代码以负方向运动，数值越大越快。 */
+#define T3_HOME_LIFT_RPM                  (5U)   /* 压限位后正方向抬升曲柄的速度。 */
+#define T3_HOME_ACC                       (5U)   /* 回零/抬升的驱动器加速度档位；0 表示立即达到命令速度。 */
+#define T3_HOME_LEVEL_OFFSET_PULSES       (210)  /* 从限位触发点向上抬升的脉冲数，决定球臂初始工作高度。 */
+#define T3_HOME_RESET_SETTLE_TICKS        (2U)   /* ID1 失能后等待拍数，避免紧接着解堵/使能时丢帧。 */
+#define T3_HOME_ENABLE_SETTLE_TICKS       (6U)   /* ID1 使能后等待拍数，确认驱动器已真正受控。 */
+#define T3_HOME_STOP_SETTLE_TICKS         (1U)   /* 碰限位急停后等待拍数，再发送抬升位置命令。 */
+#define T3_HOME_LIFT_WAIT_TICKS           (35U)  /* 等待抬升走完的拍数；增大抬升脉冲或降低速度时需同步增大。 */
+#define T3_WHEEL_RESET_SETTLE_TICKS       (2U)   /* 清除 ID2/ID3 残留状态后等待拍数。 */
+#define T3_WHEEL_ENABLE_SETTLE_TICKS      (6U)   /* 每个轮子使能后的等待拍数；不要低于已验证的稳定值。 */
+#define T3_WHEEL_ZERO_ACC                 (80U)  /* 给轮子发送 0 RPM 保持帧时使用的加速度档位。 */
+#define T3_EMM_CMD_GAP_MS                 (6U)   /* K4 收尾时 UART1 相邻电机帧的最小间隔，防止总线丢帧。 */
 
 /*
- * 终点线时间下限：赛道是环形，起跑线和终点线是同一根线。仅凭"武装+命中路数"
- * 不足以保证车辆真的跑完了一整圈——如果赛道较小、武装判定得比较快，发车后
- * 短时间内就可能再次经过这根线被误判成终点。加一层时间下限：即使武装、
- * 命中路数都满足，也要累计时间 >= 本值才真正判定到达终点，用原始 tick
- * 计数（不叠加 OLED 显示用的 T3_STOPWATCH_CAL_SCALE 校准系数）。
+ * 本题私有钢珠闭环参数。初值按任务五当前实车参数复制，后续只调 T3_BALL_*，
+ * 不会影响任务四、五或菜单默认 profile。
  */
-#define T3_FINISH_MIN_ELAPSED_MS           (3000U)
+#define T3_BALL_FRICTION_FF_PULSE         (0.0F) /* 库仑摩擦前馈脉冲；0 表示关闭，当前仅用 PD 控制。 */
+#define T3_BALL_LEVEL_TRIM_PULSE          (-54)  /* 真实物理水平点相对位置零点的脉冲修正；用于消除固定偏置。 */
+#define T3_BALL_FILTER_ALPHA              (0.9F) /* α-β 滤波的位置更新权重；越大越跟随视觉，越小越平滑。 */
+#define T3_BALL_FILTER_BETA               (0.2F) /* α-β 滤波的速度更新权重；越大速度响应越快，也更易放大噪声。 */
+#define T3_BALL_OUTPUT_SIGN               (-1.0F)/* 闭环输出方向；实机方向反了只改正负号，不改全局电机标定。 */
+#define T3_BALL_KX_PULSE_PER_PX           (1.066F)/* 位置比例增益；增大响应更快，但过大容易过冲。 */
+#define T3_BALL_KV_PULSE_PER_PXPS         (0.504F)/* 速度阻尼增益；增大刹车更强，过大可能跟随速度噪声抖动。 */
+#define T3_BALL_SETTLE_DEADBAND_PX        (4.0F) /* 控制死区；误差进入此范围且球慢时回水平保持，防止频繁微调。 */
+#define T3_BALL_FF_VEL_BLEND_PXPS         (15.0F)/* 球接近静止的速度门限，供保持判定和摩擦前馈切换使用。 */
+#define T3_BALL_POS_RPM                   (200U) /* ID1 位置模式的最高转速；三段目标共用，任务五同值。 */
+#define T3_BALL_POS_ACC                   (240U) /* ID1 位置模式加速度档位；越大起停越猛，任务五同值。 */
+#define T3_BALL_MAX_PULSE_STEP            (0U)   /* 单帧目标脉冲变化上限；0 不限速，非零可削弱突变但会变慢。 */
+#define T3_BALL_HOLD_POSITION_PX          (6.0F) /* 最终 450 到位的位置误差上限。 */
+#define T3_BALL_HOLD_VELOCITY_PXPS        (10.0F)/* 最终 450 到位的速度上限，必须与位置误差同时满足。 */
+#define T3_BALL_HOLD_TIME_MS              T3_BALL_FINAL_HOLD_TIME_MS /* 最终到位条件连续成立的时间。 */
 
-/* 秒表与定时减速参数。 */
-#define T3_STOPWATCH_CAL_SCALE             (0.897F)
-#define T3_DECEL_START_MS                  (14500U)
-#define T3_DECEL_GRADIENT_RPM_PER_SEC      (60.0F)
-#define T3_DECEL_MIN_RPM                   (10.0F)
-
-/*
- * 本题钢珠平衡参数。车辆必须等后台闭环已经按此 profile 进入实际控制后才起步。
- */
-#define T3_BALL_TARGET_X_PX                 (350)      /* 2026-08 新曲柄摇杆机构实测中心点 */
-
-/* ---- A. 机械/视觉实测常量：由标定得出，不是调参旋钮，换硬件才重测 ---- */
-/*
- * 2026-08-01 现场标定结果（视觉：菜单页读 X；机械：题目六 T6_RAMP_TEST 斜坡），
- * 对应旧"丝杆升降+连杆"机构：
- *   视觉比例  520px / 213mm = 2.441 px/mm（球心可达范围 X∈[66, 586]）
- *   静止噪声  ±2px（±0.8mm）→ 决定死区下限，也说明不需要重滤波
- *   脱离阈值  B = 1810 脉冲（4.53mm 升程 / 1.04° 倾角）
- *   真实水平  L = -70 脉冲（≈0.04°，机械基本是正的）
- *
- * 2026-08 机构变更为"电机直驱摇臂（±90°内旋转）"后的重新标定哲学：
- *   旧丝杆+螺母本身摩擦极大，占满了整个可用命令范围，必须靠 B 硬顶过去
- *   （见 docs/BALL_CONTROL.md §5）；直驱摇臂去掉了丝杆螺母这一大摩擦源，
- *   剩下的只是轴承转动摩擦和钢珠滚动摩擦，预期小得多。因此 B/L 先不做
- *   独立标定脚本测量，直接从 0 开始跑纯 PD（B=0 时下面的库仑摩擦前馈项
- *   在公式里自动归零，退化为纯 PD，不用改任何控制逻辑）：
- *   - 若实测出现"球离目标一截距离就完全僵住不动"，现场把 B 从 0 增量
- *     试大，观察消失即可，不再靠独立斜坡测试固定一个阈值——静摩擦本身
- *     随接触点/磨损/装配变化，固定常数覆盖全程不如现场调参鲁棒；
- *   - L 同理从 0 开始，靠"球停在偏目标固定像素、误差稳定不变"这个现象
- *     现场微调，不需要专门标定步骤。
- * 视觉比例、静止噪声与传动机构无关，继续沿用旧值。
- */
-#define T3_BALL_FRICTION_FF_PULSE           (0.0F)     /* = B，先按 0 跑纯 PD，见上方说明 */
-#define T3_BALL_LEVEL_TRIM_PULSE            (0)        /* = L，字段是 int32_t，脉冲数必须写整数 */
-#define T3_BALL_FILTER_ALPHA                (0.10F)    /* 噪声仅 ±2px，无需压到 0.2 换来 165ms 滞后 */
-#define T3_BALL_FILTER_BETA                 (0.10F)
-/*
- * 2026-08 新曲柄摇杆机构方向实测（任务六 900 脉冲方向测试）：
- *   正脉冲 = 抬升摇杆；摇杆抬得越高，钢珠越往 X 变小方向移动。
- * 控制律 output = LEVEL_TRIM + SIGN×(Kx×error − Kv×velocity)，error = targetPx − 球位置。
- * error>0（目标在球右边）需要球向 +X 移动 → 必须降低摇杆 → output 须为负；
- * Kx>0 时 error>0 令 Kx×error>0，要让 output 为负必须 SIGN=-1。这是实测
- * 结论，不是猜测；如果实车验证方向反了，只改这一个数，不要改 emm42_robot.c
- * 的全局标定表。
- */
-#define T3_BALL_OUTPUT_SIGN                 (-1.0F)
-
-/* ---- B. 真正的调参旋钮 ---- */
-/*
- * 旧丝杆机构曾有物理依据的系数 0.171（= (5/7)g / 400脉冲每mm / 250mm摆杆 *
- * 2.441px每mm）依赖丝杆导程换算，直驱摇臂后完全失效，需要新摇臂/连杆的实际
- * 几何尺寸才能重新推导，本次不臆测新系数。
- *
- * 调参顺序照 docs/CONTROL_ALGORITHM.md §10.2/§10.3 现象表：
- *   球对误差反应很弱/很慢 → 加大 Kx；
- *   目标附近来回轻微振荡、幅度不变或缓慢衰减 → 停止加 Kx，固定住，转去从 0
- *     开始加 Kv 压振荡；
- *   球剧烈振荡/越振越猛/摆杆动作剧烈有异响 → Kx 过大，退回更小值重新找临界点；
- *   Kv 加到很大仍压不住振荡 → 大概率是 Kx 选大了，回去减小 Kx 而不是无限加 Kv；
- *   摆杆走一下停一下、球一段段前进（粘滑）→ 查 FRICTION_FF 与 Kx，见 §10.4。
- */
-#define T3_BALL_KX_PULSE_PER_PX             (0.38F)
-#define T3_BALL_KV_PULSE_PER_PXPS           (0.6F)
-/*
- * 到位死区，同时就是静态精度上限：4px ≈ 1.6mm，取实测噪声 ±2px 的两倍裕度。
- * 误差进此范围【且球基本停住】才回真实水平点、停止驱动。
- */
-#define T3_BALL_SETTLE_DEADBAND_PX          (4.0F)
-/*
- * 判定钢珠"在运动"的速度门限：高于它按 sign(v) 补动摩擦，低于它过渡到按
- * sign(pd) 补静摩擦；同时是上面"到位保持"的速度条件。
- * 15px/s ≈ 6mm/s，明显高于速度估计噪声量级(±10px/s 的一半)。
- */
-#define T3_BALL_FF_VEL_BLEND_PXPS           (15.0F)
-
-/* ---- C. 执行器与显示 ---- */
-/*
- * 摆杆每帧（20ms）行程能力 = POS_RPM * 3200/60 * 0.02 = POS_RPM * 1.067 脉冲。
- * 直驱摇臂下同样 RPM 对应的角速度远大于旧丝杆机构（没有导程折算这层缓冲），
- * 具体数值按现象判断——命令发出但摆杆没走到位/响应打折扣→调大，
- * 过冲很猛或有异响/失步→调小。
- */
-#define T3_BALL_POS_RPM                     (400U)
-/*
- * 位置模式加速度档位。协议公式（手册§6.3.1，emm42_v5.h）：每升 1RPM 需要
- * (256−acc)×50us，【acc 越大爬升越快】，acc=0 是特例——不走曲线、直接瞬间给到
- * 目标速度（最快，也最抖），不是"最慢"，这一点容易搞反。
- *
- * ⚠️ 外环约 17~25ms 就刷新一条全新目标，曲线基本不可能走完就被打断重新规划，
- * 实际能达到的转速远低于 POS_RPM：acc=120 时 20ms 只能爬到约 2.9RPM（约 1.6
- * 脉冲/帧），acc=230 时约 15RPM（约 8.2 脉冲/帧）。
- * 调参方向：还抖 → 减小 acc；感觉跟不上球、响应发软 → 增大 acc。
- */
-#define T3_BALL_POS_ACC                     (170U)
-/*
- * 软件平滑：每帧实际下发的绝对目标相对上一帧最多变化多少脉冲，0=不限速。
- * 把 PD 输出的目标突变摊到连续多帧上，抑制目标跳变造成的机械冲击；小车行驶
- * 中球被持续扰动时尤其有用。调小 → 摆杆动作更柔和但跟踪更迟钝；调大 →
- * 越接近不限速的原始手感；0 = 完全关闭。
- *
- * ⚠️ 它【解决不了】"摆杆走一下停一下"的分段感，原因见 docs/CONTROL_ALGORITHM.md
- * §10.4：限速只会让每帧增量更小、更容易走完，反而加重。分段感要查静摩擦
- * （FRICTION_FF）和 Kx。
- */
-#define T3_BALL_MAX_PULSE_STEP              (0U)
-#define T3_BALL_HOLD_POSITION_PX            (6.0F)   /* 以下三项仅影响 OLED 的 B:HOLD 显示 */
-#define T3_BALL_HOLD_VELOCITY_PXPS          (10.0F)
-#define T3_BALL_HOLD_TIME_MS                (500U)
-
-/*
- * 手动调参开关：置 1 时电机不启动，仅 BALLCTRL 保持钢球平衡；
- * 用手推拉小车模拟加减速扰动，调好参数后改回 0 即可恢复完整功能。
- */
-#define T3_MOTORS_DISABLED_MANUAL_TEST      (1U)
-
-/* 本题在题目表 s_robotTasks[] 中的下标（第 3 题 = 索引 2）。 */
-#define T3_TASK_INDEX                       (2U)
+/* 题目三在任务表中的固定下标。 */
+#define T3_TASK_INDEX                     (2U)
 
 typedef enum {
-    T3_STATE_WAIT_BALL_CONTROL = 0,
-    T3_STATE_BALL_RECOVER_WAIT, /* 钢珠闭环触发 FAULT_EDGE 后，等待其停止/释放 ID1 再重新请求 */
-    T3_STATE_MANUAL_BALANCE,   /* 电机不启动，仅后台 BALLCTRL 保持钢球平衡 */
-    T3_STATE_RESET_DISABLE,
-    T3_STATE_RESET_WAIT,
-    T3_STATE_ENABLE_LEFT,
-    T3_STATE_ENABLE_LEFT_WAIT,
-    T3_STATE_ENABLE_RIGHT,
-    T3_STATE_ENABLE_RIGHT_WAIT,
-    T3_STATE_RUN,
-    T3_STATE_STOP,
-    T3_STATE_TIME_STOP_LEFT,
-    T3_STATE_TIME_STOP_RIGHT,
-    T3_STATE_TIME_STOPPED,
+    T3_STATE_WAIT_BALL_RELEASE = 0,
+    T3_STATE_HOME_DISABLE,
+    T3_STATE_HOME_DISABLE_WAIT,
+    T3_STATE_HOME_CLEAR_CLOG,
+    T3_STATE_HOME_ENABLE,
+    T3_STATE_HOME_ENABLE_WAIT,
+    T3_STATE_HOME_SEEK,
+    T3_STATE_HOME_STOP_WAIT,
+    T3_STATE_HOME_LIFT,
+    T3_STATE_HOME_LIFT_WAIT,
+    T3_STATE_HOME_ZERO,
+    T3_STATE_CENTER_REQUEST,
+    T3_STATE_CENTER_WAIT,
+    T3_STATE_WHEEL_STOP_LEFT,
+    T3_STATE_WHEEL_STOP_RIGHT,
+    T3_STATE_WHEEL_DISABLE_LEFT,
+    T3_STATE_WHEEL_DISABLE_RIGHT,
+    T3_STATE_WHEEL_RESET_WAIT,
+    T3_STATE_WHEEL_ENABLE_LEFT,
+    T3_STATE_WHEEL_ENABLE_LEFT_WAIT,
+    T3_STATE_WHEEL_ENABLE_RIGHT,
+    T3_STATE_WHEEL_ENABLE_RIGHT_WAIT,
+    T3_STATE_WHEEL_ZERO_LEFT,
+    T3_STATE_WHEEL_ZERO_RIGHT,
+    T3_STATE_WAIT_CONFIRM,
+    T3_STATE_LEFT_REQUEST,
+    T3_STATE_LEFT_APPROACH,
+    T3_STATE_MIDDLE_REQUEST,
+    T3_STATE_MIDDLE_APPROACH,
+    T3_STATE_FINAL_REQUEST,
+    T3_STATE_FINAL_HOLD,
+    T3_STATE_BALL_RECOVER_WAIT,
     T3_STATE_FINISHED
 } Task3State_t;
 
@@ -234,441 +122,407 @@ static const AppBallControlProfile_t s_task3BallProfile = {
 };
 
 static Task3State_t s_state;
-static Pid_t        s_pid;
-static float        s_lastSteerRpm;
-static float        s_leftRpm;
-static float        s_rightRpm;
-static float        s_filteredError;
-static int32_t      s_sentLeftRpm;
-static int32_t      s_sentRightRpm;
-static uint32_t     s_lineLostTicks;
-static uint32_t     s_enableSettleTicks;
-static bool         s_sendLeftNext;
-static bool         s_finishArmed;
-static uint32_t     s_armTicks;
-static uint32_t     s_finishHitTicks;
-static uint32_t     s_elapsedTicks;
-static uint32_t     s_runTicks;
-static bool         s_ballControlRequested;
-static bool         s_wheelsStarted;   /* 轮子是否已经完成过一次使能起步（钢珠故障恢复后据此跳过重复使能） */
-static char         s_uiStatusBuf[16];
+static Task3State_t s_resumeState;
+static uint32_t s_settleTicks;
+static bool s_confirmRequested;
+static bool s_finishBeeped;
+static bool s_finalGuardTriggered;
 
-static float Task3_Clamp(float value, float minValue, float maxValue)
+static bool Task3_IsLeftState(Task3State_t state)
 {
-    if (value < minValue) {
-        return minValue;
-    }
-    if (value > maxValue) {
-        return maxValue;
-    }
-    return value;
+    return (state == T3_STATE_LEFT_REQUEST) ||
+           (state == T3_STATE_LEFT_APPROACH);
 }
 
-/* 整体平移限幅，保留左右轮差速，避免独立限幅压扁转向量。 */
-static void Task3_ClampWheelPair(float *leftRpm, float *rightRpm)
+static bool Task3_IsMiddleState(Task3State_t state)
 {
-    float hi = (*leftRpm > *rightRpm) ? *leftRpm : *rightRpm;
-    float lo;
-    float shift;
-
-    if (hi > T3_MAX_WHEEL_RPM) {
-        shift      = hi - T3_MAX_WHEEL_RPM;
-        *leftRpm  -= shift;
-        *rightRpm -= shift;
-    }
-
-    lo = (*leftRpm < *rightRpm) ? *leftRpm : *rightRpm;
-    if (lo < T3_MIN_WHEEL_RPM) {
-        shift      = T3_MIN_WHEEL_RPM - lo;
-        *leftRpm  += shift;
-        *rightRpm += shift;
-    }
-
-    *leftRpm  = Task3_Clamp(*leftRpm, T3_MIN_WHEEL_RPM, T3_MAX_WHEEL_RPM);
-    *rightRpm = Task3_Clamp(*rightRpm, T3_MIN_WHEEL_RPM, T3_MAX_WHEEL_RPM);
+    return (state == T3_STATE_MIDDLE_REQUEST) ||
+           (state == T3_STATE_MIDDLE_APPROACH);
 }
 
-/* 正常循迹每拍只发一帧，左右轮交替更新，避免共享总线背靠背丢帧。 */
-static void Task3_ApplyWheelRpm(float leftRpm, float rightRpm)
+static bool Task3_IsCenterState(Task3State_t state)
 {
-    int32_t leftInt = (leftRpm >= 0.0F) ? (int32_t)(leftRpm + 0.5F)
-                                        : (int32_t)(leftRpm - 0.5F);
-    int32_t rightInt = (rightRpm >= 0.0F) ? (int32_t)(rightRpm + 0.5F)
-                                          : (int32_t)(rightRpm - 0.5F);
-
-    if (s_sendLeftNext) {
-        if (leftInt != s_sentLeftRpm) {
-            Emm42Robot_SetSpeedRpm(EMM42_ROBOT_WHEEL_L, (int16_t)leftInt, T3_EMM_ACC);
-            s_sentLeftRpm = leftInt;
-        }
-    } else {
-        if (rightInt != s_sentRightRpm) {
-            Emm42Robot_SetSpeedRpm(EMM42_ROBOT_WHEEL_R, (int16_t)rightInt, T3_EMM_ACC);
-            s_sentRightRpm = rightInt;
-        }
-    }
-    s_sendLeftNext = !s_sendLeftNext;
+    return (state == T3_STATE_CENTER_REQUEST) ||
+           (state == T3_STATE_CENTER_WAIT) ||
+           (state == T3_STATE_WAIT_CONFIRM);
 }
 
-/* 按物理左→右的 LINE8→LINE1 顺序计算加权位置误差。 */
-static bool Task3_GetLineError(float *error, uint32_t *hitCountOut)
+static Task3State_t Task3_GetRecoveryState(void)
 {
-    uint8_t  bitmap = BspLine_ReadAll();
-    int32_t  weightedSum = 0;
-    uint32_t hitCount = 0U;
-    uint32_t physicalIdx;
-
-    for (physicalIdx = 0U; physicalIdx < (uint32_t)BSP_LINE_COUNT; physicalIdx++) {
-        uint32_t channel = (uint32_t)BSP_LINE_COUNT - 1U - physicalIdx;
-        if ((bitmap & (uint8_t)(1U << channel)) != 0U) {
-            weightedSum += (int32_t)(physicalIdx * 2U) - 7;
-            hitCount++;
-        }
+    if (Task3_IsCenterState(s_state)) {
+        return T3_STATE_CENTER_REQUEST;
     }
 
-    *hitCountOut = hitCount;
-    if (hitCount == 0U) {
-        return false;
+    if (Task3_IsLeftState(s_state)) {
+        return T3_STATE_LEFT_REQUEST;
     }
-    *error = (float)weightedSum / (float)hitCount;
-    return true;
+    if (Task3_IsMiddleState(s_state)) {
+        return T3_STATE_MIDDLE_REQUEST;
+    }
+    return T3_STATE_FINAL_REQUEST;
 }
 
-static uint32_t Task3_GetElapsedMs(void)
+static bool Task3_RequestBallTarget(int16_t targetX)
 {
-    return (uint32_t)((float)(s_elapsedTicks * T3_TICK_MS) * T3_STOPWATCH_CAL_SCALE);
+    return AppBallControl_RequestTargetWithProfile(targetX, &s_task3BallProfile);
+}
+
+static bool Task3_IsBallHoldingTarget(const AppBallControlStatus_t *status,
+                                      int16_t targetX)
+{
+    return (status->targetPx == targetX) &&
+           (status->state == APP_BALL_CONTROL_HOLDING);
 }
 
 const char *Task3_GetUiStatus(void)
 {
-    uint32_t totalMs = Task3_GetElapsedMs();
-    uint32_t secWhole = totalMs / 1000U;
-    uint32_t tenths = (totalMs / 100U) % 10U;
-    uint32_t idx = 0U;
-    char digits[10];
-    uint32_t n = 0U;
-    uint32_t value = secWhole;
-
-    if (s_state == T3_STATE_WAIT_BALL_CONTROL) {
-        return "T3 B WAIT";
-    }
-    if (s_state == T3_STATE_BALL_RECOVER_WAIT) {
+    switch (s_state) {
+    case T3_STATE_WAIT_BALL_RELEASE:
+        return "T3 B RELEASE";
+    case T3_STATE_HOME_DISABLE:
+    case T3_STATE_HOME_DISABLE_WAIT:
+    case T3_STATE_HOME_CLEAR_CLOG:
+    case T3_STATE_HOME_ENABLE:
+    case T3_STATE_HOME_ENABLE_WAIT:
+    case T3_STATE_HOME_SEEK:
+    case T3_STATE_HOME_STOP_WAIT:
+    case T3_STATE_HOME_LIFT:
+    case T3_STATE_HOME_LIFT_WAIT:
+    case T3_STATE_HOME_ZERO:
+        return "T3 HOME";
+    case T3_STATE_WHEEL_STOP_LEFT:
+    case T3_STATE_WHEEL_STOP_RIGHT:
+    case T3_STATE_WHEEL_DISABLE_LEFT:
+    case T3_STATE_WHEEL_DISABLE_RIGHT:
+    case T3_STATE_WHEEL_RESET_WAIT:
+    case T3_STATE_WHEEL_ENABLE_LEFT:
+    case T3_STATE_WHEEL_ENABLE_LEFT_WAIT:
+    case T3_STATE_WHEEL_ENABLE_RIGHT:
+    case T3_STATE_WHEEL_ENABLE_RIGHT_WAIT:
+    case T3_STATE_WHEEL_ZERO_LEFT:
+    case T3_STATE_WHEEL_ZERO_RIGHT:
+        return "T3 W ENABLE";
+    case T3_STATE_CENTER_REQUEST:
+    case T3_STATE_CENTER_WAIT:
+        return "T3 X350 WAIT";
+    case T3_STATE_WAIT_CONFIRM:
+        return "T3 K3=GO";
+    case T3_STATE_LEFT_REQUEST:
+    case T3_STATE_LEFT_APPROACH:
+        return "T3 X LEFT";
+    case T3_STATE_MIDDLE_REQUEST:
+    case T3_STATE_MIDDLE_APPROACH:
+        return "T3 X400";
+    case T3_STATE_FINAL_REQUEST:
+    case T3_STATE_FINAL_HOLD:
+        return "T3 X450";
+    case T3_STATE_BALL_RECOVER_WAIT:
         return "T3 B RECOV";
+    case T3_STATE_FINISHED:
+        return "T3 DONE";
+    default:
+        return "T3 ???";
     }
-#if T3_MOTORS_DISABLED_MANUAL_TEST
-    if (s_state == T3_STATE_MANUAL_BALANCE) {
-        return "T3 MANUAL";
-    }
-#endif
+}
 
-    s_uiStatusBuf[idx++] = 'T';
-    s_uiStatusBuf[idx++] = ':';
-    if (value == 0U) {
-        s_uiStatusBuf[idx++] = '0';
-    } else {
-        while (value > 0U) {
-            digits[n++] = (char)('0' + (value % 10U));
-            value /= 10U;
-        }
-        while (n > 0U) {
-            s_uiStatusBuf[idx++] = digits[--n];
-        }
+void Task3_OnConfirm(void)
+{
+    if (s_state == T3_STATE_WAIT_CONFIRM) {
+        s_confirmRequested = true;
     }
-    s_uiStatusBuf[idx++] = '.';
-    s_uiStatusBuf[idx++] = (char)('0' + tenths);
-    s_uiStatusBuf[idx++] = 's';
-    if ((s_state == T3_STATE_FINISHED) || (s_state == T3_STATE_TIME_STOPPED)) {
-        s_uiStatusBuf[idx++] = ' ';
-        s_uiStatusBuf[idx++] = 'D';
-        s_uiStatusBuf[idx++] = 'O';
-        s_uiStatusBuf[idx++] = 'N';
-        s_uiStatusBuf[idx++] = 'E';
-    }
-    s_uiStatusBuf[idx] = '\0';
-    return s_uiStatusBuf;
 }
 
 void Task3_OnEnter(void)
 {
-    Pid_Init(&s_pid, T3_KP, T3_KI, T3_KD, T3_INTEGRAL_LIMIT, T3_MAX_STEER_RPM);
-    s_state             = T3_STATE_WAIT_BALL_CONTROL;
-    s_lastSteerRpm      = 0.0F;
-    s_leftRpm           = 0.0F;
-    s_rightRpm          = 0.0F;
-    s_filteredError     = 0.0F;
-    s_sentLeftRpm       = 0;
-    s_sentRightRpm      = 0;
-    s_lineLostTicks     = 0U;
-    s_enableSettleTicks = 0U;
-    s_sendLeftNext      = true;
-    s_finishArmed       = false;
-    s_armTicks          = 0U;
-    s_finishHitTicks    = 0U;
-    s_elapsedTicks      = 0U;
-    s_runTicks          = 0U;
-    s_ballControlRequested = false;
-    s_wheelsStarted     = false;
+    s_state = T3_STATE_WAIT_BALL_RELEASE;
+    s_resumeState = T3_STATE_CENTER_REQUEST;
+    s_settleTicks = 0U;
+    s_confirmRequested = false;
+    s_finishBeeped = false;
+    s_finalGuardTriggered = false;
 }
 
 void Task3_OnLoop(void)
 {
-    float rawError;
-    float targetLeftRpm;
-    float targetRightRpm;
-    uint32_t hitCount;
     AppBallControlStatus_t ballStatus;
 
     AppBallControl_GetStatus(&ballStatus);
 
-    if ((s_state != T3_STATE_WAIT_BALL_CONTROL) &&
-        (s_state != T3_STATE_BALL_RECOVER_WAIT) &&
-        (s_state != T3_STATE_MANUAL_BALANCE) &&
-        (s_state != T3_STATE_FINISHED) && (s_state != T3_STATE_TIME_STOPPED)) {
-        s_elapsedTicks++;
+    if (s_state == T3_STATE_WAIT_BALL_RELEASE) {
+        if (ballStatus.state == APP_BALL_CONTROL_OFF) {
+            s_state = T3_STATE_HOME_DISABLE;
+        }
+        return;
+    }
+
+    if (s_state == T3_STATE_HOME_DISABLE) {
+        Emm42Robot_Enable(EMM42_ROBOT_LIFT, false);
+        s_settleTicks = T3_HOME_RESET_SETTLE_TICKS;
+        s_state = T3_STATE_HOME_DISABLE_WAIT;
+        return;
+    }
+    if (s_state == T3_STATE_HOME_DISABLE_WAIT) {
+        if (s_settleTicks-- > 0U) {
+            return;
+        }
+        s_state = T3_STATE_HOME_CLEAR_CLOG;
+        return;
+    }
+    if (s_state == T3_STATE_HOME_CLEAR_CLOG) {
+        Emm42Robot_ClearClogProtection(EMM42_ROBOT_LIFT);
+        s_state = T3_STATE_HOME_ENABLE;
+        return;
+    }
+    if (s_state == T3_STATE_HOME_ENABLE) {
+        Emm42Robot_Enable(EMM42_ROBOT_LIFT, true);
+        s_settleTicks = T3_HOME_ENABLE_SETTLE_TICKS;
+        s_state = T3_STATE_HOME_ENABLE_WAIT;
+        return;
+    }
+    if (s_state == T3_STATE_HOME_ENABLE_WAIT) {
+        if (s_settleTicks-- > 0U) {
+            return;
+        }
+        s_state = T3_STATE_HOME_SEEK;
+        return;
+    }
+    if (s_state == T3_STATE_HOME_SEEK) {
+        if (BspHomeSwitch_IsPressed()) {
+            Emm42Robot_Stop(EMM42_ROBOT_LIFT);
+            s_settleTicks = T3_HOME_STOP_SETTLE_TICKS;
+            s_state = T3_STATE_HOME_STOP_WAIT;
+        } else {
+            Emm42Robot_SetSpeedRpm(EMM42_ROBOT_LIFT,
+                                   (int16_t)-T3_HOME_SEEK_RPM, T3_HOME_ACC);
+        }
+        return;
+    }
+    if (s_state == T3_STATE_HOME_STOP_WAIT) {
+        if (s_settleTicks-- > 0U) {
+            return;
+        }
+        s_state = T3_STATE_HOME_LIFT;
+        return;
+    }
+    if (s_state == T3_STATE_HOME_LIFT) {
+        Emm42Robot_MoveRelative(EMM42_ROBOT_LIFT, T3_HOME_LEVEL_OFFSET_PULSES,
+                                T3_HOME_LIFT_RPM, T3_HOME_ACC);
+        s_settleTicks = T3_HOME_LIFT_WAIT_TICKS;
+        s_state = T3_STATE_HOME_LIFT_WAIT;
+        return;
+    }
+    if (s_state == T3_STATE_HOME_LIFT_WAIT) {
+        if (s_settleTicks-- > 0U) {
+            return;
+        }
+        s_state = T3_STATE_HOME_ZERO;
+        return;
+    }
+    if (s_state == T3_STATE_HOME_ZERO) {
+        /*
+         * 每次进题都重新经过限位和水平偏移，必须同步刷新驱动器的多圈位置
+         * 原点；否则 BALLCTRL 的绝对位置命令会沿用上次进题的坐标。
+         */
+        Emm42Robot_ResetPosToZero(EMM42_ROBOT_LIFT);
+        s_state = T3_STATE_CENTER_REQUEST;
+        return;
     }
 
     /*
-     * 钢珠闭环触发 FAULT_EDGE（球触边）后会一直锁在回水平的位置，不会自己恢复，
-     * 必须重新走一遍"停止→等待释放→重新请求"的握手才能恢复到目标位置；否则表现
-     * 就是"进了本题但钢珠不再被伺服"。这里主动检测并恢复，不需要用户手动
-     * 退出重进。只要不是正在做这套握手本身，任何时候（含 RUN/STOP/已完成等待
-     * K4 退出期间）检测到故障都立即触发恢复。
+     * 轮子只保留使能和保持力矩。先清掉上次任务留下的速度，再按已验证的
+     * "单轴使能→等待 6 拍"时序使能，最后明确发送 0 RPM。
      */
-    if ((s_state != T3_STATE_WAIT_BALL_CONTROL) &&
-        (s_state != T3_STATE_BALL_RECOVER_WAIT) &&
-        (ballStatus.state == APP_BALL_CONTROL_FAULT_EDGE)) {
-        AppBallControl_RequestStop();
-        s_ballControlRequested = false;
-        s_state = T3_STATE_BALL_RECOVER_WAIT;
+    if (s_state == T3_STATE_WHEEL_STOP_LEFT) {
+        Emm42Robot_Stop(EMM42_ROBOT_WHEEL_L);
+        s_state = T3_STATE_WHEEL_STOP_RIGHT;
+        return;
+    }
+    if (s_state == T3_STATE_WHEEL_STOP_RIGHT) {
+        Emm42Robot_Stop(EMM42_ROBOT_WHEEL_R);
+        s_state = T3_STATE_WHEEL_DISABLE_LEFT;
+        return;
+    }
+    if (s_state == T3_STATE_WHEEL_DISABLE_LEFT) {
+        Emm42Robot_Enable(EMM42_ROBOT_WHEEL_L, false);
+        s_state = T3_STATE_WHEEL_DISABLE_RIGHT;
+        return;
+    }
+    if (s_state == T3_STATE_WHEEL_DISABLE_RIGHT) {
+        Emm42Robot_Enable(EMM42_ROBOT_WHEEL_R, false);
+        s_settleTicks = T3_WHEEL_RESET_SETTLE_TICKS;
+        s_state = T3_STATE_WHEEL_RESET_WAIT;
+        return;
+    }
+    if (s_state == T3_STATE_WHEEL_RESET_WAIT) {
+        if (s_settleTicks-- > 0U) {
+            return;
+        }
+        s_state = T3_STATE_WHEEL_ENABLE_LEFT;
+        return;
+    }
+    if (s_state == T3_STATE_WHEEL_ENABLE_LEFT) {
+        Emm42Robot_Enable(EMM42_ROBOT_WHEEL_L, true);
+        s_settleTicks = T3_WHEEL_ENABLE_SETTLE_TICKS;
+        s_state = T3_STATE_WHEEL_ENABLE_LEFT_WAIT;
+        return;
+    }
+    if (s_state == T3_STATE_WHEEL_ENABLE_LEFT_WAIT) {
+        if (s_settleTicks-- > 0U) {
+            return;
+        }
+        s_state = T3_STATE_WHEEL_ENABLE_RIGHT;
+        return;
+    }
+    if (s_state == T3_STATE_WHEEL_ENABLE_RIGHT) {
+        Emm42Robot_Enable(EMM42_ROBOT_WHEEL_R, true);
+        s_settleTicks = T3_WHEEL_ENABLE_SETTLE_TICKS;
+        s_state = T3_STATE_WHEEL_ENABLE_RIGHT_WAIT;
+        return;
+    }
+    if (s_state == T3_STATE_WHEEL_ENABLE_RIGHT_WAIT) {
+        if (s_settleTicks-- > 0U) {
+            return;
+        }
+        s_state = T3_STATE_WHEEL_ZERO_LEFT;
+        return;
+    }
+    if (s_state == T3_STATE_WHEEL_ZERO_LEFT) {
+        Emm42Robot_VelControl(EMM42_ROBOT_WHEEL_L, 0, T3_WHEEL_ZERO_ACC);
+        s_state = T3_STATE_WHEEL_ZERO_RIGHT;
+        return;
+    }
+    if (s_state == T3_STATE_WHEEL_ZERO_RIGHT) {
+        Emm42Robot_VelControl(EMM42_ROBOT_WHEEL_R, 0, T3_WHEEL_ZERO_ACC);
+        s_state = T3_STATE_LEFT_REQUEST;
+        return;
     }
 
-    /* 等 BALLCTRL 真正回到 OFF 才能重新请求，避免与刚发出的停止命令产生竞态。 */
+    /*
+     * BALLCTRL 触发边缘保护后会锁在 FAULT_EDGE。任务侧必须先请求停止、等
+     * ID1 真正释放，再从中断前的中心、左侧或右侧目标重新开始闭环。
+     */
+    if ((s_state != T3_STATE_BALL_RECOVER_WAIT) &&
+        (ballStatus.state == APP_BALL_CONTROL_FAULT_EDGE)) {
+        s_resumeState = Task3_GetRecoveryState();
+        AppBallControl_RequestStop();
+        s_state = T3_STATE_BALL_RECOVER_WAIT;
+        return;
+    }
     if (s_state == T3_STATE_BALL_RECOVER_WAIT) {
         if (ballStatus.state == APP_BALL_CONTROL_OFF) {
-            s_state = T3_STATE_WAIT_BALL_CONTROL;
+            s_state = s_resumeState;
         }
         return;
     }
 
-    /* 先确保 ID1 已按本题专属参数开始闭环，随后才允许车辆使能和起步。 */
-    if (s_state == T3_STATE_WAIT_BALL_CONTROL) {
-        if (!s_ballControlRequested) {
-            s_ballControlRequested = AppBallControl_RequestTargetWithProfile(
-                T3_BALL_TARGET_X_PX, &s_task3BallProfile);
+    if (s_state == T3_STATE_CENTER_REQUEST) {
+        if (Task3_RequestBallTarget(T3_BALL_CENTER_X_PX)) {
+            s_state = T3_STATE_CENTER_WAIT;
         }
-
-        if (s_ballControlRequested &&
-            (ballStatus.targetPx == T3_BALL_TARGET_X_PX) &&
+        return;
+    }
+    if (s_state == T3_STATE_CENTER_WAIT) {
+        /* 目标已被控制线程接管后即可等待人工确认，期间持续保持 X=350。 */
+        if ((ballStatus.targetPx == T3_BALL_CENTER_X_PX) &&
             ((ballStatus.state == APP_BALL_CONTROL_RUNNING) ||
              (ballStatus.state == APP_BALL_CONTROL_HOLDING))) {
-            if (s_wheelsStarted) {
-                /* 钢珠故障恢复场景：轮子早已在跑，直接回到循迹，不重新走使能时序。 */
-                s_state = T3_STATE_RUN;
-            } else {
-#if T3_MOTORS_DISABLED_MANUAL_TEST
-                s_state = T3_STATE_MANUAL_BALANCE;
-#else
-                s_wheelsStarted = true;
-                s_state = T3_STATE_RESET_DISABLE;
-#endif
-            }
+            s_state = T3_STATE_WAIT_CONFIRM;
         }
         return;
     }
-
-#if T3_MOTORS_DISABLED_MANUAL_TEST
-    /* 手动调参模式：电机不使能、不驱动，仅后台 BALLCTRL 保持钢球在目标位置。*/
-    if (s_state == T3_STATE_MANUAL_BALANCE) {
-        return;
-    }
-#endif
-
-    if (s_state == T3_STATE_RESET_DISABLE) {
-        Emm42Robot_Enable(EMM42_ROBOT_WHEEL_L, false);
-        vTaskDelay(pdMS_TO_TICKS(T3_EMM_CMD_GAP_MS));
-        Emm42Robot_Enable(EMM42_ROBOT_WHEEL_R, false);
-        s_enableSettleTicks = T3_RESET_SETTLE_TICKS;
-        s_state = T3_STATE_RESET_WAIT;
-        return;
-    }
-    if (s_state == T3_STATE_RESET_WAIT) {
-        if (s_enableSettleTicks > 0U) {
-            s_enableSettleTicks--;
-            return;
+    if (s_state == T3_STATE_WAIT_CONFIRM) {
+        if (s_confirmRequested) {
+            s_confirmRequested = false;
+            s_state = T3_STATE_WHEEL_STOP_LEFT;
         }
-        s_state = T3_STATE_ENABLE_LEFT;
         return;
     }
-    if (s_state == T3_STATE_ENABLE_LEFT) {
-        Emm42Robot_Enable(EMM42_ROBOT_WHEEL_L, true);
-        s_enableSettleTicks = T3_ENABLE_SETTLE_TICKS;
-        s_state = T3_STATE_ENABLE_LEFT_WAIT;
-        return;
-    }
-    if (s_state == T3_STATE_ENABLE_LEFT_WAIT) {
-        if (s_enableSettleTicks > 0U) {
-            s_enableSettleTicks--;
-            return;
+    if (s_state == T3_STATE_LEFT_REQUEST) {
+        if (Task3_RequestBallTarget(T3_BALL_LEFT_TARGET_X_PX)) {
+            s_state = T3_STATE_LEFT_APPROACH;
         }
-        s_state = T3_STATE_ENABLE_RIGHT;
         return;
     }
-    if (s_state == T3_STATE_ENABLE_RIGHT) {
-        Emm42Robot_Enable(EMM42_ROBOT_WHEEL_R, true);
-        s_enableSettleTicks = T3_ENABLE_SETTLE_TICKS;
-        s_state = T3_STATE_ENABLE_RIGHT_WAIT;
-        return;
-    }
-    if (s_state == T3_STATE_ENABLE_RIGHT_WAIT) {
-        if (s_enableSettleTicks > 0U) {
-            s_enableSettleTicks--;
-            return;
-        }
-        s_state = T3_STATE_RUN;
-    }
-
-    /* 计时到：两拍分别给左右轮发送带加速度的速度模式 0 RPM，不能走急停接口。 */
-    if (s_state == T3_STATE_TIME_STOP_LEFT) {
-        Emm42Robot_VelControl(EMM42_ROBOT_WHEEL_L, 0, T3_STOP_EMM_ACC);
-        s_sentLeftRpm = 0;
-        s_state = T3_STATE_TIME_STOP_RIGHT;
-        return;
-    }
-    if (s_state == T3_STATE_TIME_STOP_RIGHT) {
-        Emm42Robot_VelControl(EMM42_ROBOT_WHEEL_R, 0, T3_STOP_EMM_ACC);
-        s_sentRightRpm = 0;
-        s_leftRpm = 0.0F;
-        s_rightRpm = 0.0F;
-        s_state = T3_STATE_TIME_STOPPED;
-        RobotCore_NotifyTaskFinished(T3_TASK_INDEX);
-        return;
-    }
-    if (s_state == T3_STATE_FINISHED) {
-        return;
-    }
-
-    /* 只统计正常循迹状态的前进时间；丢线停车期间不计入。 */
-    if (s_state == T3_STATE_RUN) {
-        s_runTicks++;
-        if ((s_runTicks * T3_TICK_MS) >= T3_STOP_AFTER_MS) {
-            s_state = T3_STATE_TIME_STOP_LEFT;
-            return;
-        }
-    }
-
-    if (Task3_GetLineError(&rawError, &hitCount)) {
-        if (s_state == T3_STATE_STOP) {
-            s_filteredError = rawError;
-        } else {
-            s_filteredError += T3_ERROR_FILTER_ALPHA * (rawError - s_filteredError);
-        }
-        if (s_state == T3_STATE_STOP) {
-            Pid_Reset(&s_pid);
-        }
+    if (s_state == T3_STATE_LEFT_APPROACH) {
         /*
-         * 0 RPM 缓停期间仍持续采样和更新 PID，避免状态机锁死后丢失循迹状态；
-         * 但不能重新切回 RUN 并下发非零速度，否则会覆盖驱动器正在执行的 0 RPM 曲线。
+         * 左侧不等待完全静止：视觉新样本首次进入目标 ±6px 即切右侧，
+         * 让本题验证完整的左右摆动和制动能力。
          */
-        if (s_state != T3_STATE_TIME_STOPPED) {
-            s_state = T3_STATE_RUN;
+        if ((ballStatus.targetPx == T3_BALL_LEFT_TARGET_X_PX) &&
+            (ballStatus.measuredPx >=
+             (T3_BALL_LEFT_TARGET_X_PX - T3_BALL_LEFT_ARRIVAL_BAND_PX)) &&
+            (ballStatus.measuredPx <=
+             (T3_BALL_LEFT_TARGET_X_PX + T3_BALL_LEFT_ARRIVAL_BAND_PX))) {
+            s_state = T3_STATE_MIDDLE_REQUEST;
         }
-        s_lineLostTicks = 0U;
-        {
-            float pidError = s_filteredError;
-            if ((pidError > -T3_ERROR_DEADBAND) && (pidError < T3_ERROR_DEADBAND)) {
-                pidError = 0.0F;
-            }
-            s_lastSteerRpm = Pid_Update(&s_pid, pidError, T3_DT_SEC);
-        }
-    } else {
-        s_lineLostTicks++;
-        if (s_lineLostTicks >= T3_LINE_LOST_TICKS) {
-            s_state = T3_STATE_STOP;
-        }
-    }
-
-    if (!s_finishArmed) {
-        if (hitCount <= T3_FINISH_ARM_HIT_MAX) {
-            s_armTicks++;
-            if (s_armTicks >= T3_FINISH_ARM_TICKS) {
-                s_finishArmed = true;
-            }
-        } else {
-            s_armTicks = 0U;
-        }
-    } else if (s_state != T3_STATE_FINISHED) {
-        if ((hitCount >= T3_FINISH_HIT_MIN) &&
-            ((s_elapsedTicks * T3_TICK_MS) >= T3_FINISH_MIN_ELAPSED_MS)) {
-            s_finishHitTicks++;
-            if (s_finishHitTicks >= T3_FINISH_HIT_TICKS) {
-                s_state = T3_STATE_FINISHED;
-            }
-        } else {
-            s_finishHitTicks = 0U;
-        }
-    }
-
-    if (s_state == T3_STATE_FINISHED) {
-        /* 终点保护：这是异常/终点保护，仍需要立即急停。 */
-        Emm42Robot_Stop(EMM42_ROBOT_WHEEL_L);
-        vTaskDelay(pdMS_TO_TICKS(T3_EMM_CMD_GAP_MS));
-        Emm42Robot_Stop(EMM42_ROBOT_WHEEL_R);
-        s_leftRpm = 0.0F;
-        s_rightRpm = 0.0F;
-        RobotCore_NotifyTaskFinished(T3_TASK_INDEX);
         return;
     }
-
-    if (s_state == T3_STATE_RUN) {
-        float steerAbs = (s_lastSteerRpm >= 0.0F) ? s_lastSteerRpm : -s_lastSteerRpm;
-        float dynBaseRpm = T3_BASE_RPM - T3_CORNER_SLOWDOWN_GAIN * steerAbs;
-        dynBaseRpm = Task3_Clamp(dynBaseRpm, T3_MIN_BASE_RPM, T3_BASE_RPM);
-        {
-            uint32_t elapsedMs = Task3_GetElapsedMs();
-            if (elapsedMs >= T3_DECEL_START_MS) {
-                float decelSec = (float)(elapsedMs - T3_DECEL_START_MS) * 0.001F;
-                float decelBaseRpm = T3_BASE_RPM - T3_DECEL_GRADIENT_RPM_PER_SEC * decelSec;
-                decelBaseRpm = Task3_Clamp(decelBaseRpm, T3_DECEL_MIN_RPM, T3_BASE_RPM);
-                if (decelBaseRpm < dynBaseRpm) {
-                    dynBaseRpm = decelBaseRpm;
-                }
-            }
+    if (s_state == T3_STATE_MIDDLE_REQUEST) {
+        if (Task3_RequestBallTarget(T3_BALL_MIDDLE_TARGET_X_PX)) {
+            s_state = T3_STATE_MIDDLE_APPROACH;
         }
-        targetLeftRpm = dynBaseRpm + s_lastSteerRpm;
-        targetRightRpm = dynBaseRpm - s_lastSteerRpm;
-        Task3_ClampWheelPair(&targetLeftRpm, &targetRightRpm);
-    } else {
-        targetLeftRpm = 0.0F;
-        targetRightRpm = 0.0F;
+        return;
     }
-
-    s_leftRpm = targetLeftRpm;
-    s_rightRpm = targetRightRpm;
-    if (s_state != T3_STATE_TIME_STOPPED) {
-        Task3_ApplyWheelRpm(s_leftRpm, s_rightRpm);
+    if (s_state == T3_STATE_MIDDLE_APPROACH) {
+        if ((ballStatus.targetPx == T3_BALL_MIDDLE_TARGET_X_PX) &&
+            (ballStatus.measuredPx >=
+             (T3_BALL_MIDDLE_TARGET_X_PX - T3_BALL_MIDDLE_ARRIVAL_BAND_PX)) &&
+            (ballStatus.measuredPx <=
+             (T3_BALL_MIDDLE_TARGET_X_PX + T3_BALL_MIDDLE_ARRIVAL_BAND_PX))) {
+            s_finalGuardTriggered = false;
+            s_state = T3_STATE_FINAL_REQUEST;
+        }
+        return;
+    }
+    if (s_state == T3_STATE_FINAL_REQUEST) {
+        if (Task3_RequestBallTarget(T3_BALL_FINAL_TARGET_X_PX)) {
+            s_state = T3_STATE_FINAL_HOLD;
+        }
+        return;
+    }
+    if (s_state == T3_STATE_FINAL_HOLD) {
+        /*
+         * 即使位置越过右侧保护线，也不失能 ID1；重新投递右侧目标，让
+         * BALLCTRL 在下一帧继续把球拉回。每次右摆只重投递一次，避免刷队列。
+         */
+        if (!s_finalGuardTriggered &&
+            (ballStatus.measuredPx >= T3_BALL_FINAL_GUARD_X_PX)) {
+            s_finalGuardTriggered = Task3_RequestBallTarget(
+                T3_BALL_FINAL_TARGET_X_PX);
+        }
+        if (Task3_IsBallHoldingTarget(&ballStatus, T3_BALL_FINAL_TARGET_X_PX)) {
+            if (!s_finishBeeped) {
+                s_finishBeeped = true;
+                BspBuzzer_BeepShort();
+                RobotCore_NotifyTaskFinished(T3_TASK_INDEX);
+            }
+            s_state = T3_STATE_FINISHED;
+        }
+        return;
+    }
+    if (s_state == T3_STATE_FINISHED) {
+        return;
     }
 }
 
 void Task3_OnExit(void)
 {
-    /* K4 退出保留硬安全收尾：急停后失能左右轮。 */
+    /* K4 退出时安全停止并失能全部三个本题涉及的电机。 */
+    AppBallControl_RequestStop();
     Emm42Robot_Stop(EMM42_ROBOT_WHEEL_L);
     vTaskDelay(pdMS_TO_TICKS(T3_EMM_CMD_GAP_MS));
     Emm42Robot_Stop(EMM42_ROBOT_WHEEL_R);
     vTaskDelay(pdMS_TO_TICKS(T3_EMM_CMD_GAP_MS));
+    Emm42Robot_Stop(EMM42_ROBOT_LIFT);
+    vTaskDelay(pdMS_TO_TICKS(T3_EMM_CMD_GAP_MS));
     Emm42Robot_Enable(EMM42_ROBOT_WHEEL_L, false);
     vTaskDelay(pdMS_TO_TICKS(T3_EMM_CMD_GAP_MS));
     Emm42Robot_Enable(EMM42_ROBOT_WHEEL_R, false);
+    vTaskDelay(pdMS_TO_TICKS(T3_EMM_CMD_GAP_MS));
+    Emm42Robot_Enable(EMM42_ROBOT_LIFT, false);
 
-    /* 本题结束后才释放 ID1，运行和缓停期间保持钢珠位置目标。 */
-    AppBallControl_RequestStop();
-
-    Pid_Reset(&s_pid);
-    s_state = T3_STATE_STOP;
-    s_finishArmed = false;
-    s_armTicks = 0U;
-    s_finishHitTicks = 0U;
-    s_runTicks = 0U;
-    s_ballControlRequested = false;
-    s_wheelsStarted = false;
+    s_confirmRequested = false;
+    s_finishBeeped = false;
+    s_finalGuardTriggered = false;
+    s_state = T3_STATE_WAIT_BALL_RELEASE;
 }

@@ -95,7 +95,7 @@
 /* task2 在题目表中的固定下标，用于显示其秒表计时。 */
 #define UI_TASK2_INDEX    (1U)
 
-/* task3 在题目表中的固定下标，用于显示钢珠往返定位阶段与计时。 */
+/* task3 在题目表中的固定下标，用于显示对称左右摆球阶段。 */
 #define UI_TASK3_INDEX    (2U)
 
 /* task4 在题目表中的固定下标，用于显示其秒表计时。 */
@@ -528,7 +528,7 @@ static void AppUiTask_Entry(void *argument)
                 OLED_UpdateArea(0, UI_RUN_NAME_Y, 128, UI_MENU_LINE_H);
             }
             if ((state == UI_STATE_RUN) && (s_sel == UI_TASK3_INDEX)) {
-                /* 任务三每 300ms 刷新往返定位阶段、计时和完成状态。 */
+                /* 任务三每 300ms 刷新回零等待与左右摆球阶段。 */
                 OLED_ClearArea(0, UI_RUN_NAME_Y, 128, UI_MENU_LINE_H);
                 OLED_ShowString(0, UI_RUN_NAME_Y, (char *)Task3_GetUiStatus(), OLED_6X8);
                 OLED_UpdateArea(0, UI_RUN_NAME_Y, 128, UI_MENU_LINE_H);
