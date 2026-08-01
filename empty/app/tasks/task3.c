@@ -23,18 +23,18 @@
 /* ---- 中心等待目标与左右摆动目标：左右目标可独立按实际物理位置标定。 ---- */
 #define T3_BALL_CENTER_X_PX               (350)  /* 进题回零抬升后、等待 K3 时持续保持的中心位置。 */
 #define T3_BALL_LEFT_TARGET_X_PX          (240)  /* K3 后的第 1 段目标；首次进入到达带后切第 2 段。 */
-#define T3_BALL_MIDDLE_TARGET_X_PX        (360)  /* 第 2 段目标；首次进入到达带后切最终段。 */
+#define T3_BALL_MIDDLE_TARGET_X_PX        (380)  /* 第 2 段目标；从左向右经过阈值后切最终段。 */
+#define T3_BALL_MIDDLE_PASS_X_PX          (320)  /* 第 2 段经过线：达到此值即切最终段，不等待停稳。 */
 #define T3_BALL_FINAL_TARGET_X_PX         (470)  /* 第 3 段最终目标；满足稳定条件后鸣叫并结束。 */
-#define T3_BALL_LEFT_ARRIVAL_BAND_PX      (30)   /* 第 1 段到达带半宽：230±20，即 210~250 即切第 2 段。 */
-#define T3_BALL_MIDDLE_ARRIVAL_BAND_PX    (10)    /* 第 2 段到达带半宽：380±6，即 374~386 即切最终段。 */
-#define T3_BALL_FINAL_GUARD_X_PX          (550)  /* 最终段右侧保护线：测量值达到此处立即重投 450 回拉。 */
+#define T3_BALL_LEFT_ARRIVAL_BAND_PX      (30)   /* 第 1 段到达带半宽。 */
+#define T3_BALL_FINAL_GUARD_X_PX          (550)  /* 最终段右侧保护线：测量值达到此处立即重投最终点回拉。 */
 #define T3_BALL_FINAL_HOLD_TIME_MS        (80U) /* 最终点的位置、速度均合格后，连续保持多久才算完成。 */
 
 /* ---- 本题独立的限位回零与轮子使能参数。 ---- */
 #define T3_HOME_SEEK_RPM                  (5)    /* 找限位开关的速度；代码以负方向运动，数值越大越快。 */
 #define T3_HOME_LIFT_RPM                  (5U)   /* 压限位后正方向抬升曲柄的速度。 */
 #define T3_HOME_ACC                       (5U)   /* 回零/抬升的驱动器加速度档位；0 表示立即达到命令速度。 */
-#define T3_HOME_LEVEL_OFFSET_PULSES       (210)  /* 从限位触发点向上抬升的脉冲数，决定球臂初始工作高度。 */
+#define T3_HOME_LEVEL_OFFSET_PULSES       (240)  /* 从限位触发点向上抬升的脉冲数，决定球臂初始工作高度。 */
 #define T3_HOME_RESET_SETTLE_TICKS        (2U)   /* ID1 失能后等待拍数，避免紧接着解堵/使能时丢帧。 */
 #define T3_HOME_ENABLE_SETTLE_TICKS       (6U)   /* ID1 使能后等待拍数，确认驱动器已真正受控。 */
 #define T3_HOME_STOP_SETTLE_TICKS         (1U)   /* 碰限位急停后等待拍数，再发送抬升位置命令。 */
@@ -66,6 +66,15 @@
 
 /* 题目三在任务表中的固定下标。 */
 #define T3_TASK_INDEX                     (2U)
+
+/*
+ * K3 后计时与录像窗口（参考任务二秒表与任务一录像时长）：K3 触发三段摆动那一刻
+ * 开始计时并通知视觉端开始录像；累计校准时间达到 T3_RECORD_DURATION_MS 后停录像、
+ * 暂停计时，小球继续走完三段不受影响。
+ */
+#define T3_TICK_MS                        (30U)    /* OnLoop 周期，与 UIMENU 一致。 */
+#define T3_RECORD_DURATION_MS             (5000U)  /* 录像+计时窗口，到时停录像并暂停计时。 */
+#define T3_STOPWATCH_CAL_SCALE            (0.897F) /* 秒表校准系数，与任务二/四/五同值。 */
 
 typedef enum {
     T3_STATE_WAIT_BALL_RELEASE = 0,
@@ -127,6 +136,16 @@ static uint32_t s_settleTicks;
 static bool s_confirmRequested;
 static bool s_finishBeeped;
 static bool s_finalGuardTriggered;
+static uint32_t s_elapsedTicks;   /* K3 后累计 OnLoop 拍数；5 秒到后停止累加（计时暂停）。 */
+static bool s_timerRunning;       /* 计时是否在跑（K3 后到 5 秒之间）。 */
+static bool s_timerFinished;      /* 5 秒已到，录像已停、计时已暂停。 */
+static char s_uiStatusBuf[24];    /* 秒表文本缓冲。 */
+
+/* 秒表校准后的累计毫秒数，与 OLED 显示使用同一套换算。 */
+static uint32_t Task3_GetElapsedMs(void)
+{
+    return (uint32_t)((float)(s_elapsedTicks * T3_TICK_MS) * T3_STOPWATCH_CAL_SCALE);
+}
 
 static bool Task3_IsLeftState(Task3State_t state)
 {
@@ -176,20 +195,68 @@ static bool Task3_IsBallHoldingTarget(const AppBallControlStatus_t *status,
 
 const char *Task3_GetUiStatus(void)
 {
+    uint32_t totalMs;
+    uint32_t secWhole;
+    uint32_t tenths;
+    uint32_t idx = 0U;
+    uint32_t n = 0U;
+    uint32_t value;
+    char digits[10];
+    const char *phase;
+
+    /* K3 前：显示阶段提示，不显示秒表。 */
+    if (!s_timerRunning && !s_timerFinished) {
+        switch (s_state) {
+        case T3_STATE_WAIT_BALL_RELEASE:
+            return "T3 B RELEASE";
+        case T3_STATE_HOME_DISABLE:
+        case T3_STATE_HOME_DISABLE_WAIT:
+        case T3_STATE_HOME_CLEAR_CLOG:
+        case T3_STATE_HOME_ENABLE:
+        case T3_STATE_HOME_ENABLE_WAIT:
+        case T3_STATE_HOME_SEEK:
+        case T3_STATE_HOME_STOP_WAIT:
+        case T3_STATE_HOME_LIFT:
+        case T3_STATE_HOME_LIFT_WAIT:
+        case T3_STATE_HOME_ZERO:
+            return "T3 HOME";
+        case T3_STATE_CENTER_REQUEST:
+        case T3_STATE_CENTER_WAIT:
+            return "T3 X350 WAIT";
+        case T3_STATE_WAIT_CONFIRM:
+            return "T3 K3=GO";
+        case T3_STATE_BALL_RECOVER_WAIT:
+            return "T3 B RECOV";
+        default:
+            return "T3 ???";
+        }
+    }
+
+    /* K3 后：显示秒表 T:x.xs + 阶段简称，5 秒到后定格在 T:5.0s。 */
+    totalMs = Task3_GetElapsedMs();
+    secWhole = totalMs / 1000U;
+    tenths = (totalMs / 100U) % 10U;
+    value = secWhole;
+
+    s_uiStatusBuf[idx++] = 'T';
+    s_uiStatusBuf[idx++] = ':';
+    if (value == 0U) {
+        s_uiStatusBuf[idx++] = '0';
+    } else {
+        while (value > 0U) {
+            digits[n++] = (char)('0' + (value % 10U));
+            value /= 10U;
+        }
+        while (n > 0U) {
+            s_uiStatusBuf[idx++] = digits[--n];
+        }
+    }
+    s_uiStatusBuf[idx++] = '.';
+    s_uiStatusBuf[idx++] = (char)('0' + tenths);
+    s_uiStatusBuf[idx++] = 's';
+    s_uiStatusBuf[idx++] = ' ';
+
     switch (s_state) {
-    case T3_STATE_WAIT_BALL_RELEASE:
-        return "T3 B RELEASE";
-    case T3_STATE_HOME_DISABLE:
-    case T3_STATE_HOME_DISABLE_WAIT:
-    case T3_STATE_HOME_CLEAR_CLOG:
-    case T3_STATE_HOME_ENABLE:
-    case T3_STATE_HOME_ENABLE_WAIT:
-    case T3_STATE_HOME_SEEK:
-    case T3_STATE_HOME_STOP_WAIT:
-    case T3_STATE_HOME_LIFT:
-    case T3_STATE_HOME_LIFT_WAIT:
-    case T3_STATE_HOME_ZERO:
-        return "T3 HOME";
     case T3_STATE_WHEEL_STOP_LEFT:
     case T3_STATE_WHEEL_STOP_RIGHT:
     case T3_STATE_WHEEL_DISABLE_LEFT:
@@ -201,28 +268,36 @@ const char *Task3_GetUiStatus(void)
     case T3_STATE_WHEEL_ENABLE_RIGHT_WAIT:
     case T3_STATE_WHEEL_ZERO_LEFT:
     case T3_STATE_WHEEL_ZERO_RIGHT:
-        return "T3 W ENABLE";
-    case T3_STATE_CENTER_REQUEST:
-    case T3_STATE_CENTER_WAIT:
-        return "T3 X350 WAIT";
-    case T3_STATE_WAIT_CONFIRM:
-        return "T3 K3=GO";
+        phase = "ARM";
+        break;
     case T3_STATE_LEFT_REQUEST:
     case T3_STATE_LEFT_APPROACH:
-        return "T3 X LEFT";
+        phase = "LFT";
+        break;
     case T3_STATE_MIDDLE_REQUEST:
     case T3_STATE_MIDDLE_APPROACH:
-        return "T3 X400";
+        phase = "MID";
+        break;
     case T3_STATE_FINAL_REQUEST:
     case T3_STATE_FINAL_HOLD:
-        return "T3 X450";
+        phase = "FIN";
+        break;
     case T3_STATE_BALL_RECOVER_WAIT:
-        return "T3 B RECOV";
+        phase = "REC";
+        break;
     case T3_STATE_FINISHED:
-        return "T3 DONE";
+        phase = "DONE";
+        break;
     default:
-        return "T3 ???";
+        phase = "???";
+        break;
     }
+
+    while ((*phase != '\0') && (idx < (sizeof(s_uiStatusBuf) - 1U))) {
+        s_uiStatusBuf[idx++] = *phase++;
+    }
+    s_uiStatusBuf[idx] = '\0';
+    return s_uiStatusBuf;
 }
 
 void Task3_OnConfirm(void)
@@ -240,6 +315,9 @@ void Task3_OnEnter(void)
     s_confirmRequested = false;
     s_finishBeeped = false;
     s_finalGuardTriggered = false;
+    s_elapsedTicks = 0U;
+    s_timerRunning = false;
+    s_timerFinished = false;
 }
 
 void Task3_OnLoop(void)
@@ -247,6 +325,16 @@ void Task3_OnLoop(void)
     AppBallControlStatus_t ballStatus;
 
     AppBallControl_GetStatus(&ballStatus);
+
+    /* K3 后开始计时+录像：累计到 5 秒停录像并暂停计时，球继续走三段。 */
+    if (s_timerRunning) {
+        s_elapsedTicks++;
+        if (Task3_GetElapsedMs() >= T3_RECORD_DURATION_MS) {
+            s_timerRunning = false;
+            s_timerFinished = true;
+            RobotCore_NotifyTaskFinished(T3_TASK_INDEX);
+        }
+    }
 
     if (s_state == T3_STATE_WAIT_BALL_RELEASE) {
         if (ballStatus.state == APP_BALL_CONTROL_OFF) {
@@ -433,6 +521,9 @@ void Task3_OnLoop(void)
     if (s_state == T3_STATE_WAIT_CONFIRM) {
         if (s_confirmRequested) {
             s_confirmRequested = false;
+            /* K3 触发三段摆动：开始计时并通知视觉端开始录像。 */
+            s_timerRunning = true;
+            RobotCore_NotifyTaskStarted(T3_TASK_INDEX);
             s_state = T3_STATE_WHEEL_STOP_LEFT;
         }
         return;
@@ -444,10 +535,7 @@ void Task3_OnLoop(void)
         return;
     }
     if (s_state == T3_STATE_LEFT_APPROACH) {
-        /*
-         * 左侧不等待完全静止：视觉新样本首次进入目标 ±6px 即切右侧，
-         * 让本题验证完整的左右摆动和制动能力。
-         */
+        /* 左侧不等待完全静止，视觉新样本首次进入第 1 段到达带即切阶段二。 */
         if ((ballStatus.targetPx == T3_BALL_LEFT_TARGET_X_PX) &&
             (ballStatus.measuredPx >=
              (T3_BALL_LEFT_TARGET_X_PX - T3_BALL_LEFT_ARRIVAL_BAND_PX)) &&
@@ -464,11 +552,12 @@ void Task3_OnLoop(void)
         return;
     }
     if (s_state == T3_STATE_MIDDLE_APPROACH) {
+        /*
+         * 阶段二只需从左向右轻触经过阈值即可进入最终阶段，
+         * 不等待钢球在阶段二目标点停稳，5 秒计时也不参与切段。
+         */
         if ((ballStatus.targetPx == T3_BALL_MIDDLE_TARGET_X_PX) &&
-            (ballStatus.measuredPx >=
-             (T3_BALL_MIDDLE_TARGET_X_PX - T3_BALL_MIDDLE_ARRIVAL_BAND_PX)) &&
-            (ballStatus.measuredPx <=
-             (T3_BALL_MIDDLE_TARGET_X_PX + T3_BALL_MIDDLE_ARRIVAL_BAND_PX))) {
+            (ballStatus.measuredPx >= T3_BALL_MIDDLE_PASS_X_PX)) {
             s_finalGuardTriggered = false;
             s_state = T3_STATE_FINAL_REQUEST;
         }
@@ -524,5 +613,8 @@ void Task3_OnExit(void)
     s_confirmRequested = false;
     s_finishBeeped = false;
     s_finalGuardTriggered = false;
+    s_elapsedTicks = 0U;
+    s_timerRunning = false;
+    s_timerFinished = false;
     s_state = T3_STATE_WAIT_BALL_RELEASE;
 }

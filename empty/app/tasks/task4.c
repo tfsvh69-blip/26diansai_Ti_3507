@@ -36,7 +36,7 @@
  * 2026-08 "整体速度提高但加速度别太快"：80→150。这个值必须跟下面
  * T4_START_RAMP_RPM_PER_SEC 一起看，爬满全速时间=本值÷斜坡值，见那边说明。
  */
-#define T4_BASE_RPM                        (110.0F)
+#define T4_BASE_RPM                        (95.0F)
 #define T4_MIN_WHEEL_RPM                   (5.0F)
 #define T4_MAX_WHEEL_RPM                   (230.0F)
 
@@ -85,7 +85,7 @@
  *   （acc=5，约 1.4 秒到 110RPM，等效约 78RPM/s）的一半左右，比阶跃平缓得多。
  *   还要更平稳可以继续调小（比如 25~30），代价是巡航时间进一步缩短。
  */
-#define T4_START_RAMP_RPM_PER_SEC          (24.0F)
+#define T4_START_RAMP_RPM_PER_SEC          (30.0F)  /* 40RPM 约需 8 秒爬满，优先保证起步平稳。 */
 
 /*
  * 缓停参数：T4_STOP_AFTER_MS 固定本题开始缓停的时间；
@@ -186,7 +186,7 @@
  *   LEVEL_TRIM_new = -37 + (-1)×1.0×17 = -54
  * 这套反推是线性、可迭代的，一次不够就再来一次，2~3 次内会收敛到很小。
  */
-#define T4_BALL_LEVEL_TRIM_PULSE            (-54)
+#define T4_BALL_LEVEL_TRIM_PULSE            (-5)
 /*
  * 2026-08 实测教训：α=1.0（预测完全不用，每帧直接采信测量）配合 β=0.80
  * 导致剧烈振荡——β 越大，"测量-预测残差"里的噪声被放大进速度估计的比例越高：

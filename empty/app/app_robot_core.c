@@ -37,13 +37,14 @@ typedef struct {
  * 6 道题登记表。题名可按实际赛题改成有意义的短名（如 "LINE","PARK"）。
  * 钩子实现分别在 app/tasks/task1.c ~ task6.c。
  * onConfirm 为 NULL 的题目在运行态忽略 K3，行为与加此钩子之前完全一致。
- * deferVideoStart 目前题目四、五为 true——都是先启动球杆平衡，真正开始
- * 动作要等第二次 K3 发车，录像也应该从那一刻才开始，不是进题目就开始。
+ * deferVideoStart 目前题目三、四、五、六为 true——录像都从题目自己定义的
+ * 真正开始时刻才开始，不是进题目就开始：任务三 K3 开始三段摆球、任务四/五/六
+ * 第二次 K3 发车（任务三录像固定录 5 秒后由题目自己停）。
  */
 static const RobotTask_t s_robotTasks[] = {
     { "VIDEO 5S", Task1_OnEnter, Task1_OnLoop, Task1_OnExit, NULL,           false },
     { "LINE PID", Task2_OnEnter, Task2_OnLoop, Task2_OnExit, NULL,           false },
-    { "BALL SWING", Task3_OnEnter, Task3_OnLoop, Task3_OnExit, Task3_OnConfirm, false },
+    { "BALL SWING", Task3_OnEnter, Task3_OnLoop, Task3_OnExit, Task3_OnConfirm, true },
     { "LINE 6S",  Task4_OnEnter, Task4_OnLoop, Task4_OnExit, Task4_OnConfirm, true },
     { "Five",     Task5_OnEnter, Task5_OnLoop, Task5_OnExit, Task5_OnConfirm, true },
     { "ID1 POS",  Task6_OnEnter, Task6_OnLoop, Task6_OnExit, Task6_OnConfirm, true  },

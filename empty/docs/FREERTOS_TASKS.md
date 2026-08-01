@@ -153,6 +153,8 @@ Nrf24TxResult_t Nrf24_SendUsbUartText(const uint8_t *text, uint8_t textLength);
 
 **题目三 `BALL SWING`**（`task3.c`）：
 - 进题先等待 `BALLCTRL` 释放 ID1，再按“失能→限位回零→抬升 `T3_HOME_LEVEL_OFFSET_PULSES`→位置清零”完成非阻塞回零；随后自动以 X=350 启动闭环等待 K3；仅在 K3 后 ID2/ID3 才依次使能并明确保持 0 RPM，不读取灰度或驱动车辆。
+
+- **K3 后开始计时与录像（2026-08 新增）**：题目表 `deferVideoStart=true`，进题不自动录像；K3 触发三段摆动那一刻调用 `RobotCore_NotifyTaskStarted(T3_TASK_INDEX)` 开始录像并启动秒表，OLED 显示 `T:x.xs` 加阶段简称（`ARM`/`LFT`/`MID`/`FIN`/`REC`/`DONE`）；累计校准时间达 `T3_RECORD_DURATION_MS`（当前 5000ms）后调用 `RobotCore_NotifyTaskFinished()` 停录像、暂停计时（定格在 `T:5.0s`），小球继续走完三段不受影响。`FINAL_HOLD` 完成时的 `NotifyTaskFinished` 因 `TaskStop` 去重不会重复发。
 - `T3_BALL_CENTER_X_PX=350` 只用于 K3 前的中心保持；K3 后依次执行 `T3_BALL_LEFT_TARGET_X_PX=230`、`T3_BALL_MIDDLE_TARGET_X_PX=380`、`T3_BALL_FINAL_TARGET_X_PX=450`。所有闭环与回零参数均为本题私有 `T3_*`/`T3_BALL_*`。
 - 抬升并位置清零后自动请求 X=350 的钢球闭环并等待 K3，期间持续保持中心目标；按键后小球首次进入 230 的 `±T3_BALL_LEFT_ARRIVAL_BAND_PX` 即切 380，首次进入 380 的 `±T3_BALL_MIDDLE_ARRIVAL_BAND_PX` 即切 450。最终段测量达到 `T3_BALL_FINAL_GUARD_X_PX` 时重新投递 450 回拉；位置误差 ≤6 px、速度 ≤10 px/s 连续 `T3_BALL_FINAL_HOLD_TIME_MS=200ms` 后短鸣一次并等待 K4。
 - `FAULT_EDGE` 统一执行“停止→等待 OFF→从中心、230、400 或 450 当前阶段重新请求”的恢复握手；K4 停止并失能 ID1、ID2、ID3。
@@ -164,7 +166,7 @@ Nrf24TxResult_t Nrf24_SendUsbUartText(const uint8_t *text, uint8_t textLength);
 - 秒表只统计发车之后的时间（`T4_STATE_IDLE`/`WAIT_BALL_CONTROL`/`BALL_READY` 均不计时）；到 `T4_STOP_AFTER_MS` 缓停完成或触发终点保护时，**蜂鸣器短促响一声**（`s_finishBeeped` 保证只响一次，与按键共用 `BspBuzzer_BeepShort()`，做法同题目二），OLED 秒表定格并追加 ` DONE`。
 - **循迹 PID 已移植任务五当前实现**：`T4_KP/KI/KD`、误差死区和转弯减速参数按值复制自任务五，并新增独立的 `T4_STEER_SLEW_RPM_PER_SEC`。PID 原始转向量只作为目标，`s_appliedSteerRpm` 每拍最多向其靠近 `T4_STEER_SLEW_RPM_PER_SEC×T4_DT_SEC`，再参与左右轮差速，降低离散灰度跳变引起的过弯横摆；任务四的定时缓停、终点保护和钢珠闭环流程不变。
 - 进入后（第一次 K3）先通过 `AppBallControl_RequestTargetWithProfile()` 投递独立 `T4_BALL_*` profile，目标 `T4_BALL_TARGET_X_PX`；后台闭环发布 `RUNNING/HOLDING` 且已确认目标后进入 `T4_STATE_BALL_READY` 等第二次 K3。因此车辆移动期间 ID1 始终由后台位置模式闭环平衡钢珠。`T4_BALL_*` 是本题私有参数组，具体数值（`Kx/Kv`、水平点、滤波 α/β、摩擦前馈、`POS_RPM/POS_ACC`）以 `task4.c` 当前值为准，调参方法论见 `CONTROL_ALGORITHM.md` §10；与 `T3_*` 互不影响。
-- **起步软件速度斜坡** `T4_START_RAMP_RPM_PER_SEC`：驱动器 `acc` 曲线最慢也只能约 1.4 秒爬满，想要更缓的起步必须靠任务层每拍把目标速度往上抬一点点（爬满时间=`T4_BASE_RPM÷T4_START_RAMP_RPM_PER_SEC`），需要和 `T4_STOP_AFTER_MS` 一起看，否则容易出现"全程都在加速、没到过全速就停了"。
+- **起步软件速度斜坡** `T4_START_RAMP_RPM_PER_SEC`：驱动器 `acc` 曲线最慢也只能约 1.4 秒爬满，想要更缓的起步必须靠任务层每拍把目标速度往上抬一点点（爬满时间=`T4_BASE_RPM÷T4_START_RAMP_RPM_PER_SEC`）。当前按低速稳球需求设为 `T4_BASE_RPM=40`、`T4_START_RAMP_RPM_PER_SEC=5`，约 8 秒才爬满，基本覆盖本题 8.3 秒运行时长。
 - 正常循迹累计前进 `T4_STOP_AFTER_MS` 后，状态机分两拍给 ID2、ID3 发送速度模式 `0 RPM`，每拍只发一帧以避免共享 UART1 总线丢帧；缓停使用 `Emm42Robot_VelControl(..., 0, T4_STOP_EMM_ACC)`，它会保留速度模式帧并把 `T4_STOP_EMM_ACC` 交给控制器，与 `Emm42Robot_SetSpeedRpm(..., 0, ...)` 的急停语义不同，数值越小越平缓、越大越接近立即停。
 - **`T4_STATE_TIME_STOPPED`/`T4_STATE_FINISHED` 是真正的终止态**：`OnLoop` 一进入这两个状态就在函数最前面直接 `return`，后面的循迹读数、终点判定、`FAULT_EDGE` 恢复握手都不会再执行到（2026-08 修过一个真实 bug：`TIME_STOPPED` 之前没有这个入口 return，会被终点判定等逻辑意外拨回 `RUN`，导致 OLED 秒表在小车已经停下后仍继续计时）。只统计 `T4_STATE_RUN` 的正常循迹时间，丢线停车期间不计时；两轮收到 0 RPM 帧后（进入 `TIME_STOPPED` 前）状态机仍持续读取灰度、滤波并更新 PID，避免锁死后丢失循迹状态，但不会再切回 `RUN` 覆盖驱动器正在执行的 0 RPM 曲线。ID1 在缓停和自动完成后仍保持闭环，K4 退出与终点保护继续急停并失能轮子、并请求后台停止 ID1，属于安全收尾。
 - **钢珠故障自动恢复**：`BALLCTRL` 的 `FAULT_EDGE`（球触边、命令回水平并锁定）不会自行恢复；`Task4_OnLoop()` 每拍检测该状态，一旦出现就自动走一遍"请求停止 → 等 `BALLCTRL` 回到 `OFF` → 重新请求"的握手（`T4_STATE_BALL_RECOVER_WAIT`，OLED 显示 `T4 B RECOV`），不需要用户手动退出重进任务四。恢复握手完成时会先检查本次任务是否已经跑完（`s_runCompleted`，在到达 `TIME_STOPPED`/`FINISHED` 时置位）：**已经跑完就直接停在终止态，不会被误判成还要继续循迹**；否则若轮子已经使能起步过（`s_wheelsStarted`）直接回到 `T4_STATE_RUN` 循迹，不重新走一遍轮子使能时序。只要仍在题目四内就持续保证钢珠被伺服到目标位置，直至 K4 退出。
@@ -200,8 +202,9 @@ Nrf24TxResult_t Nrf24_SendUsbUartText(const uint8_t *text, uint8_t textLength);
 
 - 进入后先等待 `BALLCTRL` 释放 ID1，再以任务六私有参数执行“失能→解堵转→使能→负方向触发 PA24 限位→急停→正方向抬升 `T6_HOME_LEVEL_OFFSET_PULSES` 到水平”。完成后立即失能 ID1，OLED 显示 `T6 SET BALL`，此时可手动升降摆杆、摆放钢珠。
 - 第一次 K3 只在获得有效视觉 X 时生效：锁定该帧 X 为 `s_targetX`，重新使能 ID1、清零位置原点后，以独立 `T6_BALL_*` profile 交给 `BALLCTRL` 闭环；OLED 依次显示 `T6 B WAIT`、`T6 K3=GO`。没有有效 X 时显示 `T6 NO BALL` 并等待视觉数据，不会错误地锁定无效目标。
+- **两组独立球杆参数**：首次 K3 锁定目标后固定选择 profile，不会在运行中跨区切换。`X≤300`（含 `X<200`）使用现有 `T6_BALL_*` 参数组，供 X≈200~300 调节；`X=350~500` 使用完整独立的 `T6_BALL_HIGH_X_*` 参数组，供 X≈400 调节。高 X 组初值按值复制低 X 组，水平基准 `T6_BALL_HIGH_X_LEVEL_TRIM_PULSE` 初值为 `-50`；两组的 `Kx/Kv`、滤波、摩擦前馈和执行器参数均可互不影响地调整。`X=301~349` 暂沿用低 X 组，待单独标定后再拆分。
 - 第二次 K3 后，轮子起步的约 4 秒加速段使用任务六私有 `T6_START_ACCEL_LIFT_*`：`BALLCTRL` 的水平点临时叠加最大 `+40` 脉冲（150 ms 平滑抬升），达到巡航速度后 300 ms 平滑撤回。它是抵消启动加速度扰球的前馈，不改巡线 PID 或钢珠 PD；丢线停车、终点、K4 退出和 `FAULT_EDGE` 都会清零。
-- 第二次 K3 才开始录像和 ID2/ID3 的循迹。循迹 PID、终点“武装+5 路+3 秒下限”、终点后直行 1500ms、800ms 提示音/结束录像、对称斜坡缓停与转向输出限速均按任务五实现，但所有 `T6_*`/`T6_BALL_*` 参数独立。
+- 第二次 K3 才开始录像和 ID2/ID3 的循迹。循迹 PID、终点“武装+5 路+3 秒下限”、终点后直行 1500ms、800ms 提示音/结束录像、对称斜坡缓停与转向输出限速均按任务五实现，但所有 `T6_*`/`T6_BALL_*` 参数独立。**与任务五的唯一差异**：`T6_STATE_DECEL` 缓停阶段不再循迹修正（任务五的 `Task5_ApplyDecelTracking()` 会继续读线打转向），改为两轮按递减的 `s_rampBaseRpm` 纯直行减速到 0--2026-08 修复“到横线直行后中途又在终点横线上继续循迹”的 bug。
 - OLED 从第二次 K3 发车起显示与题目五相同的校准秒表格式 `T:12.3s 阶段`：`ARM`/`LINE` 为循迹状态，`GO:0.7s` 为过线直行剩余时间，`DEC` 为缓停，`DONE` 时计时定格。
 - K4 或自动完成时按任务五同款安全收尾：两轮急停失能、停止并失能 ID1、请求 `BALLCTRL` 释放。`FAULT_EDGE` 仍执行“停止→等 OFF→重新请求”的自动恢复握手。
 

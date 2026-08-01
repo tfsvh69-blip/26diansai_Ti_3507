@@ -24,8 +24,8 @@
  * ================================================================== */
 
 /* ---- 题目六私有循迹参数：初值按值复制自任务五，后续独立调节。 ---- */
-#define T6_KP                              (2.4F)
-#define T6_KI                              (0.25F)
+#define T6_KP                              (2.2F)
+#define T6_KI                              (0.32F)
 #define T6_KD                              (0.7F)
 #define T6_INTEGRAL_LIMIT                  (20.0F)
 #define T6_MAX_STEER_RPM                   (100.0F)
@@ -66,12 +66,17 @@
 
 /* ---- 手动标定后的钢珠闭环 profile，参数完全归任务六所有。 ---- */
 #define T6_BALL_FRICTION_FF_PULSE          (0.0F)
-#define T6_BALL_LEVEL_TRIM_PULSE           (-50)
+/* X≤300（含 X<200）一侧的曲柄摇杆水平基准，由实车单独标定。 */
+#define T6_BALL_LEVEL_TRIM_PULSE           (+10)
+/* X=350~500 一侧的独立水平基准；先沿用此前该侧的 -50 起点。 */
+#define T6_BALL_HIGH_X_LEVEL_TRIM_PULSE    (+5)
+#define T6_BALL_HIGH_X_MIN_PX              (350)
+#define T6_BALL_HIGH_X_MAX_PX              (500)
 #define T6_BALL_FILTER_ALPHA               (0.9F)
 #define T6_BALL_FILTER_BETA                (0.2F)
 #define T6_BALL_OUTPUT_SIGN                (-1.0F)
-#define T6_BALL_KX_PULSE_PER_PX            (1.13F)
-#define T6_BALL_KV_PULSE_PER_PXPS          (0.5F)
+#define T6_BALL_KX_PULSE_PER_PX            (1.195F)
+#define T6_BALL_KV_PULSE_PER_PXPS          (0.45F)
 #define T6_BALL_SETTLE_DEADBAND_PX         (4.0F)
 #define T6_BALL_FF_VEL_BLEND_PXPS          (15.0F)
 #define T6_BALL_POS_RPM                    (200U)
@@ -80,6 +85,25 @@
 #define T6_BALL_HOLD_POSITION_PX           (6.0F)
 #define T6_BALL_HOLD_VELOCITY_PXPS         (10.0F)
 #define T6_BALL_HOLD_TIME_MS               (500U)
+
+/*
+ * X≈400（350~500）一侧的完整独立 profile。初值按值复制低 X profile，
+ * 后续只改本组宏，不会影响 X≈200~300 的现有标定。
+ */
+#define T6_BALL_HIGH_X_FRICTION_FF_PULSE   (0.0F)
+#define T6_BALL_HIGH_X_FILTER_ALPHA        (0.9F)
+#define T6_BALL_HIGH_X_FILTER_BETA         (0.2F)
+#define T6_BALL_HIGH_X_OUTPUT_SIGN         (-1.0F)
+#define T6_BALL_HIGH_X_KX_PULSE_PER_PX     (1.05F)
+#define T6_BALL_HIGH_X_KV_PULSE_PER_PXPS   (0.5F)
+#define T6_BALL_HIGH_X_SETTLE_DEADBAND_PX  (4.0F)
+#define T6_BALL_HIGH_X_FF_VEL_BLEND_PXPS   (15.0F)
+#define T6_BALL_HIGH_X_POS_RPM             (200U)
+#define T6_BALL_HIGH_X_POS_ACC             (240U)
+#define T6_BALL_HIGH_X_MAX_PULSE_STEP      (0U)
+#define T6_BALL_HIGH_X_HOLD_POSITION_PX    (6.0F)
+#define T6_BALL_HIGH_X_HOLD_VELOCITY_PXPS  (10.0F)
+#define T6_BALL_HIGH_X_HOLD_TIME_MS        (500U)
 
 /*
  * 起步加速度前馈：ID1 正脉冲为抬升。该偏置只在轮速爬升阶段临时叠加到
@@ -128,6 +152,32 @@ static const AppBallControlProfile_t s_task6BallProfile = {
     T6_BALL_POS_RPM, T6_BALL_POS_ACC, T6_BALL_MAX_PULSE_STEP,
     T6_BALL_HOLD_POSITION_PX, T6_BALL_HOLD_VELOCITY_PXPS, T6_BALL_HOLD_TIME_MS
 };
+
+/* X≈400 一侧完整独立 profile，参数不得与低 X 组共用。 */
+static const AppBallControlProfile_t s_task6HighXBallProfile = {
+    T6_BALL_HIGH_X_FILTER_ALPHA, T6_BALL_HIGH_X_FILTER_BETA, T6_BALL_HIGH_X_OUTPUT_SIGN,
+    T6_BALL_HIGH_X_KX_PULSE_PER_PX, T6_BALL_HIGH_X_KV_PULSE_PER_PXPS,
+    T6_BALL_HIGH_X_LEVEL_TRIM_PULSE,
+    T6_BALL_HIGH_X_SETTLE_DEADBAND_PX, T6_BALL_HIGH_X_FRICTION_FF_PULSE,
+    T6_BALL_HIGH_X_FF_VEL_BLEND_PXPS,
+    T6_BALL_HIGH_X_POS_RPM, T6_BALL_HIGH_X_POS_ACC, T6_BALL_HIGH_X_MAX_PULSE_STEP,
+    T6_BALL_HIGH_X_HOLD_POSITION_PX, T6_BALL_HIGH_X_HOLD_VELOCITY_PXPS,
+    T6_BALL_HIGH_X_HOLD_TIME_MS
+};
+
+/*
+ * 目标在第一次 K3 捕获后即固定，运行中不会切换 profile，避免跨区时水平点突变。
+ * 未单独标定的 301~349 以及范围外目标暂沿用低 X 的 +10 基准。
+ */
+static const AppBallControlProfile_t *Task6_GetBallProfileForTarget(int16_t targetX)
+{
+    if ((targetX >= T6_BALL_HIGH_X_MIN_PX) &&
+        (targetX <= T6_BALL_HIGH_X_MAX_PX)) {
+        return &s_task6HighXBallProfile;
+    }
+
+    return &s_task6BallProfile;
+}
 
 static Task6State_t s_state;
 static Pid_t s_pid;
@@ -552,7 +602,8 @@ void Task6_OnLoop(void)
     }
     if (s_state == T6_STATE_WAIT_BALL_CONTROL) {
         if (!s_ballControlRequested) {
-            s_ballControlRequested = AppBallControl_RequestTargetWithProfile(s_targetX, &s_task6BallProfile);
+            s_ballControlRequested = AppBallControl_RequestTargetWithProfile(
+                s_targetX, Task6_GetBallProfileForTarget(s_targetX));
         }
         if (s_ballControlRequested && (ballStatus.targetPx == s_targetX) &&
             ((ballStatus.state == APP_BALL_CONTROL_RUNNING) ||
@@ -636,15 +687,19 @@ void Task6_OnLoop(void)
         return;
     }
     if (s_state == T6_STATE_DECEL) {
+        /*
+         * 到达终点线后不再循迹：两轮按递减的 s_rampBaseRpm 纯直行减速，与起步
+         * 同一根斜坡对称降速到 0，期间不读线、不做转向修正。原先这里复用循迹
+         * 逻辑会在终点横线上继续打转向量（表现为“到横线直行后中途又开始循迹”）。
+         */
         s_rampBaseRpm -= T6_RAMP_RPM_PER_SEC * T6_DT_SEC;
         if (s_rampBaseRpm <= 0.0F) {
             s_rampBaseRpm = 0.0F;
             s_state = T6_STATE_STOP_LEFT;
             return;
         }
-        lineFound = Task6_GetLineError(&rawError, &hitCount);
-        Task6_UpdateTracking(lineFound, rawError);
-        Task6_ApplyTracking();
+        s_leftRpm = s_rightRpm = s_rampBaseRpm;
+        Task6_ApplyWheelRpm(s_leftRpm, s_rightRpm);
         return;
     }
 

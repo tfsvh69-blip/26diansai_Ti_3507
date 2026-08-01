@@ -42,8 +42,8 @@
  * 需要上车看：摆动明显减轻但过弯跟不上（切内角/冲出）→ Kp 适当调回大一点；
  * 摆动还在→ Kp 继续往下、或 Kd 继续往上。
  */
-#define T5_KP                              (2.4F)
-#define T5_KI                              (0.2)
+#define T5_KP                              (2.2F)
+#define T5_KI                              (0.32F)
 #define T5_KD                              (0.7F)
 #define T5_INTEGRAL_LIMIT                  (20.0F)
 #define T5_MAX_STEER_RPM                   (100.0F)
@@ -143,7 +143,7 @@
  * （同一新曲柄摇杆机构、同一 ID1，理论上可直接复用），此后两题各调各的，
  * 互不影响，符合仓库【控制参数隔离规则】。
  */
-#define T5_BALL_TARGET_X_PX                 (350)
+#define T5_BALL_TARGET_X_PX                 (310)
 
 #define T5_BALL_FRICTION_FF_PULSE           (0.0F)
 #define T5_BALL_LEVEL_TRIM_PULSE            (-54)
@@ -156,7 +156,20 @@
 #define T5_BALL_FF_VEL_BLEND_PXPS           (15.0F)
 #define T5_BALL_POS_RPM                     (200U)
 #define T5_BALL_POS_ACC                     (240U)
-#define T5_BALL_MAX_PULSE_STEP              (0U)
+/*
+ * 软件限速：每帧最多允许下发的绝对目标变化量（脉冲），0=不限速。
+ *
+ * 2026-08 之前是 0（首帧不限速直跳到 PD 算出的目标，进入闭环时曲柄摇杆
+ * "冲"那一下很猛）。现在给非 0 值让目标从 0（ZERO 阶段的零点）开始按
+ * 每帧最多这么多脉冲逐步逼近，等效于限制起步阶段的平均加速度。
+ *
+ * 参考开机归零的 LIFT_HOMING_SEEK_RPM=5：在约 50fps（视觉帧间隔）下
+ * 等效为 5*3200/60/50 ≈ 5.3 脉冲/帧。这里取 10 留一倍余量——起步时
+ * 每帧目标只挪 10 脉冲，驱动器配合 T5_BALL_POS_ACC 在内部做曲线平滑，
+ * 整体观感跟开机归零慢速下降一致；到目标后会自然定住。调小会更慢、
+ * 调大能更快跟上球位置变化，视实车反馈现场调。
+ */
+#define T5_BALL_MAX_PULSE_STEP              (10U)
 #define T5_BALL_HOLD_POSITION_PX            (6.0F)
 #define T5_BALL_HOLD_VELOCITY_PXPS          (10.0F)
 #define T5_BALL_HOLD_TIME_MS                (500U)
